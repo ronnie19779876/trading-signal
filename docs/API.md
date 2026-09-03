@@ -1,5 +1,7 @@
 # REST 接口
 
+可导入的 Postman 集合与环境见 [postman/](postman/README.md)。
+
 所有接口同源提供，无鉴权（只监听回环地址，外部访问走 SSH 隧道）。时间一律 ISO-8601 UTC。
 
 ## GET /api/system/info

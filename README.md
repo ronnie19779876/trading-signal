@@ -17,6 +17,7 @@
 | --- | --- |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统长什么样、为什么这么设计：模块与依赖方向、SDK 冲突与解决、配置分层、环境隔离、分期路线图 |
 | [docs/API.md](docs/API.md) | REST 接口定义 |
+| [docs/postman/](docs/postman/README.md) | Postman 集合与开发/生产环境变量，可直接导入手动验证 |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | 克隆后怎么跑起来、怎么打包部署、日常检查、故障排查 |
 | [CLAUDE.md](CLAUDE.md) | 每次开工必须知道的：命令、端口分配、边界纪律、坑 |
 | [CHANGELOG.md](CHANGELOG.md) | 每个版本交付了什么 |

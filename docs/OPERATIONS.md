@@ -28,6 +28,8 @@ curl -s http://127.0.0.1:8083/api/system/info
 启用网关：在 `config/secrets.yml` 里把 `trader.ibkr.enabled` / `trader.futu.enabled` 置 true 并填 host/port/client-id（隧道时 host 为 127.0.0.1），
 重启开发实例后系统页应显示两家 CONNECTED、心跳时刻每 30 秒更新，`gateway_event` 表出现 CONNECTED 记录。
 
+手动验证：导入 `docs/postman/` 下的集合与 `dev` 环境，按 [docs/postman/README.md](postman/README.md) 的顺序点一遍；或 `npx --yes newman run docs/postman/trading-signal.postman_collection.json -e docs/postman/trading-signal.dev.postman_environment.json` 整套跑。
+
 集成测试（对真实网关，只读；连接参数只从环境变量读，缺失即跳过）：
 
 ```bash
