@@ -5,9 +5,52 @@
 ## 1. 前置条件
 
 - JDK 21（脚本自动探测：`$JDK21_HOME` → `$JAVA_HOME` → `/usr/libexec/java_home -v 21` → `~/Java/jdk-21*.jdk` → 常见 Linux 路径 → PATH），Node 20+。
-- PostgreSQL 18 库 `db_trader_dev`（开发）/ `db_trader`（生产），角色 `trader`。数据库只监听服务器本机，开发机经 SSH 隧道把本地端口转发到服务器；密码写在 `~/.pgpass`（`chmod 600`），psql 与应用共用。
+- PostgreSQL 18 库 `db_trader_dev`（开发）/ `db_trader`（生产），角色 `trader`。数据库只监听服务器本机，开发机经 SSH 隧道（§1a）把本地端口转发到服务器；密码写在 `~/.pgpass`（`chmod 600`），psql 与应用共用。
 - 两家网关（IB Gateway、OpenD）同样跑在服务器上，开发机经隧道访问；第 1 期启用连接层时把 host/port 填进 `config/secrets.yml`。
 - Maven 本地仓库：`mvnw`（Maven 3.9.x）读 `~/.m2/settings.xml`；若机器上另有独立安装的 Maven 且改过 `localRepository`，两边要指向同一目录，否则 `install-sdks.sh` 装进的构件另一边找不到。
+
+## 1a. SSH 隧道（开发机 → 服务器）
+
+数据库、两家网关、生产实例都只监听服务器本机，开发机上的一切访问（psql、开发实例连网关、Postman 打生产、`check-daily.sh`）都经同一条 SSH 隧道。主机、SSH 端口、用户名不入库，下面用占位符。
+
+**建立**（用 `autossh`，`brew install autossh`；裸 `ssh -L` 断了不会自愈，表现是 `curl` 挂住而不是连接被拒）：
+
+```bash
+autossh -M 0 -f -N \
+  -o "ServerAliveInterval=30" -o "ServerAliveCountMax=3" -o "ExitOnForwardFailure=yes" \
+  -p <ssh端口> \
+  -L 11111:localhost:11111 -L 4001:localhost:4001 -L 5432:localhost:5432 \
+  -L 8093:localhost:8093 \
+  <用户>@<主机>
+```
+
+| 转发 | 用途 |
+| --- | --- |
+| 11111 | OpenD（富途行情 / 交易） |
+| 4001 | IB Gateway 实盘端口 |
+| 5432 | PostgreSQL（`db_trader_dev` / `db_trader`） |
+| 8093 | 本项目生产实例（Postman、`check-daily.sh`、前端联调） |
+
+兄弟项目的 8090 / 8091 若也要用，一并加到同一条命令里；本机只保留**一条**隧道。
+
+三个 `-o` 参数缺一不可：`-M 0` 关掉 autossh 自带的监控端口，改由 ssh 心跳判活；`ServerAliveInterval` + `ServerAliveCountMax` 让半开连接在 90 秒内被判死、触发重建；`ExitOnForwardFailure=yes` 让端口被占用时 ssh 直接失败，而不是留下一条「已连接但没转发」的假隧道。`-f` 由 autossh 自己处理，并把 `AUTOSSH_GATETIME` 置 0，开机或断网恢复后会一直重试。
+
+**检查**：
+
+```bash
+pgrep -fl autossh; for p in 11111 4001 5432 8093; do nc -z localhost $p && echo "$p 通" || echo "$p 不通"; done
+curl -s --max-time 5 http://127.0.0.1:8093/api/system/info      # 应回 environment=PROD
+```
+
+**改转发列表 / 停隧道**：先杀 autossh 再重起，**不要叠着起第二条**——第二条会因端口被占而反复失败，`pgrep` 里看到多个 autossh 就是这个症状（只有一个真正持有 ssh）。只 `pkill ssh` 没用，autossh 会立刻把它拉起来。
+
+```bash
+pkill autossh          # 停；随后按上面的命令重起
+```
+
+隧道是手动进程，Mac 重启后要重新执行建立命令。本机 Trader Workstation 桌面版若在跑，它是直连服务器的，与隧道无关。
+
+**开发实例走隧道的坑**：Mac 上开着系统级 SOCKS 代理时 JVM 会自动带 `socksProxyHost`，pgjdbc 连 127.0.0.1 报 `UnknownHostException`；`run-local.sh` 与 IDEA 运行配置已带 `-DsocksNonProxyHosts='localhost|127.*|[::1]'`。
 
 ## 2. 克隆后第一次
 
@@ -99,7 +142,7 @@ systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `Wor
 ./scripts/check-daily.sh http://127.0.0.1:8093        # 在服务器上跑；本机经隧道则改成隧道端口
 ```
 
-本机检查需要 SSH 隧道把生产端口转发到 127.0.0.1（用 autossh，参数与兄弟项目一致：`-M 0`、`ServerAliveInterval=30`、`ServerAliveCountMax=3`、`ExitOnForwardFailure=yes`；改转发列表要先 `pkill autossh` 再重起，别叠着起第二条）。
+本机执行需要 §1a 的隧道把 8093 转发到 127.0.0.1。
 
 它调 `GET /api/bars/audit`：完整性（全量 ∪ 池 ∪ 持仓当天都有 K 线）、字段合理性、前收连续性（漏日）、复权因子新鲜度、同步错误、增量作业、网关。`ok=false` 时看 `checks` 里失败项与样本；退出码 0 通过 / 1 未通过 / 2 接口不可达。
 
