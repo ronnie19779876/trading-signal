@@ -82,10 +82,13 @@ storage → common ；ai → common
 | 富途复权因子是逐事件比例，不是累计值（实测 1.8e-5 vs 8.5e-4）；前复权从早到晚复合、后复权从晚到早复合 | `factor-mode` 保持 PER_EVENT，别改复合方向 |
 | 富途美股板块没有标普/纳指完整成分股 | 成分股来自 Wikipedia，SPY 持仓交叉核对，CSV 兜底 |
 | `getStaticInfo` 对不认识的代码也回一条（"未知股票"、brokerId=0） | 以 brokerId=0 判 UNRESOLVED |
+| 富途 Basic 报价在盘前盘后 curPrice/volume 冻结，只更新 preMarket/afterMarket 子结构；逐笔盘前无成交推送 | 有效价按时段取（`FutuQuotes`），别拿 curPrice 当实时价 |
+| 订阅额度按「标的 × 类型」计，账户共 100；订阅满 1 分钟才能反订阅 | 只订 Basic；反订阅前查订阅时刻，未满的延后 |
 
 ## 当前状态
 
 - **第 0 期骨架、第 1 期网关接入层已交付**（1.0.0-SNAPSHOT，2026-09-03）：连接 / 重连 / 心跳、请求-回调关联、限频、账户与合约查询、事件时间线（V2 `gateway_event`）、`/api/gateways*`、系统页实时状态。61 个单元测试 + 4 个集成测试（真实网关 + TCP 中继断线重连）全过。
 - 本机 `config/secrets.yml` 已启用两家网关（隧道 + 开发 client-id）；入库的 `config/application.yml` 仍是 `enabled: false`。
 - **第 2 期步骤 1 日 K 线底座已交付**（2026-09-03）：成分股同步（518 只）、全量轮转 1000 根、池/持仓 20 年深度、复权读取、每日增量、作业记录、`/api/universe* /api/pool* /api/bars* /api/jobs*`、前端「行情」页。
-- **下一步：第 2 期步骤 2 实时行情订阅（不落库）**，之后步骤 3 基本面。开工前先出设计。
+- **第 2 期步骤 2 实时报价已交付**（2026-09-03）：池 + 持仓 Basic 订阅对账、内存缓存、SSE 推流、与轮转的额度协调、`/api/quotes*`、前端实时表与 K 线图。
+- **下一步：第 2 期步骤 3 基本面数据**（富途基本面接口，池 50 只日常增量）。开工前先出设计。

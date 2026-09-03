@@ -1,6 +1,7 @@
 package org.jdkxx.trader.gateway.futu;
 
 import com.futu.openapi.pb.GetGlobalState;
+import com.futu.openapi.pb.QotCommon;
 import org.jdkxx.trader.common.ratelimit.RateLimiter;
 import org.jdkxx.trader.common.ratelimit.SlidingWindowRateLimiter;
 import org.jdkxx.trader.domain.AccountRef;
@@ -10,7 +11,10 @@ import org.jdkxx.trader.domain.HistoryQuota;
 import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.InstrumentStatic;
 import org.jdkxx.trader.domain.Market;
+import org.jdkxx.trader.domain.MarketSession;
+import org.jdkxx.trader.domain.Quote;
 import org.jdkxx.trader.domain.RehabFactor;
+import org.jdkxx.trader.domain.SubscriptionInfo;
 import org.jdkxx.trader.domain.TradingDay;
 import org.jdkxx.trader.gateway.BrokerGateway;
 import org.jdkxx.trader.gateway.GatewayException;
@@ -19,7 +23,9 @@ import org.jdkxx.trader.gateway.GatewayState;
 import org.jdkxx.trader.gateway.GatewayStatus;
 import org.jdkxx.trader.gateway.MarketDataGateway;
 import org.jdkxx.trader.gateway.NotConnectedException;
+import org.jdkxx.trader.gateway.QuoteListener;
 import org.jdkxx.trader.gateway.futu.mapper.FutuAccounts;
+import org.jdkxx.trader.gateway.futu.mapper.FutuQuotes;
 import org.jdkxx.trader.gateway.futu.mapper.FutuStates;
 import org.jdkxx.trader.gateway.futu.marketdata.FutuMarketData;
 import org.jdkxx.trader.gateway.support.ConnectionSupervisor;
@@ -59,6 +65,7 @@ public class FutuGateway implements BrokerGateway, MarketDataGateway, AutoClosea
     private final FutuMarketData marketData;
     private final ConcurrentHashMap<String, RateLimiter> limiters = new ConcurrentHashMap<>();
     private final List<GatewayListener> listeners = new CopyOnWriteArrayList<>();
+    private final List<QuoteListener> quoteListeners = new CopyOnWriteArrayList<>();
     private volatile Map<String, String> stateFacts = Map.of();
     private volatile boolean up;
     private volatile boolean everUp;
@@ -88,6 +95,7 @@ public class FutuGateway implements BrokerGateway, MarketDataGateway, AutoClosea
         qot.onClosed(qotSupervisor::onTransportClosed);
         trd.onClosed(trdSupervisor::onTransportClosed);
         qot.onGlobalState(s -> stateFacts = FutuStates.facts(s));
+        qot.onBasicQuote(rsp -> dispatch.execute(() -> deliverQuotes(rsp.getS2C().getBasicQotListList())));
         qotSupervisor.addListener(channelListener());
         trdSupervisor.addListener(channelListener());
     }
@@ -297,6 +305,52 @@ public class FutuGateway implements BrokerGateway, MarketDataGateway, AutoClosea
     @Override
     public CompletableFuture<List<TradingDay>> tradingDays(Market market, LocalDate from, LocalDate to) {
         return requireQot(() -> marketData.tradingDays(market, from, to));
+    }
+
+    @Override
+    public CompletableFuture<Void> subscribeQuotes(List<Instrument> instruments) {
+        return requireQot(() -> marketData.subscribeQuotes(instruments));
+    }
+
+    @Override
+    public CompletableFuture<Void> unsubscribeQuotes(List<Instrument> instruments) {
+        return requireQot(() -> marketData.unsubscribeQuotes(instruments));
+    }
+
+    @Override
+    public CompletableFuture<SubscriptionInfo> subscriptionInfo() {
+        return requireQot(marketData::subscriptionInfo);
+    }
+
+    @Override
+    public void addQuoteListener(QuoteListener listener) {
+        quoteListeners.add(listener);
+    }
+
+    /** 当前时段：优先心跳拿到的 marketUS，否则美东时钟。 */
+    public MarketSession currentSession() {
+        return FutuQuotes.session(stateFacts.get("market.US"), null);
+    }
+
+    private void deliverQuotes(List<QotCommon.BasicQot> list) {
+        MarketSession session = currentSession();
+        Instant now = Instant.now();
+        for (QotCommon.BasicQot q : list) {
+            Quote quote;
+            try {
+                quote = FutuQuotes.toQuote(q, session, now);
+            } catch (RuntimeException e) {
+                log.warn("报价映射失败：{}", e.toString());
+                continue;
+            }
+            for (QuoteListener l : quoteListeners) {
+                try {
+                    l.onQuote(quote);
+                } catch (RuntimeException e) {
+                    log.warn("报价监听器抛出异常：{}", e.toString());
+                }
+            }
+        }
     }
 
     @Override

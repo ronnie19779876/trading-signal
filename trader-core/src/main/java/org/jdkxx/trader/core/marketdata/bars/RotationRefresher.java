@@ -32,11 +32,25 @@ public class RotationRefresher {
     public record Result(int instruments, int ok, int failed, long bars) {
     }
 
+    /** 轮转前后的钩子：暂停/恢复实时订阅，并给出本轮可用的批次上限（≤0 表示用配置值）。 */
+    public interface QuotaCoordinator {
+        default int beforeRefresh() {
+            return 0;
+        }
+
+        default void afterRefresh() {
+        }
+
+        QuotaCoordinator NONE = new QuotaCoordinator() {
+        };
+    }
+
     private final MarketDataProperties.Refresh props;
     private final MarketDataGateway gateway;
     private final DailyBarRepository bars;
     private final BarSyncStateRepository states;
     private final Sleeper sleeper;
+    private volatile QuotaCoordinator coordinator = QuotaCoordinator.NONE;
 
     public RotationRefresher(MarketDataProperties.Refresh props, MarketDataGateway gateway, DailyBarRepository bars,
                              BarSyncStateRepository states, Sleeper sleeper) {
@@ -45,6 +59,10 @@ public class RotationRefresher {
         this.bars = bars;
         this.states = states;
         this.sleeper = sleeper;
+    }
+
+    public void coordinator(QuotaCoordinator coordinator) {
+        this.coordinator = coordinator == null ? QuotaCoordinator.NONE : coordinator;
     }
 
     public static <T> List<List<T>> batches(List<T> items, int size) {
@@ -60,11 +78,24 @@ public class RotationRefresher {
      */
     public Result refresh(List<InstrumentRow> targets, ToIntFunction<InstrumentRow> countFor, String label, JobContext ctx) {
         List<InstrumentRow> todo = targets.stream().filter(r -> countFor.applyAsInt(r) > 0).toList();
+        if (todo.isEmpty()) {
+            return new Result(0, 0, 0, 0);
+        }
+        int limit = coordinator.beforeRefresh();
+        int batchSize = Math.max(1, limit > 0 ? Math.min(props.batchSize(), limit) : props.batchSize());
+        try {
+            return run(todo, countFor, label, ctx, batchSize);
+        } finally {
+            coordinator.afterRefresh();
+        }
+    }
+
+    private Result run(List<InstrumentRow> todo, ToIntFunction<InstrumentRow> countFor, String label, JobContext ctx, int batchSize) {
         int ok = 0;
         int failed = 0;
         long total = 0;
         int done = 0;
-        for (List<InstrumentRow> batch : batches(todo, Math.max(1, props.batchSize()))) {
+        for (List<InstrumentRow> batch : batches(todo, batchSize)) {
             if (ctx.cancelled()) {
                 ctx.partial("作业被取消");
                 break;

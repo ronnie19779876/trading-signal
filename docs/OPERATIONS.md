@@ -75,6 +75,13 @@ sudo cp systemd/trading-signal.service /etc/systemd/system/   # 改 User/Group/W
 - 复权口径：读取时算，默认 `factor-mode=PER_EVENT`（实测与富途前复权一致）；不要改成 CUMULATIVE。
 - 订阅额度：轮转每批 90 只，跑批期间富途订阅额度接近用满，此时不要在同一 OpenD 上做别的订阅。
 
+## 4b. 实时报价（第 2 期·步骤 2）
+
+- 生产实例 `trader.marketdata.realtime.auto-subscribe=true`：富途连上即订阅池与持仓；开发机 false，需要时 `POST /api/quotes/subscriptions/reconcile`。**不要让两个实例同时订阅**（额度按标的 × 类型计，两份就超 100）。
+- 巡检：`GET /api/quotes/status` 的 `subscribed` 应等于 `desired`，`pushesLastMinute` 在交易时段（含盘前盘后）大于 0，`lastError` 为空。
+- 全量轮转期间实时订阅自动暂停、结束后恢复（`pause-during-refresh`）；手工 `pause` 后记得 `resume`。
+- 报价不落库；重启后缓存为空，首推后恢复。
+
 ## 5. 日常检查
 
 - `GET /api/gateways`：两家 CONNECTED，`lastHeartbeatAt` 在 1 分钟内，`reconnectAttempts` 为 0；盈透 facts 里各 `farm.*` 为 OK 或 INACTIVE（INACTIVE 正常）。
@@ -103,3 +110,5 @@ sudo cp systemd/trading-signal.service /etc/systemd/system/   # 改 User/Group/W
 | 作业 FAILED，摘要含「限频」或「等待超过上限」 | 同一 OpenD 上有别的程序在频繁调用 | 错开时间再跑；限频阈值可在 `trader.futu.limits` 调低 |
 | 深度回补 PARTIAL，摘要含「历史额度用尽」 | 7 天 100 只额度用完 | 正常；下周六自动续补 |
 | 成分股同步 PARTIAL，摘要含「来源失败」 | Wikipedia 不可达或页面结构变了 | 保留旧成分；用 `POST /api/universe/import` 导入 CSV 兜底 |
+| `/api/quotes/status` 的 `subscribed` < `desired` 且 `lastError` 含「额度」 | 订阅额度被别的实例或 App 占用 | `getSubInfo` 看全部连接；关掉多余实例或减小池 |
+| 实时报价盘前盘后不动 | 看的是 `rthPrice`（非常规时段冻结） | 用 `price`（有效价）或 preMarket/afterMarket 字段 |

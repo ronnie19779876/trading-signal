@@ -19,6 +19,11 @@ trader:
   environment: PROD
   storage:
     enabled: true
+  marketdata:
+    # 生产实例：定时跑批 + 启动即订阅池与持仓的实时报价（同一台服务器只允许一个实例开这两项）
+    schedule-enabled: true
+    realtime:
+      auto-subscribe: true
   ibkr:
     enabled: false
   futu:

@@ -54,7 +54,8 @@ public record FutuProperties(
             Map.entry("request-history-kl-quota", "10/30s"),
             Map.entry("request-rehab", "60/30s"),
             Map.entry("request-trade-date", "30/30s"),
-            Map.entry("get-static-info", "30/30s"));
+            Map.entry("get-static-info", "30/30s"),
+            Map.entry("get-sub-info", "10/30s"));
 
     public FutuProperties {
         Map<String, String> merged = new LinkedHashMap<>(DEFAULT_LIMITS);

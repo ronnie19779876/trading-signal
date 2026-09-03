@@ -2,6 +2,15 @@
 
 ## 1.0.0-SNAPSHOT（开发中）
 
+### 第 2 期·步骤 2：实时报价订阅，不落库（2026-09-03）
+
+- 领域 `Quote` / `MarketSession` / `SubscriptionInfo`；`MarketDataGateway` 增加 subscribeQuotes / unsubscribeQuotes / subscriptionInfo / addQuoteListener（富途 Basic 推送 → dispatch 线程 → 监听器）。
+- 有效价按时段取（实测盘前 curPrice 冻结、preMarket 更新）；时段由心跳的 marketUS 判定，拿不到按美东时钟。
+- `QuoteSubscriptionService` 对账（池 ∪ 持仓；新增/延后反订阅；连上/重连/池变动/手工触发；暂停恢复）；与全量轮转的额度协调（默认轮转期间暂停）。
+- `QuoteCache` + `QuoteStreamService`（SSE 每秒合并帧、15 秒状态）；`/api/quotes*`；前端实时报价表（EventSource）与 lightweight-charts 日 K 图。
+- 配置 `trader.marketdata.realtime.*`（开发机 auto-subscribe=false，发布包 true）；Postman 新增「实时报价」目录。
+- 测试：单元 87 个；集成 `FutuQuotesIT`。
+
 ### 第 2 期·步骤 1：日 K 线行情底座（2026-09-03）
 
 - 领域与端口：DailyBar / RehabFactor / TradingDay / InstrumentStatic / HistoryQuota / IndexCode / PoolRole / Adjustment；`MarketDataGateway`（富途实现，含分页历史、订阅取 K、复权因子、交易日历、额度）。

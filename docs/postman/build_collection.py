@@ -205,6 +205,23 @@ ENDPOINTS = [
         ],
     },
     {
+        "folder": "实时报价（第 2 期·步骤 2）",
+        "items": [
+            {"name": "订阅状态", "method": "GET", "path": "/api/quotes/status",
+             "desc": "期望/已订数量、额度、推送统计、SSE 客户端数。",
+             "tests": T_200 + T_JSON + ['pm.test("有 subscribed 与 totalPushes", () => { pm.expect(body.subscribed).to.be.a("number"); pm.expect(body.totalPushes).to.be.a("number"); });']},
+            {"name": "订阅对账（订池与持仓）", "method": "POST", "path": "/api/quotes/subscriptions/reconcile",
+             "desc": "期望 = 池 ∪ 持仓；新增订阅、多余反订阅（未满 1 分钟延后）。网关未连接时 error 字段给出原因。",
+             "tests": T_200 + T_JSON + ['pm.test("有 desired/subscribed", () => { pm.expect(body.desired).to.be.a("number"); pm.expect(body.subscribed).to.be.a("number"); });']},
+            {"name": "全部报价快照", "method": "GET", "path": "/api/quotes", "desc": "缓存里的最新报价（有效价按时段取）。",
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));', 'body.forEach(q => pm.test(`${q.instrument.symbol} 时段合法`, () => pm.expect(q.session).to.be.oneOf(["PRE","RTH","AFTER","OVERNIGHT","CLOSED"])));']},
+            {"name": "单个报价", "method": "GET", "path": "/api/quotes/{{symbol}}", "desc": "未订阅或未收到推送 → 404。",
+             "tests": ['pm.test("200 或 404", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));']},
+            {"name": "暂停订阅（释放额度）", "method": "POST", "path": "/api/quotes/subscriptions/pause", "desc": "反订阅全部并清空缓存。", "tests": T_200},
+            {"name": "恢复订阅", "method": "POST", "path": "/api/quotes/subscriptions/resume", "desc": "重新对账。", "tests": T_200},
+        ],
+    },
+    {
         "folder": "Actuator",
         "items": [
             {

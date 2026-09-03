@@ -84,6 +84,14 @@ trader:
       quota-reserve: 10
     adjust:
       factor-mode: PER_EVENT   # 实测：富途因子是逐事件比例，需复合（见 FactorMode）
+    # 实时报价（不落库）：auto-subscribe 由外置配置决定（开发机 false / 发布包 true，两个实例同时订会占双份额度）
+    realtime:
+      enabled: true
+      auto-subscribe: false
+      reserve-quota: 10
+      pause-during-refresh: true
+      stream-interval: 1s
+      unsubscribe-min-age: 61s
   ai:
     api-key: ${OPENAI_API_KEY:}
     model: gpt-5.6-sol

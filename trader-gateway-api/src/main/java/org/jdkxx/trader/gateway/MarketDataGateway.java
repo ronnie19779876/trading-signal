@@ -6,6 +6,7 @@ import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.InstrumentStatic;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.RehabFactor;
+import org.jdkxx.trader.domain.SubscriptionInfo;
 import org.jdkxx.trader.domain.TradingDay;
 
 import java.time.LocalDate;
@@ -38,4 +39,17 @@ public interface MarketDataGateway {
     CompletableFuture<List<RehabFactor>> rehab(Instrument instrument);
 
     CompletableFuture<List<TradingDay>> tradingDays(Market market, LocalDate from, LocalDate to);
+
+    // ------------------------------------------------------------------ 实时报价（步骤 2）
+
+    /** 订阅基础报价并注册推送；订阅成功后券商会立即推一条当前值。每只占 1 个订阅额度。 */
+    CompletableFuture<Void> subscribeQuotes(List<Instrument> instruments);
+
+    /** 订阅满 1 分钟才允许反订阅。 */
+    CompletableFuture<Void> unsubscribeQuotes(List<Instrument> instruments);
+
+    /** 全部连接合计的订阅额度。 */
+    CompletableFuture<SubscriptionInfo> subscriptionInfo();
+
+    void addQuoteListener(QuoteListener listener);
 }

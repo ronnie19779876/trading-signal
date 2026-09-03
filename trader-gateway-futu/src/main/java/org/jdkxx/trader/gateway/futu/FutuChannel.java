@@ -9,6 +9,8 @@ import com.futu.openapi.FTSPI_Trd;
 import com.futu.openapi.pb.GetGlobalState;
 import com.futu.openapi.pb.Notify;
 import com.futu.openapi.pb.QotGetKL;
+import com.futu.openapi.pb.QotGetSubInfo;
+import com.futu.openapi.pb.QotUpdateBasicQot;
 import com.futu.openapi.pb.QotGetStaticInfo;
 import com.futu.openapi.pb.QotRequestHistoryKL;
 import com.futu.openapi.pb.QotRequestHistoryKLQuota;
@@ -61,6 +63,7 @@ final class FutuChannel implements Transport {
     private final Function<String, RateLimiter> limits;
     private volatile Consumer<String> closedHandler = reason -> { };
     private volatile Consumer<GetGlobalState.S2C> globalStateHandler = s -> { };
+    private volatile Consumer<QotUpdateBasicQot.Response> basicQuoteHandler = r -> { };
     private volatile Session session;
 
     private static final class Session {
@@ -140,6 +143,17 @@ final class FutuChannel implements Transport {
         public void onReply_GetStaticInfo(FTAPI_Conn client, int nSerialNo, QotGetStaticInfo.Response rsp) {
             registry.onReply(nSerialNo, rsp);
         }
+
+        @Override
+        public void onReply_GetSubInfo(FTAPI_Conn client, int nSerialNo, QotGetSubInfo.Response rsp) {
+            registry.onReply(nSerialNo, rsp);
+        }
+
+        /** 基础报价推送：SDK 线程上只做转交。 */
+        @Override
+        public void onPush_UpdateBasicQuote(FTAPI_Conn client, QotUpdateBasicQot.Response rsp) {
+            basicQuoteHandler.accept(rsp);
+        }
     };
 
     private final FTSPI_Trd trdSpi = new FTSPI_Trd() {
@@ -166,6 +180,10 @@ final class FutuChannel implements Transport {
 
     void onGlobalState(Consumer<GetGlobalState.S2C> handler) {
         this.globalStateHandler = handler;
+    }
+
+    void onBasicQuote(Consumer<QotUpdateBasicQot.Response> handler) {
+        this.basicQuoteHandler = handler;
     }
 
     // ------------------------------------------------------------------ Transport

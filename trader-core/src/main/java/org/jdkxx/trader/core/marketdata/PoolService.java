@@ -25,6 +25,12 @@ public class PoolService {
     private final InstrumentDirectory directory;
     private final JobService jobs;
     private final DeepBackfillService deep;
+    private volatile Runnable afterChange = () -> { };
+
+    /** 池变动后的钩子（实时订阅对账）。 */
+    public void afterChange(Runnable hook) {
+        this.afterChange = hook == null ? () -> { } : hook;
+    }
 
     public PoolService(MarketDataProperties props, PoolRepository pool, InstrumentDirectory directory, JobService jobs, DeepBackfillService deep) {
         this.props = props;
@@ -50,6 +56,7 @@ public class PoolService {
         }
         pool.upsert(row.id(), role, note);
         PoolRow member = pool.find(row.id()).orElseThrow();
+        runHook();
         Long jobId = null;
         String hint;
         try {
@@ -64,6 +71,18 @@ public class PoolService {
 
     public boolean remove(String symbol) {
         InstrumentRow row = directory.require(symbol);
-        return pool.delete(row.id());
+        boolean removed = pool.delete(row.id());
+        if (removed) {
+            runHook();
+        }
+        return removed;
+    }
+
+    private void runHook() {
+        try {
+            afterChange.run();
+        } catch (RuntimeException e) {
+            log.warn("池变动钩子失败：{}", e.toString());
+        }
     }
 }

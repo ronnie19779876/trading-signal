@@ -17,7 +17,7 @@ class DailyIncrementServiceTest {
     private static final List<LocalDate> DAYS = List.of(LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 2), LocalDate.of(2026, 9, 3), LocalDate.of(2026, 9, 4));
 
     private static MarketDataProperties props() {
-        return new MarketDataProperties(null, null, new MarketDataProperties.Refresh(90, 65, true, 1000, 5), null, null, false, "", "America/New_York");
+        return new MarketDataProperties(null, null, new MarketDataProperties.Refresh(90, 65, true, 1000, 5), null, null, null, false, "", "America/New_York");
     }
 
     @Test

@@ -6,6 +6,10 @@ import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
 import org.jdkxx.trader.core.marketdata.bars.DeepBackfillService;
 import org.jdkxx.trader.core.marketdata.bars.RotationRefresher;
 import org.jdkxx.trader.core.marketdata.jobs.JobService;
+import org.jdkxx.trader.core.marketdata.quotes.QuoteCache;
+import org.jdkxx.trader.core.marketdata.quotes.QuoteStreamService;
+import org.jdkxx.trader.core.marketdata.quotes.QuoteSubscriptionService;
+import org.jdkxx.trader.gateway.BrokerGateway;
 import org.jdkxx.trader.core.marketdata.universe.SpyHoldingsCrossCheck;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
 import org.jdkxx.trader.core.marketdata.universe.UniverseSource;
@@ -112,5 +116,31 @@ public class MarketDataConfiguration {
     @ConditionalOnProperty(name = "trader.marketdata.schedule-enabled", havingValue = "true")
     public MarketDataScheduler marketDataScheduler(MarketDataFacade facade) {
         return new MarketDataScheduler(facade);
+    }
+
+    // ------------------------------------------------------------------ 实时报价（步骤 2，不落库）
+
+    @Bean
+    public QuoteCache quoteCache(MarketDataGateway gateway) {
+        QuoteCache cache = new QuoteCache();
+        gateway.addQuoteListener(cache::accept);
+        return cache;
+    }
+
+    @Bean
+    public QuoteSubscriptionService quoteSubscriptionService(MarketDataProperties props, MarketDataGateway gateway, UniverseScope scope,
+                                                             QuoteCache cache, RotationRefresher rotation, PoolService pool) {
+        QuoteSubscriptionService service = new QuoteSubscriptionService(props.realtime(), gateway, scope, cache, Clock.systemUTC());
+        if (gateway instanceof BrokerGateway broker) {
+            broker.addListener(service);
+        }
+        rotation.coordinator(service);
+        pool.afterChange(service::reconcile);
+        return service;
+    }
+
+    @Bean(destroyMethod = "close")
+    public QuoteStreamService quoteStreamService(MarketDataProperties props, QuoteCache cache, QuoteSubscriptionService subscriptions) {
+        return new QuoteStreamService(cache, subscriptions::status, props.realtime().streamInterval());
     }
 }

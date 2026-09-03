@@ -26,6 +26,11 @@ trader:
   environment: DEV
   storage:
     enabled: true
+  marketdata:
+    # 开发机不开定时跑批；实时报价不自动订阅（手工 POST /api/quotes/subscriptions/reconcile，避免与生产实例同占额度）
+    schedule-enabled: false
+    realtime:
+      auto-subscribe: false
   # 两家网关默认不启用，这样没有 secrets.yml 的新克隆也能启动。
   # 本机要连网关时在 config/secrets.yml 里置 enabled: true 并填 host/port/client-id（见 secrets.yml.example）。
   ibkr:

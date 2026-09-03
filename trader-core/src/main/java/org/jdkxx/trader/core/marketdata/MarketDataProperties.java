@@ -16,6 +16,7 @@ public record MarketDataProperties(
         @DefaultValue Refresh refresh,
         @DefaultValue History history,
         @DefaultValue Adjust adjust,
+        @DefaultValue Realtime realtime,
         @DefaultValue("false") boolean scheduleEnabled,
         @DefaultValue("0 30 17 * * MON-FRI") String incrementCron,
         @DefaultValue("America/New_York") String zone) {
@@ -48,5 +49,18 @@ public record MarketDataProperties(
     }
 
     public record Adjust(@DefaultValue("PER_EVENT") FactorMode factorMode) {
+    }
+
+    /**
+     * 实时报价（不落库）。auto-subscribe：开发机 false / 发布包 true——两个实例同时订会占双份额度。
+     * pause-during-refresh：全量轮转期间暂停实时订阅（释放额度给 90 只一批的轮转），结束后恢复。
+     */
+    public record Realtime(
+            @DefaultValue("true") boolean enabled,
+            @DefaultValue("false") boolean autoSubscribe,
+            @DefaultValue("10") int reserveQuota,
+            @DefaultValue("true") boolean pauseDuringRefresh,
+            @DefaultValue("1s") java.time.Duration streamInterval,
+            @DefaultValue("61s") java.time.Duration unsubscribeMinAge) {
     }
 }

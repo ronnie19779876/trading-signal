@@ -5,6 +5,8 @@ import {
   addToPool, backfillPending, cancelJob, getBars, getCoverage, getJobs, getPool, refreshUniverse, removeFromPool,
   runIncrement, syncUniverse, type Adjust, type CoverageView, type DailyBar, type InstrumentView, type JobRun, type RunningJob,
 } from '../api/marketdata'
+import { getQuoteStatus, pauseQuotes, quoteStreamUrl, reconcileQuotes, resumeQuotes, type Quote, type QuoteStatus } from '../api/quotes'
+import KlineChart from '../components/KlineChart.vue'
 
 const coverage = ref<CoverageView | null>(null)
 const running = ref<RunningJob | null>(null)
@@ -22,6 +24,54 @@ const barTo = ref(new Date().toISOString().slice(0, 10))
 const barAdjust = ref<Adjust>('none')
 const bars = ref<DailyBar[]>([])
 const barsLoading = ref(false)
+
+// ---- 实时报价（SSE）----
+const quotes = ref<Map<string, Quote>>(new Map())
+const quoteStatus = ref<QuoteStatus | null>(null)
+const sseState = ref<'closed' | 'connecting' | 'open'>('closed')
+let es: EventSource | null = null
+
+function quoteList(): Quote[] {
+  return [...quotes.value.values()].sort((a, b) => a.instrument.symbol.localeCompare(b.instrument.symbol))
+}
+
+function openStream() {
+  if (es) return
+  sseState.value = 'connecting'
+  es = new EventSource(quoteStreamUrl)
+  es.onopen = () => (sseState.value = 'open')
+  es.onerror = () => (sseState.value = 'connecting')
+  es.addEventListener('quotes', (e) => {
+    const list = JSON.parse((e as MessageEvent).data) as Quote[]
+    const m = new Map(quotes.value)
+    for (const q of list) m.set(q.instrument.symbol, q)
+    quotes.value = m
+  })
+  es.addEventListener('status', (e) => {
+    quoteStatus.value = JSON.parse((e as MessageEvent).data) as QuoteStatus
+  })
+}
+
+function closeStream() {
+  es?.close()
+  es = null
+  sseState.value = 'closed'
+}
+
+async function quoteAction(label: string, action: () => Promise<unknown>) {
+  try {
+    await action()
+    ElMessage.success(label + '完成')
+    quoteStatus.value = await getQuoteStatus()
+  } catch (e) {
+    ElMessage.error(label + '失败：' + msg(e))
+  }
+}
+
+function selectSymbol(symbol: string) {
+  barSymbol.value = symbol
+  loadBars()
+}
 
 function msg(e: unknown): string {
   const anyE = e as { response?: { data?: { message?: string } }; message?: string }
@@ -104,14 +154,24 @@ async function cancel() {
   ElMessage.info('已请求取消，作业会在下一批边界停下')
 }
 
+function onVisibility() {
+  if (document.visibilityState === 'visible') openStream()
+  else closeStream()
+}
+
 onMounted(() => {
   refresh()
+  getQuoteStatus().then((s) => (quoteStatus.value = s)).catch(() => {})
+  openStream()
+  document.addEventListener('visibilitychange', onVisibility)
   timer = setInterval(() => {
     if (document.visibilityState === 'visible') refresh()
   }, 5000)
 })
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
+  document.removeEventListener('visibilitychange', onVisibility)
+  closeStream()
 })
 
 function fmt(iso: string | null | undefined): string {
@@ -120,6 +180,16 @@ function fmt(iso: string | null | undefined): string {
 }
 function statusTag(s: JobRun['status']): 'success' | 'warning' | 'danger' | 'info' {
   return s === 'OK' ? 'success' : s === 'PARTIAL' ? 'warning' : s === 'FAILED' ? 'danger' : 'info'
+}
+function sessionTag(s: Quote['session']): 'success' | 'warning' | 'info' {
+  return s === 'RTH' ? 'success' : s === 'PRE' || s === 'AFTER' || s === 'OVERNIGHT' ? 'warning' : 'info'
+}
+function chgClass(v: number | null): string {
+  return v == null ? '' : v > 0 ? 'up' : v < 0 ? 'down' : ''
+}
+function timeShort(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleTimeString('zh-CN', { timeZone: 'America/New_York', hour12: false })
 }
 function num(v: number | null | undefined, digits = 2): string {
   return v == null ? '—' : v.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: digits })
@@ -141,6 +211,38 @@ function num(v: number | null | undefined, digits = 2): string {
       <el-col :span="6"><el-card shadow="never"><div class="stat"><div class="stat__v">{{ coverage.deepCovered }} / {{ coverage.poolSize + coverage.holdingSize }}</div><div class="stat__l">池 + 持仓已有 20 年深度</div><div class="stat__s">池 {{ coverage.poolSize }}，持仓 {{ coverage.holdingSize }}</div></div></el-card></el-col>
       <el-col :span="6"><el-card shadow="never"><div class="stat"><div class="stat__v">{{ coverage.quota.remain < 0 ? '—' : coverage.quota.remain + ' / ' + coverage.quota.total }}</div><div class="stat__l">历史 K 线额度剩余</div><div class="stat__s">{{ coverage.quota.detail }}</div></div></el-card></el-col>
     </el-row>
+
+    <el-card shadow="never">
+      <template #header>
+        <div class="actions" style="margin: 0">
+          <span>实时报价（不落库）</span>
+          <el-tag size="small" :type="sseState === 'open' ? 'success' : 'warning'">SSE {{ sseState }}</el-tag>
+          <span v-if="quoteStatus" class="muted">
+            订阅 {{ quoteStatus.subscribed }} / 期望 {{ quoteStatus.desired }}{{ quoteStatus.paused ? '（已暂停）' : '' }}
+            · 额度 {{ quoteStatus.quota ? quoteStatus.quota.usedQuota + '/' + (quoteStatus.quota.usedQuota + quoteStatus.quota.remainQuota) : '—' }}
+            · 最近 1 分钟推送 {{ quoteStatus.pushesLastMinute }} · 最近推送 {{ timeShort(quoteStatus.lastPushAt) }}
+            <span v-if="quoteStatus.lastError" class="down">· {{ quoteStatus.lastError }}</span>
+          </span>
+          <span style="flex: 1"></span>
+          <el-button size="small" @click="quoteAction('订阅对账', reconcileQuotes)">订阅池与持仓</el-button>
+          <el-button size="small" @click="quoteAction('暂停', pauseQuotes)">暂停</el-button>
+          <el-button size="small" @click="quoteAction('恢复', resumeQuotes)">恢复</el-button>
+        </div>
+      </template>
+      <el-table :data="quoteList()" size="small" max-height="360" empty-text="没有报价：先「订阅池与持仓」（需富途已连接）" @row-click="(row: Quote) => selectSymbol(row.instrument.symbol)">
+        <el-table-column label="代码" width="90"><template #default="{ row }: { row: Quote }"><b>{{ row.instrument.symbol }}</b></template></el-table-column>
+        <el-table-column label="时段" width="90"><template #default="{ row }: { row: Quote }"><el-tag size="small" :type="sessionTag(row.session)">{{ row.session }}</el-tag></template></el-table-column>
+        <el-table-column label="有效价" width="100"><template #default="{ row }: { row: Quote }"><span :class="chgClass(row.change)">{{ num(row.price) }}</span></template></el-table-column>
+        <el-table-column label="涨跌" width="90"><template #default="{ row }: { row: Quote }"><span :class="chgClass(row.change)">{{ num(row.change) }}</span></template></el-table-column>
+        <el-table-column label="涨跌 %" width="90"><template #default="{ row }: { row: Quote }"><span :class="chgClass(row.changeRate)">{{ num(row.changeRate) }}</span></template></el-table-column>
+        <el-table-column label="常规价" width="100"><template #default="{ row }: { row: Quote }">{{ num(row.rthPrice) }}</template></el-table-column>
+        <el-table-column label="昨收" width="100"><template #default="{ row }: { row: Quote }">{{ num(row.lastClose) }}</template></el-table-column>
+        <el-table-column label="盘前" width="130"><template #default="{ row }: { row: Quote }"><span v-if="row.preMarket && row.preMarket.price">{{ num(row.preMarket.price) }} <span :class="chgClass(row.preMarket.changeRate)">({{ num(row.preMarket.changeRate) }}%)</span></span><span v-else>—</span></template></el-table-column>
+        <el-table-column label="盘后" width="130"><template #default="{ row }: { row: Quote }"><span v-if="row.afterMarket && row.afterMarket.price">{{ num(row.afterMarket.price) }} <span :class="chgClass(row.afterMarket.changeRate)">({{ num(row.afterMarket.changeRate) }}%)</span></span><span v-else>—</span></template></el-table-column>
+        <el-table-column label="成交量" width="120"><template #default="{ row }: { row: Quote }">{{ row.volume.toLocaleString() }}</template></el-table-column>
+        <el-table-column label="收到" width="100"><template #default="{ row }: { row: Quote }">{{ timeShort(row.receivedAt) }}</template></el-table-column>
+      </el-table>
+    </el-card>
 
     <el-card shadow="never" header="跑批">
       <div class="actions">
@@ -193,8 +295,9 @@ function num(v: number | null | undefined, digits = 2): string {
           <el-option label="不复权" value="none" /><el-option label="前复权" value="forward" /><el-option label="后复权" value="backward" />
         </el-select>
         <el-button size="small" type="primary" :loading="barsLoading" @click="loadBars">查询</el-button>
-        <span class="muted">{{ bars.length }} 根</span>
+        <span class="muted">{{ bars.length }} 根（点实时报价表的行可切换标的）</span>
       </div>
+      <KlineChart v-if="bars.length" :bars="bars" :title="barSymbol.toUpperCase() + ' 日 K（' + (barAdjust === 'none' ? '不复权' : barAdjust === 'forward' ? '前复权' : '后复权') + '）'" />
       <el-table :data="bars" size="small" max-height="420" empty-text="—">
         <el-table-column prop="tradeDate" label="交易日" width="110" />
         <el-table-column label="开" width="100"><template #default="{ row }: { row: DailyBar }">{{ num(row.open) }}</template></el-table-column>
@@ -221,4 +324,6 @@ function num(v: number | null | undefined, digits = 2): string {
 .stat__v { font-size: 22px; font-weight: 600; }
 .stat__l { color: var(--el-text-color-regular); font-size: 13px; margin-top: 2px; }
 .stat__s { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; }
+.up { color: #ef5350; }
+.down { color: #26a69a; }
 </style>

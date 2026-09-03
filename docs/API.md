@@ -92,6 +92,19 @@
 
 K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, turnoverRate(小数), changeRate(百分数), pe, blank`。
 
+## 实时报价（第 2 期·步骤 2，不落库）
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/quotes` | 缓存里的全部最新报价 |
+| `GET /api/quotes/{symbol}` | 单个；未订阅或尚未收到推送 → 404 |
+| `GET /api/quotes/stream` | SSE：`event: quotes`（数组，只含上一帧后变过的）每秒最多一帧；`event: status` 每 15 秒；连接 30 分钟超时，客户端自动重连 |
+| `GET /api/quotes/status` | enabled / paused / desired / subscribed / deferredUnsubscribe / quota（usedQuota、remainQuota、byType）/ cached / totalPushes / pushesLastMinute / lastPushAt / streamClients / lastError |
+| `POST /api/quotes/subscriptions/reconcile` | 对账：期望 = 池 ∪ 持仓；返回 desired / subscribed / added / removed / deferred / error |
+| `POST /api/quotes/subscriptions/pause` / `resume` | 暂停（反订阅全部、清缓存）/ 恢复 |
+
+报价字段：`instrument, session(PRE|RTH|AFTER|OVERNIGHT|CLOSED), price, change, changeRate(百分数), open, high, low, rthPrice, lastClose, volume, turnover, preMarket{price,change,changeRate,volume}, afterMarket{…}, overnight{…}, quoteTime, receivedAt, suspended`。`price/change/changeRate` 是按时段取的有效价。
+
 ## Actuator
 
 - `GET /actuator/health` — `{"status":"UP"}`，含各组件明细；组件 `gateways` 在有网关启用但未连接时为 `DEGRADED`，总状态随之为 `DEGRADED`，HTTP 仍是 200。

@@ -2,6 +2,7 @@ package org.jdkxx.trader.gateway.futu.marketdata;
 
 import com.futu.openapi.pb.QotCommon;
 import com.futu.openapi.pb.QotGetKL;
+import com.futu.openapi.pb.QotGetSubInfo;
 import com.futu.openapi.pb.QotGetStaticInfo;
 import com.futu.openapi.pb.QotRequestHistoryKL;
 import com.futu.openapi.pb.QotRequestHistoryKLQuota;
@@ -14,6 +15,7 @@ import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.InstrumentStatic;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.RehabFactor;
+import org.jdkxx.trader.domain.SubscriptionInfo;
 import org.jdkxx.trader.domain.TradingDay;
 import org.jdkxx.trader.gateway.futu.mapper.FutuBars;
 import org.jdkxx.trader.gateway.futu.mapper.FutuRehabs;
@@ -27,6 +29,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -109,26 +113,59 @@ public final class FutuMarketData {
                 });
     }
 
+    static final int SUB_BASIC = QotCommon.SubType.SubType_Basic_VALUE;
+
     public CompletableFuture<Void> subscribeDailyBars(List<Instrument> instruments) {
-        return sub(instruments, true);
+        return sub(instruments, SUB_KL_DAY, true, false);
     }
 
     public CompletableFuture<Void> unsubscribeDailyBars(List<Instrument> instruments) {
-        return sub(instruments, false);
+        return sub(instruments, SUB_KL_DAY, false, false);
     }
 
-    private CompletableFuture<Void> sub(List<Instrument> instruments, boolean subscribe) {
+    /** 基础报价：注册推送，订阅成功后立即首推一条。 */
+    public CompletableFuture<Void> subscribeQuotes(List<Instrument> instruments) {
+        return sub(instruments, SUB_BASIC, true, true);
+    }
+
+    public CompletableFuture<Void> unsubscribeQuotes(List<Instrument> instruments) {
+        return sub(instruments, SUB_BASIC, false, true);
+    }
+
+    private CompletableFuture<Void> sub(List<Instrument> instruments, int subType, boolean subscribe, boolean push) {
         if (instruments.isEmpty()) {
             return CompletableFuture.completedFuture(null);
         }
         QotSub.C2S.Builder c2s = QotSub.C2S.newBuilder()
-                .addSubTypeList(SUB_KL_DAY)
+                .addSubTypeList(subType)
                 .setIsSubOrUnSub(subscribe)
-                .setIsRegOrUnRegPush(false);
+                .setIsRegOrUnRegPush(push)
+                .setIsFirstPush(push);
         instruments.forEach(i -> c2s.addSecurityList(FutuSecurities.of(i)));
         QotSub.Request req = QotSub.Request.newBuilder().setC2S(c2s).build();
-        return qot.call("sub", (subscribe ? "sub" : "unsub") + " KL_Day ×" + instruments.size(), QotSub.Response.class,
+        String type = subType == SUB_BASIC ? "Basic" : "KL_Day";
+        return qot.call("sub", (subscribe ? "sub " : "unsub ") + type + " ×" + instruments.size(), QotSub.Response.class,
                 c -> c.sub(req)).thenApply(r -> null);
+    }
+
+    public CompletableFuture<SubscriptionInfo> subscriptionInfo() {
+        QotGetSubInfo.Request req = QotGetSubInfo.Request.newBuilder()
+                .setC2S(QotGetSubInfo.C2S.newBuilder().setIsReqAllConn(true)).build();
+        return qot.call("get-sub-info", "getSubInfo", QotGetSubInfo.Response.class, c -> c.getSubInfo(req))
+                .thenApply(rsp -> {
+                    Map<String, Integer> byType = new TreeMap<>();
+                    for (QotCommon.ConnSubInfo conn : rsp.getS2C().getConnSubInfoListList()) {
+                        if (!conn.getIsOwnConnData()) {
+                            continue;
+                        }
+                        for (QotCommon.SubInfo si : conn.getSubInfoListList()) {
+                            QotCommon.SubType t = QotCommon.SubType.forNumber(si.getSubType());
+                            String name = t == null ? "T" + si.getSubType() : t.name().replace("SubType_", "");
+                            byType.merge(name, si.getSecurityListCount(), Integer::sum);
+                        }
+                    }
+                    return new SubscriptionInfo(rsp.getS2C().getTotalUsedQuota(), rsp.getS2C().getRemainQuota(), byType, Instant.now());
+                });
     }
 
     public CompletableFuture<List<DailyBar>> recentDailyBars(Instrument instrument, int count) {

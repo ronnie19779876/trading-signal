@@ -1,6 +1,6 @@
 # 架构设计说明书
 
-> 版本：1.2（第 0 期骨架 + 第 1 期网关接入层 + 第 2 期步骤 1 日 K 线，2026-09-03）。各期设计均已经用户认可。
+> 版本：1.3（第 0 期骨架 + 第 1 期网关接入层 + 第 2 期步骤 1 日 K 线 + 步骤 2 实时报价，2026-09-03）。各期设计均已经用户认可。
 > 本文不含任何主机名、IP、账户号、网关端口——这些只存在于被 `.gitignore` 排除的外置配置里。
 
 ## 1. 目标与分期
@@ -18,7 +18,7 @@
 | --- | --- |
 | 0 | **骨架**（已交付）：多模块、配置分层、环境守卫、健康页、前端骨架、脚本与部署模板 |
 | 1 | **网关接入层**（已交付，§10）：连接管理 / 断线重连 / 健康探测、请求-回调关联、限频闸门、账户与合约查询、事件时间线 |
-| 2 | 行情数据底座：**步骤 1 日 K 线（已交付，§11）**：标的与成分股、全量 1000 根 + 池 20 年、复权、增量；步骤 2 实时订阅（不落库）；步骤 3 基本面 |
+| 2 | 行情数据底座：**步骤 1 日 K 线（已交付，§11）**；**步骤 2 实时报价订阅，不落库（已交付，§12）**；步骤 3 基本面 |
 | 3 | 账户与持仓：盈透账户资金、收盘持仓与盈亏的每日快照与对账 |
 | 4 | 基本面与 AI 分析：富途基本面增量、入场信号判据、OpenAI 结构化分析、信号页 |
 | 5 | 下单链路 + 风控（盈透）：先人工确认制，再逐步自动化 |
@@ -197,3 +197,16 @@ storage → domain → common ；ai → common
 - 全量标的深度为最近 1000 根（约 4 年）；更早历史只对池与持仓（20 年）。
 - 增量判定"当天已收盘"用美东 16:15 之后 + 交易日历；盘中触发只补到前一交易日。
 - 反订阅失败（不足 1 分钟）只记警告，额度随连接关闭释放。
+
+## 12. 第 2 期·步骤 2：实时报价订阅（不落库，2026-09-03 交付）
+
+设计记录见 [design/phase2-step2-realtime-quotes.md](design/phase2-step2-realtime-quotes.md)。
+
+- **只订 Basic**：期望集合 = 池 ∪ 持仓（富途已解析、未退市），每只 1 个订阅额度。实测（盘前）Basic 的 curPrice/volume 冻结在上个收盘、`preMarket` 子结构实时更新；逐笔在盘前没有成交推送；盘口推送活跃但本步骤不订（额度与流量，留到下单时按需）。
+- **有效价按时段取**：`MarketSession` 由心跳拿到的 `marketUS` 判定（PreMarketBegin→PRE，Morning/Afternoon→RTH，AfterHoursBegin→AFTER，NightOpen→OVERNIGHT，其它 CLOSED），拿不到时按美东时钟；PRE/AFTER/OVERNIGHT 用对应子结构的 price/change/changeRate，RTH 与 CLOSED 用 curPrice 与昨收差。
+- **对账**（`QuoteSubscriptionService`）：新增订阅、多余反订阅（未满 61 秒的延后到下次），触发点：富途连上（`auto-subscribe`）、重连（已订集合随连接清空后重订）、池增删（`PoolService.afterChange`）、手工；`pause()` 只反订阅满 1 分钟的（未满的延后，富途整批拒绝"订阅时间过短"），轮转前的暂停会等到全部满 1 分钟；`resume()` 重新对账。
+- **与轮转协调**：`RotationRefresher.QuotaCoordinator`——`pause-during-refresh=true`（默认）时轮转前暂停、结束恢复；否则批次 = min(配置, 剩余额度 − 预留)。
+- **缓存与推流**：`QuoteCache`（symbol → 带版本号的报价，推送总数 / 最近 60 秒计数）；`QuoteStreamService` 每秒把版本号增长过的报价合并成一帧 SSE `event: quotes`，15 秒一次 `event: status`；客户端断开自动清理；SDK 推送 → `futu-dispatch` 线程映射后交监听器，SDK 线程只做转交。
+- 接口 `/api/quotes*`（见 API.md）；前端行情页「实时报价」表（EventSource，页面不可见时断开）与 lightweight-charts 日 K 图（蜡烛 + 成交量，随查询区间与复权口径切换）。
+- 配置 `trader.marketdata.realtime.*`：开发机 `auto-subscribe=false`（手工对账），发布包 true；两个实例同时订会占双份额度。
+- 报价不落库（设计原则）；进程重启后缓存为空，重订阅的首推即填充。
