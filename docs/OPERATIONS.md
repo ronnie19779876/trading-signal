@@ -71,7 +71,7 @@ sudo cp systemd/trading-signal.service /etc/systemd/system/   # 改 User/Group/W
 首次建库后的顺序：`POST /api/universe/sync`（约 1 分钟）→ `POST /api/bars/refresh/universe?count=1000`（约 7 分钟，零额度）→ `POST /api/bars/rehab/refresh?all=true`（约 5 分钟，零额度）→ 把候选加入池 `POST /api/pool/{symbol}`（每只占 1 个历史额度，自动排深度回补）。
 
 - 历史额度：`GET /api/bars/quota`，7 天滚动、预留 10；额度不足时深度回补作业标 PARTIAL，下周由周六的定时作业续补（或手工 `POST /api/bars/backfill`）。
-- 定时：发布包 `trader.marketdata.schedule-enabled=true`（每日 17:30 ET 增量、周六 06:30 ET 成分股同步），开发机默认 false；生产实例上线前若用本机实例当"生产"，可在本机 `config/secrets.yml` 里临时置 true。**同一时刻只允许一个实例开启**，且定时只在实例运行时触发。
+- 定时：发布包 `trader.marketdata.schedule-enabled=true`（每日 17:30 ET 增量、周六 06:30 ET 成分股同步），开发/测试实例一律 false，手工用 `POST /api/bars/increment` 触发。**同一时刻只允许一个实例开启**，且定时只在实例运行时触发。
 - 复权口径：读取时算，默认 `factor-mode=PER_EVENT`（实测与富途前复权一致）；不要改成 CUMULATIVE。
 - 订阅额度：轮转每批 90 只，跑批期间富途订阅额度接近用满，此时不要在同一 OpenD 上做别的订阅。
 
