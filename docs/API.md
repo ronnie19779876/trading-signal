@@ -70,6 +70,28 @@
 
 错误响应统一为 `{ "code": "...", "message": "..." }`：`PARAM_INVALID` 400、`GATEWAY_NOT_CONNECTED` 503、`GATEWAY_TIMEOUT` 504、`GATEWAY_REJECTED` 502。
 
+## 行情数据底座（第 2 期·步骤 1）
+
+只在 `trader.storage.enabled=true` 时存在。跑批接口都是异步：立即返回 `{ "jobId": n }`，进度看 `GET /api/jobs`；同一时刻只跑一个作业，冲突 → 409 `STATE_CONFLICT`。
+
+| 接口 | 说明 |
+| --- | --- |
+| `POST /api/universe/sync` | 成分股同步作业：Wikipedia 标普 500 + 纳指 100 → instrument / index_constituent（since/until），SPY 交叉核对，富途静态信息解析 |
+| `POST /api/universe/import`（`text/plain`，每行 `index_code,symbol[,name]`） | CSV 导入兜底，同步返回各指数的新增/退出计数 |
+| `GET /api/universe?index=SP500|NDX100&role=POOL|HOLDING` | 标的列表（含所属指数、行业、池角色、K 线覆盖与深度、最近错误） |
+| `GET /api/universe/{symbol}` | 单个标的；不存在 → 404 |
+| `GET /api/pool` / `POST /api/pool/{symbol}?role=POOL|HOLDING&note=` / `DELETE /api/pool/{symbol}` | 标的池；加入后自动排深度回补作业（无法自动时返回提示）；池满 → 409 |
+| `POST /api/bars/refresh/universe?count=1000` | 全量轮转拉 K 线（零历史额度；1000 首拉 / 10 增量） |
+| `POST /api/bars/backfill/{symbol}` / `POST /api/bars/backfill` | 深度回补一只 / 所有待补的池与持仓（占历史额度，额度守卫） |
+| `POST /api/bars/increment` | 每日增量：交易日历 → 缺口补齐 → 池/持仓复权因子刷新 |
+| `GET /api/bars/{symbol}?from&to&adjust=none|forward|backward` | K 线（默认最近 90 天）；复权在读取层计算 |
+| `GET /api/bars/{symbol}/rehab` | 复权因子 |
+| `GET /api/bars/coverage` | 行数/标的数/最早最新、全量/池/持仓规模、已覆盖数、未解析数、错误数、历史额度、运行中的作业 |
+| `GET /api/bars/quota` | 历史额度（7 天滚动） |
+| `GET /api/jobs?limit=` / `GET /api/jobs/{id}` / `POST /api/jobs/cancel` | 作业记录与取消（在下一批边界停下） |
+
+K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, turnoverRate(小数), changeRate(百分数), pe, blank`。
+
 ## Actuator
 
 - `GET /actuator/health` — `{"status":"UP"}`，含各组件明细；组件 `gateways` 在有网关启用但未连接时为 `DEGRADED`，总状态随之为 `DEGRADED`，HTTP 仍是 200。

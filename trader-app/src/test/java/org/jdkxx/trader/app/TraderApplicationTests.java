@@ -46,8 +46,8 @@ class TraderApplicationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("DISABLED"));
         mvc.perform(post("/api/gateways/ibkr/connect"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("PARAM_INVALID"));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("STATE_CONFLICT"));
         mvc.perform(get("/api/gateways/xyz"))
                 .andExpect(status().isBadRequest());
         mvc.perform(get("/api/gateways/events"))

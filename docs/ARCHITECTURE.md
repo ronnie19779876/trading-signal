@@ -1,6 +1,6 @@
 # 架构设计说明书
 
-> 版本：1.1（第 0 期骨架 + 第 1 期网关接入层，2026-09-03）。两期设计均已经用户认可。
+> 版本：1.2（第 0 期骨架 + 第 1 期网关接入层 + 第 2 期步骤 1 日 K 线，2026-09-03）。各期设计均已经用户认可。
 > 本文不含任何主机名、IP、账户号、网关端口——这些只存在于被 `.gitignore` 排除的外置配置里。
 
 ## 1. 目标与分期
@@ -18,7 +18,7 @@
 | --- | --- |
 | 0 | **骨架**（已交付）：多模块、配置分层、环境守卫、健康页、前端骨架、脚本与部署模板 |
 | 1 | **网关接入层**（已交付，§10）：连接管理 / 断线重连 / 健康探测、请求-回调关联、限频闸门、账户与合约查询、事件时间线 |
-| 2 | 行情数据底座：标的池、历史日 K 线全量与增量（富途）、复权口径、实时订阅（不落库）、查询接口 |
+| 2 | 行情数据底座：**步骤 1 日 K 线（已交付，§11）**：标的与成分股、全量 1000 根 + 池 20 年、复权、增量；步骤 2 实时订阅（不落库）；步骤 3 基本面 |
 | 3 | 账户与持仓：盈透账户资金、收盘持仓与盈亏的每日快照与对账 |
 | 4 | 基本面与 AI 分析：富途基本面增量、入场信号判据、OpenAI 结构化分析、信号页 |
 | 5 | 下单链路 + 风控（盈透）：先人工确认制，再逐步自动化 |
@@ -32,9 +32,9 @@ trading-signal/
 ├── trader-gateway-api     网关端口：BrokerGateway / ReferenceDataGateway / GatewayListener、GatewayStatus；support.ConnectionSupervisor（与 SDK 无关的连接状态机）
 ├── trader-gateway-ibkr    盈透适配器：IbkrGateway / IbkrConnection / IbkrWrapper / IbkrRequestRegistry、mapper.*（com.ib.client.* 只在这里）
 ├── trader-gateway-futu    富途适配器：FutuGateway / FutuChannel / FutuReplyRegistry、mapper.*（com.futu.openapi.* 只在这里）
-├── trader-storage         PostgreSQL：Flyway 迁移（V1 app_environment、V2 gateway_event）、EnvironmentGuard、pgpass 密码来源、仓储
+├── trader-storage         PostgreSQL：Flyway 迁移（V1 app_environment、V2 gateway_event、V3 行情八表）、EnvironmentGuard、pgpass 密码来源、仓储
 ├── trader-ai              OpenAI 接入：AiProperties、OpenAiClientFactory（com.openai.* 只在这里）
-├── trader-core            业务编排：GatewayRegistry / GatewayLifecycle / GatewayEventRecorder / GatewayService、SystemInfoService
+├── trader-core            业务编排：网关（GatewayRegistry / Lifecycle / EventRecorder / Service）、行情底座（marketdata.*：成分股同步、轮转拉取、深度回补、增量、复权读取、作业）、SystemInfoService
 ├── trader-app             Spring Boot 启动、REST、静态前端、fat jar；把两家适配器装配进核心
 ├── trader-web             Vue 3 + Vite + TypeScript + Element Plus（npm 工程，不是 Maven 模块）
 └── sdk/                   tws-api 安装、futu-api-shaded 重定位工程
@@ -162,3 +162,38 @@ storage → domain → common ；ai → common
 
 - 单元 61 个：状态机（虚拟时间）、两个注册表、限流器、映射、服务与接口。
 - 集成（`-Dtrader.integration=true`，连接参数从环境变量读，缺失即跳过）：`IbkrGatewayIT`、`FutuGatewayIT`、`ReconnectIT`（本地 TCP 中继切断后自动重连，两家都过）。
+
+## 11. 第 2 期·步骤 1：日 K 线行情底座（2026-09-03 交付）
+
+设计记录见 [design/phase2-step1-daily-bars.md](design/phase2-step1-daily-bars.md)，这里记实现要点与实测结论。
+
+### 11.1 数据来源与额度策略（实测驱动）
+
+- 富途美股板块没有标普 500 / 纳指 100 完整成分股；成分股来源为 Wikipedia 两页（`id=constituents` 表，按表头 Symbol/Ticker 取列），
+  SSGA 的 SPY 每日持仓 xlsx 只做交叉核对（首轮：503 对 503，零差异），CSV 导入兜底。纳指表用 ICB 分类、标普用 GICS，原样存并记录体系。
+- 富途历史 K 线额度是 7 天滚动 100 只（本账号），全量标的走**订阅轮转**：每批 ≤90 只 `sub(KL_Day)` → 逐只 `getKL(1000)` →
+  停留满 65 秒 → `unsub`，零历史额度，518 只约 7 分钟。历史接口 `requestHistoryKL` 只用于池与持仓的 20 年深度（额度守卫预留 10 个）。
+- 富途对不认识的代码在 `getStaticInfo` 里也会回一条（名称"未知股票"、brokerId=0、delisted=true），以 brokerId=0 判定 UNRESOLVED。
+
+### 11.2 复权（实测结论，决定默认配置）
+
+- 存不复权 K 线 + `rehab_factor`，读取时算：价 = 不复权价 × A + B，成交量不变。
+- **富途的每条因子只是该事件自身的比例，不是累计值**：对 AAPL 2026-04-20～05-20（跨两次除息）用富途自己的前复权序列比对，
+  逐事件复合（`FactorMode.PER_EVENT`）最大相对误差 1.8e-5，"取最近一条"（CUMULATIVE）为 8.5e-4。默认 `trader.marketdata.adjust.factor-mode=PER_EVENT`。
+- 前复权对 exDate > 交易日 的事件按**从早到晚**复合：p' = A2(A1 p + B1) + B2；后复权对 exDate ≤ 交易日 的事件按**从晚到早**复合（后来的分红要按更早的拆股比例放大）。实测后复权与富途序列误差为 0（升序复合会差 2.5%）。
+
+### 11.3 模块与流程
+
+- 端口 `MarketDataGateway`（富途实现）：staticInfo / historyQuota / historyDailyBars（分页在适配器内）/ subscribe & unsubscribe & recentDailyBars / rehab / tradingDays。
+  富途行情通道新增通用 `qotCall(限频名, 描述, 类型, 发送)`，各接口的限频在 `FutuProperties.DEFAULT_LIMITS`。
+- `trader-core.marketdata`：`UniverseSyncService`（来源 → instrument 幂等 → 集合差 since/until → 静态解析）、`RotationRefresher`、`DeepBackfillService`（额度守卫 + 分页 + 因子）、
+  `DailyIncrementService`（交易日历 → 缺口 = 交易日数 + overlap → 轮转补齐 → 池/持仓因子刷新）、`BarQueryService` + `BarAdjuster`、`PoolService`、`JobService`（单线程串行、job_run 落库、进度）、`MarketDataScheduler`（增量 ET 17:30 工作日，成分股同步周六 06:30；只在 `schedule-enabled` 的实例装配）。
+- 整块只在 `trader.storage.enabled=true` 时装配（仓储依赖数据库）。
+- 表：instrument、index_constituent、pool_member、daily_bar、rehab_factor、trading_day、bar_sync_state、job_run（V3）。
+- 接口见 API.md「行情」；前端「行情」页：覆盖与额度卡片、跑批与作业记录、标的池维护、K 线查询（复权口径切换）。
+
+### 11.4 已知边界
+
+- 全量标的深度为最近 1000 根（约 4 年）；更早历史只对池与持仓（20 年）。
+- 增量判定"当天已收盘"用美东 16:15 之后 + 交易日历；盘中触发只补到前一交易日。
+- 反订阅失败（不足 1 分钟）只记警告，额度随连接关闭释放。

@@ -44,9 +44,17 @@ public record FutuProperties(
         }
     }
 
-    public static final Map<String, String> DEFAULT_LIMITS = Map.of(
-            "get-global-state", "60/30s",
-            "get-acc-list", "10/30s");
+    /** 保守的默认限频（次数/窗口），来自官方文档"接口限制"；可在配置里覆盖。 */
+    public static final Map<String, String> DEFAULT_LIMITS = Map.ofEntries(
+            Map.entry("get-global-state", "60/30s"),
+            Map.entry("get-acc-list", "10/30s"),
+            Map.entry("sub", "30/30s"),
+            Map.entry("get-kl", "60/30s"),
+            Map.entry("request-history-kl", "60/30s"),
+            Map.entry("request-history-kl-quota", "10/30s"),
+            Map.entry("request-rehab", "60/30s"),
+            Map.entry("request-trade-date", "30/30s"),
+            Map.entry("get-static-info", "30/30s"));
 
     public FutuProperties {
         Map<String, String> merged = new LinkedHashMap<>(DEFAULT_LIMITS);

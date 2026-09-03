@@ -19,6 +19,10 @@ public final class FutuSecurities {
                 .build();
     }
 
+    public static Market market(int qotMarket) {
+        return qotMarket == QotCommon.QotMarket.QotMarket_HK_Security_VALUE ? Market.HK : Market.US;
+    }
+
     public static int market(Market market) {
         return switch (market) {
             case US -> QotCommon.QotMarket.QotMarket_US_Security_VALUE;

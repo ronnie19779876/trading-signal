@@ -1,5 +1,8 @@
 <script setup lang="ts">
-const links = [{ to: '/', label: '系统' }]
+const links = [
+  { to: '/', label: '系统' },
+  { to: '/marketdata', label: '行情' },
+]
 </script>
 
 <template>

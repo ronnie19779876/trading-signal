@@ -2,6 +2,16 @@
 
 ## 1.0.0-SNAPSHOT（开发中）
 
+### 第 2 期·步骤 1：日 K 线行情底座（2026-09-03）
+
+- 领域与端口：DailyBar / RehabFactor / TradingDay / InstrumentStatic / HistoryQuota / IndexCode / PoolRole / Adjustment；`MarketDataGateway`（富途实现，含分页历史、订阅取 K、复权因子、交易日历、额度）。
+- 存储 V3：instrument、index_constituent（since/until）、pool_member、daily_bar（不复权）、rehab_factor、trading_day、bar_sync_state、job_run。
+- 成分股：Wikipedia 标普 500 + 纳指 100 解析、SPY 持仓 xlsx 交叉核对、CSV 导入；富途静态信息解析（brokerId=0 判未解析）。
+- K 线：全量订阅轮转（零历史额度）、池/持仓 20 年深度回补（额度守卫）、每日增量（交易日历缺口 + overlap）、读取层复权（实测定为逐事件复合 PER_EVENT）。
+- 作业：单线程串行 `JobService` + job_run 记录 + 进度 + 取消；定时增量与周六成分股同步（可开关）。
+- 接口 `/api/universe*`、`/api/pool*`、`/api/bars*`、`/api/jobs*`；错误映射新增 404 / 409；前端「行情」页；Postman 集合新增「行情」目录。
+- 测试：单元 78 个；集成 `FutuMarketDataIT`（含复权语义判定）。
+
 ### 第 1 期：网关接入层（2026-09-03）
 
 - `trader-gateway-api`：`BrokerGateway` 增加生命周期、账户、监听器；`ReferenceDataGateway`；`GatewayStatus` 扩展心跳/重连/事实；与 SDK 无关的 `ConnectionSupervisor`（指数退避重连、心跳、过期结果丢弃）。

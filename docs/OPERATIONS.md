@@ -66,12 +66,22 @@ sudo cp systemd/trading-signal.service /etc/systemd/system/   # 改 User/Group/W
 - 环境标记：`SELECT * FROM app_environment;`。错连时应用拒绝启动并打印修复提示。从生产 dump 灌开发库后：`UPDATE app_environment SET name='DEV', stamped_at=now(), note='从生产 dump 灌入后改标记';`
 - 密码来源顺序：环境变量 `TRADER_DB_PASSWORD` → `config/secrets.yml` → `~/.pgpass`（日志会打印"已从 ~/.pgpass 读取 …"，不打印密码）。关闭 pgpass 回落：`trader.storage.pgpass.enabled=false`。
 
+## 4a. 行情数据底座（第 2 期·步骤 1）
+
+首次建库后的顺序：`POST /api/universe/sync`（约 1 分钟）→ `POST /api/bars/refresh/universe?count=1000`（约 7 分钟，零额度）→ 把候选加入池 `POST /api/pool/{symbol}`（每只占 1 个历史额度，自动排深度回补）。
+
+- 历史额度：`GET /api/bars/quota`，7 天滚动、预留 10；额度不足时深度回补作业标 PARTIAL，下周由周六的定时作业续补（或手工 `POST /api/bars/backfill`）。
+- 定时：发布包 `trader.marketdata.schedule-enabled=true`（每日 17:30 ET 增量、周六 06:30 ET 成分股同步），开发机保持 false；**同一台服务器只允许一个实例开启**。
+- 复权口径：读取时算，默认 `factor-mode=PER_EVENT`（实测与富途前复权一致）；不要改成 CUMULATIVE。
+- 订阅额度：轮转每批 90 只，跑批期间富途订阅额度接近用满，此时不要在同一 OpenD 上做别的订阅。
+
 ## 5. 日常检查
 
 - `GET /api/gateways`：两家 CONNECTED，`lastHeartbeatAt` 在 1 分钟内，`reconnectAttempts` 为 0；盈透 facts 里各 `farm.*` 为 OK 或 INACTIVE（INACTIVE 正常）。
 - `GET /api/gateways/events?limit=20`：盈透每日自动重启会留下一对 DISCONNECTED / RECONNECTED，属正常；频繁出现则查隧道或网关。
 - `GET /actuator/health` 为 UP（DEGRADED 表示有网关未连上，看 `components.gateways`）；`GET /api/system/info` 的 `environment` 与所在机器一致、`database.marker` 与之一致。
 - 版本：`/api/system/info` 的 `version` / `buildTime` 与发布包一致。
+- 行情：`GET /api/bars/coverage` 的 `latest` 应为最近一个已收盘交易日，`withErrors` 为 0；`GET /api/jobs` 最近的 DAILY_INCREMENT 为 OK。
 
 ## 6. 故障排查
 
@@ -90,3 +100,6 @@ sudo cp systemd/trading-signal.service /etc/systemd/system/   # 改 User/Group/W
 | 盈透 `detail` 为「配置的 trader.ibkr.account 不在网关的受管账户列表里」且状态 ERROR | 账户号配错或登录了别的用户名 | 核对后重启实例 |
 | 富途 CONNECTED 但 detail「OpenD 状态为 …」/「行情未登录」 | OpenD 未完成登录、需要验证码或未同意协议 | 到服务器上看 OpenD 日志，`relogin` / 输入验证码 |
 | 富途状态 RECONNECTING 且 detail 含「连接 OpenD 失败」 | OpenD 未运行或隧道未建 | 检查 OpenD 进程与隧道 |
+| 作业 FAILED，摘要含「限频」或「等待超过上限」 | 同一 OpenD 上有别的程序在频繁调用 | 错开时间再跑；限频阈值可在 `trader.futu.limits` 调低 |
+| 深度回补 PARTIAL，摘要含「历史额度用尽」 | 7 天 100 只额度用完 | 正常；下周六自动续补 |
+| 成分股同步 PARTIAL，摘要含「来源失败」 | Wikipedia 不可达或页面结构变了 | 保留旧成分；用 `POST /api/universe/import` 导入 CSV 兜底 |

@@ -8,6 +8,13 @@ import com.futu.openapi.FTSPI_Qot;
 import com.futu.openapi.FTSPI_Trd;
 import com.futu.openapi.pb.GetGlobalState;
 import com.futu.openapi.pb.Notify;
+import com.futu.openapi.pb.QotGetKL;
+import com.futu.openapi.pb.QotGetStaticInfo;
+import com.futu.openapi.pb.QotRequestHistoryKL;
+import com.futu.openapi.pb.QotRequestHistoryKLQuota;
+import com.futu.openapi.pb.QotRequestRehab;
+import com.futu.openapi.pb.QotRequestTradeDate;
+import com.futu.openapi.pb.QotSub;
 import com.futu.openapi.pb.TrdGetAccList;
 import org.jdkxx.trader.common.ratelimit.RateLimiter;
 import org.jdkxx.trader.domain.Broker;
@@ -25,6 +32,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.ToIntFunction;
 
 /**
  * 到 OpenD 的一条连接：行情（QOT）或交易（TRD）。每次 open() 新建 SDK 连接对象（不复用 close 过的实例）。
@@ -96,6 +104,41 @@ final class FutuChannel implements Transport {
         @Override
         public void onPush_Notify(FTAPI_Conn client, Notify.Response rsp) {
             log.info("OpenD 通知：type={}", rsp.hasS2C() ? rsp.getS2C().getType() : -1);
+        }
+
+        @Override
+        public void onReply_Sub(FTAPI_Conn client, int nSerialNo, QotSub.Response rsp) {
+            registry.onReply(nSerialNo, rsp);
+        }
+
+        @Override
+        public void onReply_GetKL(FTAPI_Conn client, int nSerialNo, QotGetKL.Response rsp) {
+            registry.onReply(nSerialNo, rsp);
+        }
+
+        @Override
+        public void onReply_RequestHistoryKL(FTAPI_Conn client, int nSerialNo, QotRequestHistoryKL.Response rsp) {
+            registry.onReply(nSerialNo, rsp);
+        }
+
+        @Override
+        public void onReply_RequestHistoryKLQuota(FTAPI_Conn client, int nSerialNo, QotRequestHistoryKLQuota.Response rsp) {
+            registry.onReply(nSerialNo, rsp);
+        }
+
+        @Override
+        public void onReply_RequestRehab(FTAPI_Conn client, int nSerialNo, QotRequestRehab.Response rsp) {
+            registry.onReply(nSerialNo, rsp);
+        }
+
+        @Override
+        public void onReply_RequestTradeDate(FTAPI_Conn client, int nSerialNo, QotRequestTradeDate.Response rsp) {
+            registry.onReply(nSerialNo, rsp);
+        }
+
+        @Override
+        public void onReply_GetStaticInfo(FTAPI_Conn client, int nSerialNo, QotGetStaticInfo.Response rsp) {
+            registry.onReply(nSerialNo, rsp);
         }
     };
 
@@ -234,6 +277,25 @@ final class FutuChannel implements Transport {
         return registry.call("getAccList", TrdGetAccList.Response.class, () -> {
             limits.apply("get-acc-list").acquire();
             return trd.getAccList(req);
+        });
+    }
+
+    /**
+     * 行情通道上的通用请求：先过该接口的限流器，再发送，回复按序列号关联。
+     *
+     * @param limitName 限频名（见 FutuProperties.DEFAULT_LIMITS）
+     */
+    <R> CompletableFuture<R> qotCall(String limitName, String what, Class<R> type, ToIntFunction<FTAPI_Conn_Qot> send) {
+        if (kind != Kind.QOT) {
+            return CompletableFuture.failedFuture(new IllegalStateException(what + " 只在行情通道上可用"));
+        }
+        FTAPI_Conn_Qot qot = (FTAPI_Conn_Qot) current();
+        if (qot == null) {
+            return CompletableFuture.failedFuture(new NotConnectedException(Broker.FUTU, kind.label + "通道未连接"));
+        }
+        return registry.call(what, type, () -> {
+            limits.apply(limitName).acquire();
+            return send.applyAsInt(qot);
         });
     }
 

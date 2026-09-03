@@ -21,9 +21,20 @@ public class ApiExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
-    @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class})
+    @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> badRequest(RuntimeException e) {
         return body(HttpStatus.BAD_REQUEST, "PARAM_INVALID", e.getMessage());
+    }
+
+    /** 状态冲突（网关未启用、作业正在运行、池已满）。 */
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<Map<String, Object>> conflict(IllegalStateException e) {
+        return body(HttpStatus.CONFLICT, "STATE_CONFLICT", e.getMessage());
+    }
+
+    @ExceptionHandler(java.util.NoSuchElementException.class)
+    public ResponseEntity<Map<String, Object>> notFound(RuntimeException e) {
+        return body(HttpStatus.NOT_FOUND, "NOT_FOUND", e.getMessage());
     }
 
     @ExceptionHandler({GatewayException.class, CompletionException.class})
@@ -38,8 +49,14 @@ public class ApiExceptionHandler {
         if (c instanceof GatewayException g) {
             return body(HttpStatus.BAD_GATEWAY, "GATEWAY_REJECTED", g.getMessage());
         }
-        if (c instanceof IllegalArgumentException || c instanceof IllegalStateException) {
+        if (c instanceof IllegalArgumentException) {
             return body(HttpStatus.BAD_REQUEST, "PARAM_INVALID", c.getMessage());
+        }
+        if (c instanceof IllegalStateException) {
+            return body(HttpStatus.CONFLICT, "STATE_CONFLICT", c.getMessage());
+        }
+        if (c instanceof java.util.NoSuchElementException) {
+            return body(HttpStatus.NOT_FOUND, "NOT_FOUND", c.getMessage());
         }
         log.error("未处理异常", c);
         return body(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL", c.toString());

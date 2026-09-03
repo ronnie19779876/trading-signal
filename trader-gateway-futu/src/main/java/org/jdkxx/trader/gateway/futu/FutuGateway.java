@@ -5,20 +5,30 @@ import org.jdkxx.trader.common.ratelimit.RateLimiter;
 import org.jdkxx.trader.common.ratelimit.SlidingWindowRateLimiter;
 import org.jdkxx.trader.domain.AccountRef;
 import org.jdkxx.trader.domain.Broker;
+import org.jdkxx.trader.domain.DailyBar;
+import org.jdkxx.trader.domain.HistoryQuota;
+import org.jdkxx.trader.domain.Instrument;
+import org.jdkxx.trader.domain.InstrumentStatic;
+import org.jdkxx.trader.domain.Market;
+import org.jdkxx.trader.domain.RehabFactor;
+import org.jdkxx.trader.domain.TradingDay;
 import org.jdkxx.trader.gateway.BrokerGateway;
 import org.jdkxx.trader.gateway.GatewayException;
 import org.jdkxx.trader.gateway.GatewayListener;
 import org.jdkxx.trader.gateway.GatewayState;
 import org.jdkxx.trader.gateway.GatewayStatus;
+import org.jdkxx.trader.gateway.MarketDataGateway;
 import org.jdkxx.trader.gateway.NotConnectedException;
 import org.jdkxx.trader.gateway.futu.mapper.FutuAccounts;
 import org.jdkxx.trader.gateway.futu.mapper.FutuStates;
+import org.jdkxx.trader.gateway.futu.marketdata.FutuMarketData;
 import org.jdkxx.trader.gateway.support.ConnectionSupervisor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -35,7 +45,7 @@ import java.util.function.Consumer;
  * 富途网关适配器的对外入口。两条通道（行情 QOT、交易 TRD）各有自己的 {@link ConnectionSupervisor}，
  * 网关级状态是两者的合成：都 CONNECTED 才算 CONNECTED。监听器收到的是网关级事件（不会一条通道一次）。
  */
-public class FutuGateway implements BrokerGateway, AutoCloseable {
+public class FutuGateway implements BrokerGateway, MarketDataGateway, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(FutuGateway.class);
 
@@ -46,6 +56,7 @@ public class FutuGateway implements BrokerGateway, AutoCloseable {
     private final FutuChannel trd;
     private final ConnectionSupervisor qotSupervisor;
     private final ConnectionSupervisor trdSupervisor;
+    private final FutuMarketData marketData;
     private final ConcurrentHashMap<String, RateLimiter> limiters = new ConcurrentHashMap<>();
     private final List<GatewayListener> listeners = new CopyOnWriteArrayList<>();
     private volatile Map<String, String> stateFacts = Map.of();
@@ -62,6 +73,7 @@ public class FutuGateway implements BrokerGateway, AutoCloseable {
             trd = null;
             qotSupervisor = null;
             trdSupervisor = null;
+            marketData = null;
             return;
         }
         scheduler = Executors.newScheduledThreadPool(2, named("futu-scheduler"));
@@ -72,6 +84,7 @@ public class FutuGateway implements BrokerGateway, AutoCloseable {
                 new FutuReplyRegistry("交易", scheduler, dispatch, props.replyTimeout()), this::limiter);
         qotSupervisor = new ConnectionSupervisor(Broker.FUTU, "富途行情通道", qot, props.supervisorSettings(), scheduler);
         trdSupervisor = new ConnectionSupervisor(Broker.FUTU, "富途交易通道", trd, props.supervisorSettings(), scheduler);
+        marketData = new FutuMarketData(qot::qotCall);
         qot.onClosed(qotSupervisor::onTransportClosed);
         trd.onClosed(trdSupervisor::onTransportClosed);
         qot.onGlobalState(s -> stateFacts = FutuStates.facts(s));
@@ -230,6 +243,60 @@ public class FutuGateway implements BrokerGateway, AutoCloseable {
     @Override
     public void addListener(GatewayListener listener) {
         listeners.add(listener);
+    }
+
+    // ------------------------------------------------------------------ MarketDataGateway（行情通道）
+
+    private <T> CompletableFuture<T> requireQot(java.util.function.Supplier<CompletableFuture<T>> call) {
+        if (!props.enabled() || !qotSupervisor.isConnected() || !qot.isConnected()) {
+            return CompletableFuture.failedFuture(new NotConnectedException(Broker.FUTU, status().detail()));
+        }
+        return call.get();
+    }
+
+    @Override
+    public CompletableFuture<List<InstrumentStatic>> staticInfo(List<Instrument> instruments) {
+        return requireQot(() -> marketData.staticInfo(instruments));
+    }
+
+    @Override
+    public CompletableFuture<HistoryQuota> historyQuota() {
+        return requireQot(marketData::historyQuota);
+    }
+
+    @Override
+    public CompletableFuture<List<DailyBar>> historyDailyBars(Instrument instrument, LocalDate from, LocalDate to) {
+        return requireQot(() -> marketData.historyDailyBars(instrument, from, to));
+    }
+
+    /** 富途自己算的复权序列（1 前复权 / 2 后复权），只用于核对读取层复权。 */
+    public CompletableFuture<List<DailyBar>> historyDailyBarsAdjusted(Instrument instrument, LocalDate from, LocalDate to, int rehabType) {
+        return requireQot(() -> marketData.historyDailyBars(instrument, from, to, rehabType));
+    }
+
+    @Override
+    public CompletableFuture<Void> subscribeDailyBars(List<Instrument> instruments) {
+        return requireQot(() -> marketData.subscribeDailyBars(instruments));
+    }
+
+    @Override
+    public CompletableFuture<Void> unsubscribeDailyBars(List<Instrument> instruments) {
+        return requireQot(() -> marketData.unsubscribeDailyBars(instruments));
+    }
+
+    @Override
+    public CompletableFuture<List<DailyBar>> recentDailyBars(Instrument instrument, int count) {
+        return requireQot(() -> marketData.recentDailyBars(instrument, count));
+    }
+
+    @Override
+    public CompletableFuture<List<RehabFactor>> rehab(Instrument instrument) {
+        return requireQot(() -> marketData.rehab(instrument));
+    }
+
+    @Override
+    public CompletableFuture<List<TradingDay>> tradingDays(Market market, LocalDate from, LocalDate to) {
+        return requireQot(() -> marketData.tradingDays(market, from, to));
     }
 
     @Override
