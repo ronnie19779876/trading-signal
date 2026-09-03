@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Configuration;
 @EnableConfigurationProperties(IbkrProperties.class)
 public class IbkrGatewayConfiguration {
 
-    @Bean
+    @Bean(destroyMethod = "close")
     public IbkrGateway ibkrGateway(IbkrProperties properties) {
         return new IbkrGateway(properties);
     }

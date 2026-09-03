@@ -8,11 +8,12 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * 骨架验收：jar 内默认配置（无数据库、两家券商未启用）下应用能启动，系统页与健康检查可用。
+ * 骨架验收：jar 内默认配置（无数据库、两家券商未启用）下应用能启动，系统页、网关接口与健康检查可用。
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -36,9 +37,29 @@ class TraderApplicationTests {
     }
 
     @Test
-    void 健康检查为UP() throws Exception {
+    void 网关接口与错误映射() throws Exception {
+        mvc.perform(get("/api/gateways"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].enabled").value(false));
+        mvc.perform(get("/api/gateways/ibkr"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("DISABLED"));
+        mvc.perform(post("/api/gateways/ibkr/connect"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("PARAM_INVALID"));
+        mvc.perform(get("/api/gateways/xyz"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/gateways/events"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+    }
+
+    @Test
+    void 健康检查为UP且网关指标存在() throws Exception {
         mvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("UP"));
+                .andExpect(jsonPath("$.status").value("UP"))
+                .andExpect(jsonPath("$.components.gateways.status").value("UP"));
     }
 }

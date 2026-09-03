@@ -2,6 +2,15 @@
 
 ## 1.0.0-SNAPSHOT（开发中）
 
+### 第 1 期：网关接入层（2026-09-03）
+
+- `trader-gateway-api`：`BrokerGateway` 增加生命周期、账户、监听器；`ReferenceDataGateway`；`GatewayStatus` 扩展心跳/重连/事实；与 SDK 无关的 `ConnectionSupervisor`（指数退避重连、心跳、过期结果丢弃）。
+- 盈透：`IbkrConnection` / `IbkrWrapper` / `IbkrRequestRegistry`，令牌桶限速，`reqCurrentTime` 心跳，受管账户、合约查询（`reqContractDetails`），1101 数据丢失映射为 reconnected 事件。
+- 富途：行情与交易两条 `FutuChannel` 各自受控，`FutuReplyRegistry`（seq → Future，早到回复暂存），`getGlobalState` 心跳与事实，`getAccList` 账户，按接口限频。
+- 核心与接口：`GatewayLifecycle`（启动自动连接）、`GatewayEventRecorder` + V2 `gateway_event`、`GET/POST /api/gateways*`、健康指标 `gateways`（DEGRADED），统一错误响应。
+- 前端：系统页每 5 秒刷新，网关状态 / 心跳 / 事实 / 账户（脱敏）/ 连接断开按钮 / 最近事件。
+- 测试：61 个单元测试；集成测试 `IbkrGatewayIT`、`FutuGatewayIT`、`ReconnectIT`（本地 TCP 中继断线重连），对真实网关全部通过。
+
 ### 第 0 期：项目骨架（2026-09-03）
 
 - Maven 多模块工程 `org.jdkxx.trader:trader`，`${revision}` + flatten 一处改版本，Maven Wrapper 3.9.16。

@@ -1,20 +1,137 @@
 package org.jdkxx.trader.gateway.futu;
 
+import com.futu.openapi.pb.GetGlobalState;
+import org.jdkxx.trader.common.ratelimit.RateLimiter;
+import org.jdkxx.trader.common.ratelimit.SlidingWindowRateLimiter;
+import org.jdkxx.trader.domain.AccountRef;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.gateway.BrokerGateway;
+import org.jdkxx.trader.gateway.GatewayException;
+import org.jdkxx.trader.gateway.GatewayListener;
+import org.jdkxx.trader.gateway.GatewayState;
 import org.jdkxx.trader.gateway.GatewayStatus;
+import org.jdkxx.trader.gateway.NotConnectedException;
+import org.jdkxx.trader.gateway.futu.mapper.FutuAccounts;
+import org.jdkxx.trader.gateway.futu.mapper.FutuStates;
+import org.jdkxx.trader.gateway.support.ConnectionSupervisor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
- * 富途网关适配器。第 0 期只承担配置校验与状态报告；行情连接 / 交易连接、seq→Future 关联、
- * 断线后恢复订阅、额度与限频闸门是第 1 期的内容。
+ * 富途网关适配器的对外入口。两条通道（行情 QOT、交易 TRD）各有自己的 {@link ConnectionSupervisor}，
+ * 网关级状态是两者的合成：都 CONNECTED 才算 CONNECTED。监听器收到的是网关级事件（不会一条通道一次）。
  */
-public class FutuGateway implements BrokerGateway {
+public class FutuGateway implements BrokerGateway, AutoCloseable {
 
-    private final FutuProperties properties;
+    private static final Logger log = LoggerFactory.getLogger(FutuGateway.class);
 
-    public FutuGateway(FutuProperties properties) {
-        properties.validate();
-        this.properties = properties;
+    private final FutuProperties props;
+    private final ScheduledExecutorService scheduler;
+    private final ExecutorService dispatch;
+    private final FutuChannel qot;
+    private final FutuChannel trd;
+    private final ConnectionSupervisor qotSupervisor;
+    private final ConnectionSupervisor trdSupervisor;
+    private final ConcurrentHashMap<String, RateLimiter> limiters = new ConcurrentHashMap<>();
+    private final List<GatewayListener> listeners = new CopyOnWriteArrayList<>();
+    private volatile Map<String, String> stateFacts = Map.of();
+    private volatile boolean up;
+    private volatile boolean everUp;
+
+    public FutuGateway(FutuProperties props) {
+        props.validate();
+        this.props = props;
+        if (!props.enabled()) {
+            scheduler = null;
+            dispatch = null;
+            qot = null;
+            trd = null;
+            qotSupervisor = null;
+            trdSupervisor = null;
+            return;
+        }
+        scheduler = Executors.newScheduledThreadPool(2, named("futu-scheduler"));
+        dispatch = Executors.newSingleThreadExecutor(named("futu-dispatch"));
+        qot = new FutuChannel(FutuChannel.Kind.QOT, props,
+                new FutuReplyRegistry("行情", scheduler, dispatch, props.replyTimeout()), this::limiter);
+        trd = new FutuChannel(FutuChannel.Kind.TRD, props,
+                new FutuReplyRegistry("交易", scheduler, dispatch, props.replyTimeout()), this::limiter);
+        qotSupervisor = new ConnectionSupervisor(Broker.FUTU, "富途行情通道", qot, props.supervisorSettings(), scheduler);
+        trdSupervisor = new ConnectionSupervisor(Broker.FUTU, "富途交易通道", trd, props.supervisorSettings(), scheduler);
+        qot.onClosed(qotSupervisor::onTransportClosed);
+        trd.onClosed(trdSupervisor::onTransportClosed);
+        qot.onGlobalState(s -> stateFacts = FutuStates.facts(s));
+        qotSupervisor.addListener(channelListener());
+        trdSupervisor.addListener(channelListener());
+    }
+
+    private static java.util.concurrent.ThreadFactory named(String name) {
+        return r -> {
+            Thread t = new Thread(r, name);
+            t.setDaemon(true);
+            return t;
+        };
+    }
+
+    private RateLimiter limiter(String name) {
+        return limiters.computeIfAbsent(name, n ->
+                new SlidingWindowRateLimiter("futu-" + n, props.limit(n), Duration.ofMillis(20), Duration.ofSeconds(30)));
+    }
+
+    /** 把两条通道的事件合成网关级事件。 */
+    private GatewayListener channelListener() {
+        return new GatewayListener() {
+            @Override
+            public void onConnected(Broker broker, boolean reconnected) {
+                if (qotSupervisor.isConnected() && qot.isConnected()) {
+                    // 连上就取一次全局状态，让 facts 立刻可用，不必等第一次心跳
+                    qot.globalState().exceptionally(ex -> null);
+                }
+                if (qotSupervisor.isConnected() && trdSupervisor.isConnected() && !up) {
+                    up = true;
+                    boolean re = everUp;
+                    everUp = true;
+                    notifyListeners(l -> l.onConnected(Broker.FUTU, re));
+                }
+            }
+
+            @Override
+            public void onDisconnected(Broker broker, String reason) {
+                if (up) {
+                    up = false;
+                    notifyListeners(l -> l.onDisconnected(Broker.FUTU, reason));
+                }
+            }
+
+            @Override
+            public void onError(Broker broker, GatewayException error) {
+                notifyListeners(l -> l.onError(Broker.FUTU, error));
+            }
+        };
+    }
+
+    private void notifyListeners(Consumer<GatewayListener> action) {
+        for (GatewayListener l : listeners) {
+            try {
+                action.accept(l);
+            } catch (RuntimeException e) {
+                log.warn("富途网关监听器抛出异常：{}", e.toString());
+            }
+        }
     }
 
     @Override
@@ -23,10 +140,114 @@ public class FutuGateway implements BrokerGateway {
     }
 
     @Override
+    public boolean enabled() {
+        return props.enabled();
+    }
+
+    @Override
+    public boolean autoConnect() {
+        return props.autoConnect();
+    }
+
+    @Override
     public GatewayStatus status() {
-        if (!properties.enabled()) {
+        if (!props.enabled()) {
             return GatewayStatus.disabled("未启用（trader.futu.enabled=false）");
         }
-        return GatewayStatus.disconnected("已配置，连接层待第 1 期实现");
+        GatewayStatus q = qotSupervisor.status(Map.of());
+        GatewayStatus t = trdSupervisor.status(Map.of());
+        Map<String, String> facts = new TreeMap<>(stateFacts);
+        facts.put("channel.qot", q.state().name());
+        facts.put("channel.trd", t.state().name());
+        GatewayState state = combine(q.state(), t.state());
+        String detail;
+        if (state == GatewayState.CONNECTED) {
+            String ps = stateFacts.getOrDefault("programStatus", "");
+            boolean qotLogined = Boolean.parseBoolean(stateFacts.getOrDefault("qotLogined", "true"));
+            detail = !ps.isEmpty() && !"Ready".equals(ps) ? "已连接，但 OpenD 状态为 " + ps
+                    : !qotLogined ? "已连接，但 OpenD 行情未登录"
+                    : "已连接（行情 + 交易通道）";
+        } else {
+            detail = "行情通道：" + q.detail() + "；交易通道：" + t.detail();
+        }
+        Instant since = q.connectedSince() == null || t.connectedSince() == null ? null
+                : (q.connectedSince().isAfter(t.connectedSince()) ? q.connectedSince() : t.connectedSince());
+        Instant heartbeat = q.lastHeartbeatAt() == null ? t.lastHeartbeatAt()
+                : t.lastHeartbeatAt() == null ? q.lastHeartbeatAt()
+                : (q.lastHeartbeatAt().isBefore(t.lastHeartbeatAt()) ? q.lastHeartbeatAt() : t.lastHeartbeatAt());
+        return new GatewayStatus(state, detail, Instant.now(), since, heartbeat,
+                Math.max(q.reconnectAttempts(), t.reconnectAttempts()), facts);
+    }
+
+    static GatewayState combine(GatewayState a, GatewayState b) {
+        if (a == GatewayState.ERROR || b == GatewayState.ERROR) {
+            return GatewayState.ERROR;
+        }
+        if (a == GatewayState.CONNECTED && b == GatewayState.CONNECTED) {
+            return GatewayState.CONNECTED;
+        }
+        if (a == GatewayState.RECONNECTING || b == GatewayState.RECONNECTING) {
+            return GatewayState.RECONNECTING;
+        }
+        if (a == GatewayState.CONNECTING || b == GatewayState.CONNECTING) {
+            return GatewayState.CONNECTING;
+        }
+        return GatewayState.DISCONNECTED;
+    }
+
+    @Override
+    public CompletableFuture<Void> connect() {
+        if (!props.enabled()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return CompletableFuture.allOf(qotSupervisor.connect(), trdSupervisor.connect());
+    }
+
+    @Override
+    public void disconnect() {
+        if (props.enabled()) {
+            qotSupervisor.disconnect();
+            trdSupervisor.disconnect();
+        }
+    }
+
+    @Override
+    public CompletableFuture<List<AccountRef>> accounts() {
+        if (!props.enabled() || !trdSupervisor.isConnected() || !trd.isConnected()) {
+            return CompletableFuture.failedFuture(new NotConnectedException(Broker.FUTU, status().detail()));
+        }
+        return trd.accList().thenApply(FutuAccounts::map);
+    }
+
+    /** OpenD 全局状态（行情通道就绪后可用）。 */
+    public CompletableFuture<GetGlobalState.S2C> globalState() {
+        if (!props.enabled() || !qotSupervisor.isConnected()) {
+            return CompletableFuture.failedFuture(new NotConnectedException(Broker.FUTU, status().detail()));
+        }
+        return qot.globalState();
+    }
+
+    @Override
+    public void addListener(GatewayListener listener) {
+        listeners.add(listener);
+    }
+
+    @Override
+    public void close() {
+        if (!props.enabled()) {
+            return;
+        }
+        try {
+            disconnect();
+        } catch (RuntimeException e) {
+            log.warn("断开富途网关时出错：{}", e.toString());
+        }
+        dispatch.shutdown();
+        scheduler.shutdown();
+        try {
+            scheduler.awaitTermination(2, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 }

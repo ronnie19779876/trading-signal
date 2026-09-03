@@ -32,11 +32,36 @@ trader:
     pgpass:
       # spring.datasource.password 为空时从 ~/.pgpass 取密码（与 psql 共用同一份）
       enabled: true
-  # 两家券商默认不启用；host/port/client-id 属于敏感配置，只在 secrets.yml / trader.env 里出现
+  # 两家券商默认不启用；host/port/client-id 属于敏感配置，只在 secrets.yml / trader.env 里出现。
+  # 其余为连接层的机制参数（与环境无关）。
   ibkr:
     enabled: false
+    auto-connect: true
+    primary-exchange: NASDAQ
+    connect-timeout: 10s
+    request-timeout: 15s
+    heartbeat-interval: 30s
+    heartbeat-timeout: 10s
+    message-rate-per-second: 40
+    reconnect:
+      initial-delay: 5s
+      max-delay: 60s
+      max-attempts: -1
   futu:
     enabled: false
+    auto-connect: true
+    client-info: trading-signal
+    encrypt: false
+    connect-timeout: 10s
+    reply-timeout: 10s
+    health-interval: 30s
+    reconnect:
+      initial-delay: 5s
+      max-delay: 60s
+      max-attempts: -1
+    limits:
+      get-global-state: 60/30s
+      get-acc-list: 10/30s
   ai:
     api-key: ${OPENAI_API_KEY:}
     model: gpt-5.6-sol
@@ -51,6 +76,11 @@ management:
   endpoint:
     health:
       show-details: always
+      status:
+        # 网关暂时不可达 → DEGRADED，HTTP 200；排在 OUT_OF_SERVICE 与 UP 之间
+        order: DOWN,OUT_OF_SERVICE,DEGRADED,UP,UNKNOWN
+        http-mapping:
+          DEGRADED: 200
   info:
     build:
       enabled: true

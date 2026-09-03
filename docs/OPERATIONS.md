@@ -25,6 +25,19 @@ curl -s http://127.0.0.1:8083/api/system/info
 
 前端：`cd trader-web && npm install && npm run dev`（:5174）。
 
+启用网关：在 `config/secrets.yml` 里把 `trader.ibkr.enabled` / `trader.futu.enabled` 置 true 并填 host/port/client-id（隧道时 host 为 127.0.0.1），
+重启开发实例后系统页应显示两家 CONNECTED、心跳时刻每 30 秒更新，`gateway_event` 表出现 CONNECTED 记录。
+
+集成测试（对真实网关，只读；连接参数只从环境变量读，缺失即跳过）：
+
+```bash
+export TRADER_IBKR_HOST=127.0.0.1 TRADER_IBKR_PORT=<隧道端口> TRADER_IBKR_TEST_CLIENT_ID=91 \
+       TRADER_FUTU_HOST=127.0.0.1 TRADER_FUTU_PORT=<隧道端口>
+./mvnw -pl trader-app -am verify -Dtrader.integration=true -Dtest='IbkrGatewayIT,FutuGatewayIT,ReconnectIT' -Dsurefire.failIfNoSpecifiedTests=false
+```
+
+`ReconnectIT` 会用 client-id 92（测试 id + 1）经本地 TCP 中继连盈透；不要与运行中的实例撞 id。
+
 ## 3. 打包与部署
 
 ```bash
@@ -53,7 +66,9 @@ sudo cp systemd/trading-signal.service /etc/systemd/system/   # 改 User/Group/W
 
 ## 5. 日常检查
 
-- `GET /actuator/health` 为 UP；`GET /api/system/info` 的 `environment` 与所在机器一致、`database.marker` 与之一致。
+- `GET /api/gateways`：两家 CONNECTED，`lastHeartbeatAt` 在 1 分钟内，`reconnectAttempts` 为 0；盈透 facts 里各 `farm.*` 为 OK 或 INACTIVE（INACTIVE 正常）。
+- `GET /api/gateways/events?limit=20`：盈透每日自动重启会留下一对 DISCONNECTED / RECONNECTED，属正常；频繁出现则查隧道或网关。
+- `GET /actuator/health` 为 UP（DEGRADED 表示有网关未连上，看 `components.gateways`）；`GET /api/system/info` 的 `environment` 与所在机器一致、`database.marker` 与之一致。
 - 版本：`/api/system/info` 的 `version` / `buildTime` 与发布包一致。
 
 ## 6. 故障排查
@@ -68,3 +83,8 @@ sudo cp systemd/trading-signal.service /etc/systemd/system/   # 改 User/Group/W
 | `NoClassDefFoundError: com/ib/client/...` 或 `com/futu/openapi/...` | fat jar 缺 SDK | 检查 `trader-app/pom.xml` 的 runtime 依赖是否被删 |
 | `NoSuchMethodError ... Descriptors$FileDescriptor.internalBuildGeneratedFileFrom` | 有人把 `com.futunn.openapi:futu-api` 直接加进了依赖 | 只能依赖 `futu-api-shaded` |
 | `./mvnw` 找不到 tws-api | wrapper 的 Maven 与安装 SDK 时用的本地仓库不同 | 统一 `~/.m2/settings.xml` 的 `localRepository`，或重跑 `install-sdks.sh` |
+| 盈透状态 RECONNECTING，facts 有 `326 client-id 已被占用` | 另一个实例用了同一个 client-id | 给每个实例分配独立 id（开发 12 / 生产 2 / 临时 91~99） |
+| 盈透每天固定时间 DISCONNECTED → RECONNECTED | IB Gateway 每日自动重启 | 正常；几分钟内自动恢复。每周需人工 2FA 重新登录网关 |
+| 盈透 `detail` 为「配置的 trader.ibkr.account 不在网关的受管账户列表里」且状态 ERROR | 账户号配错或登录了别的用户名 | 核对后重启实例 |
+| 富途 CONNECTED 但 detail「OpenD 状态为 …」/「行情未登录」 | OpenD 未完成登录、需要验证码或未同意协议 | 到服务器上看 OpenD 日志，`relogin` / 输入验证码 |
+| 富途状态 RECONNECTING 且 detail 含「连接 OpenD 失败」 | OpenD 未运行或隧道未建 | 检查 OpenD 进程与隧道 |

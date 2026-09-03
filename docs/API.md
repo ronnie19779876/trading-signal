@@ -31,8 +31,45 @@
 | `gateways[].healthy` | `CONNECTED` 或 `DISABLED` 为 true |
 | `ai.configured` | 是否配置了 API key（不返回 key） |
 
+## 网关（第 1 期）
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/gateways` | 两家网关的状态视图数组（字段见下） |
+| `GET /api/gateways/{broker}` | 单个，`broker` 为 `ibkr` / `futu`（不区分大小写） |
+| `POST /api/gateways/{broker}/connect` | 手工发起连接（未启用 → 400） |
+| `POST /api/gateways/{broker}/disconnect` | 手工断开并停止重连 |
+| `GET /api/gateways/{broker}/accounts` | 账户列表，账户号脱敏；未连接 → 503 |
+| `GET /api/gateways/ibkr/instruments?symbol=AAPL` | 合约明细列表，查无此标的返回 `[]`；富途暂不支持 → 400 |
+| `GET /api/gateways/events?limit=50` | 最近连接事件（存储未启用时为 `[]`） |
+
+状态视图：
+
+```json
+{
+  "broker": "IBKR", "displayName": "盈透", "role": "持仓账户：资金、持仓盈亏、下单",
+  "enabled": true, "autoConnect": true,
+  "state": "CONNECTED", "healthy": true, "detail": "已连接",
+  "checkedAt": "…", "connectedSince": "…", "lastHeartbeatAt": "…", "reconnectAttempts": 0,
+  "facts": { "accounts": "1", "serverVersion": "223", "farm.usfarm": "OK", "connectivity": "RESTORED" }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `state` | `DISABLED / DISCONNECTED / CONNECTING / CONNECTED / RECONNECTING / ERROR` |
+| `detail` | 人类可读说明，重连时含"N 秒后第 k 次重连" |
+| `lastHeartbeatAt` | 最近一次心跳成功时刻（盈透 reqCurrentTime / 富途 getGlobalState） |
+| `facts` | 可公开事实；盈透：serverVersion、accounts、nextOrderId、farm.*、connectivity；富途：opendVersion、qotLogined、trdLogined、programStatus、market.US/HK、channel.qot/trd |
+
+账户视图：`{ "broker": "FUTU", "maskedId": "12*****", "kind": "LIVE|PAPER", "markets": ["HK","US"] }`。
+
+事件视图：`{ "id": 1, "broker": "IBKR", "event": "CONNECTED|RECONNECTED|DISCONNECTED|ERROR", "detail": "…", "occurredAt": "…" }`。
+
+错误响应统一为 `{ "code": "...", "message": "..." }`：`PARAM_INVALID` 400、`GATEWAY_NOT_CONNECTED` 503、`GATEWAY_TIMEOUT` 504、`GATEWAY_REJECTED` 502。
+
 ## Actuator
 
-- `GET /actuator/health` — `{"status":"UP"}`，含各组件明细。
+- `GET /actuator/health` — `{"status":"UP"}`，含各组件明细；组件 `gateways` 在有网关启用但未连接时为 `DEGRADED`，总状态随之为 `DEGRADED`，HTTP 仍是 200。
 - `GET /actuator/info` — build-info（版本、构建时间）。
 - `POST /actuator/shutdown` — 仅本机开发与生产外置配置开启，供 `run-local.sh stop` / `bin/trader.sh stop` 使用。

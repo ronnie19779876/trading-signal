@@ -9,11 +9,15 @@
     </parent>
     <artifactId>trader-storage</artifactId>
     <name>trader-storage</name>
-    <description>PostgreSQL 存储：JdbcTemplate 仓储、Flyway 迁移、环境守卫（防止开发实例连生产库）、~/.pgpass 密码来源</description>
+    <description>PostgreSQL 存储：JdbcTemplate 仓储、Flyway 迁移、环境守卫（防止开发实例连生产库）、~/.pgpass 密码来源。依赖 domain 以持久化领域对象</description>
     <dependencies>
         <dependency>
             <groupId>org.jdkxx.trader</groupId>
             <artifactId>trader-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.jdkxx.trader</groupId>
+            <artifactId>trader-domain</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

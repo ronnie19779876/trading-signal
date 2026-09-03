@@ -1,4 +1,5 @@
 import { http } from './http'
+import type { GatewayView } from './gateways'
 
 export interface DatabaseStatus {
   enabled: boolean
@@ -6,16 +7,6 @@ export interface DatabaseStatus {
   serverVersion: string | null
   marker: string | null
   detail: string
-}
-
-export interface GatewayView {
-  broker: 'IBKR' | 'FUTU'
-  displayName: string
-  role: string
-  state: 'DISABLED' | 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'ERROR'
-  healthy: boolean
-  detail: string
-  checkedAt: string
 }
 
 export interface AiStatus {

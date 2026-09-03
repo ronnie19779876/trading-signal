@@ -1,5 +1,7 @@
 package org.jdkxx.trader.gateway.ibkr;
 
+import org.jdkxx.trader.gateway.support.ReconnectPolicy;
+import org.jdkxx.trader.gateway.support.SupervisorSettings;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
@@ -17,11 +19,35 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "trader.ibkr")
 public record IbkrProperties(
         @DefaultValue("false") boolean enabled,
+        @DefaultValue("true") boolean autoConnect,
         String host,
         Integer port,
         Integer clientId,
         String account,
-        @DefaultValue("10s") Duration connectTimeout) {
+        @DefaultValue("NASDAQ") String primaryExchange,
+        @DefaultValue("10s") Duration connectTimeout,
+        @DefaultValue("15s") Duration requestTimeout,
+        @DefaultValue("30s") Duration heartbeatInterval,
+        @DefaultValue("10s") Duration heartbeatTimeout,
+        @DefaultValue("40") int messageRatePerSecond,
+        @DefaultValue Reconnect reconnect) {
+
+    public record Reconnect(
+            @DefaultValue("5s") Duration initialDelay,
+            @DefaultValue("60s") Duration maxDelay,
+            @DefaultValue("-1") int maxAttempts) {
+
+        public ReconnectPolicy policy() {
+            return new ReconnectPolicy(initialDelay, maxDelay, maxAttempts, 0.2);
+        }
+    }
+
+    /** 测试与骨架用：一份未启用的配置。 */
+    public static IbkrProperties disabled() {
+        return new IbkrProperties(false, true, null, null, null, null, "NASDAQ", Duration.ofSeconds(10),
+                Duration.ofSeconds(15), Duration.ofSeconds(30), Duration.ofSeconds(10), 40,
+                new Reconnect(Duration.ofSeconds(5), Duration.ofSeconds(60), -1));
+    }
 
     /** 启用时校验必填项；未启用时什么都不查，允许骨架在没有任何网关配置的情况下启动。 */
     public void validate() {
@@ -31,6 +57,10 @@ public record IbkrProperties(
         require(host != null && !host.isBlank(), "trader.ibkr.host");
         require(port != null && port > 0, "trader.ibkr.port");
         require(clientId != null && clientId >= 0, "trader.ibkr.client-id");
+    }
+
+    public SupervisorSettings supervisorSettings() {
+        return new SupervisorSettings(connectTimeout, heartbeatInterval, heartbeatTimeout, 2, reconnect.policy());
     }
 
     private static void require(boolean ok, String key) {

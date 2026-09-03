@@ -27,10 +27,12 @@ cd trader-web && npm run dev              # Vite :5174，/api 与 /actuator 代�
 cd trader-web && npm run build            # 产物进 trader-app/src/main/resources/static（gitignore）
 ./scripts/package.sh                      # dist/trading-signal-<版本>-<时间戳>.tar.gz
 ./scripts/check-secrets.sh                # 敏感信息扫描
+# 集成测试（对真实网关只读；参数从环境变量读，见 OPERATIONS §2）
+./mvnw -pl trader-app -am verify -Dtrader.integration=true -Dtest='IbkrGatewayIT,FutuGatewayIT,ReconnectIT' -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
 - 脚本自己探测 JDK 21（`scripts/lib/jdk.sh`），不依赖 `JAVA_HOME`；直接跑 `./mvnw` 时非交互 shell 可能没有 `JAVA_HOME`，需要显式指定 JDK 21。
-- `mvnw` 使用 Maven 3.9.x；本地仓库位置由 `~/.m2/settings.xml` 决定，必须与安装 SDK 时用的同一个。
+- `mvnw` 使用 Maven 3.9.x；本地仓库位置由 `~/.m2/settings.xml` 决定，必须与安装 SDK 时用的同一个。依赖齐了以后加 `-o` 离线构建：本机在线构建曾因网络检查卡住十分钟，离线全量 verify 约 10 秒。
 - 带 `-Dsurefire.failIfNoSpecifiedTests=false` 时测试名打错会静默通过，认结果前确认输出里有 `Tests run: N`。
 
 ## 端口分配（撞车的表现都不像撞车）
@@ -57,6 +59,8 @@ storage → common ；ai → common
   三处都是 `<optional>true</optional>`，trader-app 另有 runtime 声明只为打包——删掉它构建照过、启动就 NoClassDefFoundError。
 - core 只认 `trader-gateway-api` 的接口；适配器在 app 层插入。
 - 存储用 JdbcTemplate + Flyway（`trader-storage/src/main/resources/db/migration/V<n>__<snake>.sql`，只增不改），不用 JPA，不用 Lombok。
+- 网关线程纪律：SDK 回调线程（`ibkr-pump`、富途 `FTAPI4JNet`）上只做分发；Future 的完成转到 `*-dispatch`；状态机与监听器跑在 `*-scheduler`；监听器里落库要转到自己的线程（见 `GatewayEventRecorder`）。
+- 新增一种 TWS 请求：在 `IbkrWrapper` 里把数据回调交给 `registry.item`、结束回调交给 `registry.complete`；无 reqId 的请求用等待队列（参考 `currentTime`）。新增一种富途请求：在 `FutuChannel` 的 SPI 里把 `onReply_*` 交给 `registry.onReply`，调用处用 `registry.call(...)` 包住 SDK 调用并先过限流器。
 
 ## 坑（已实测）
 
@@ -69,9 +73,13 @@ storage → common ；ai → common
 | Mac 上开着系统级 SOCKS 代理时 pgjdbc 连不上 127.0.0.1 | 启动加 `-DsocksNonProxyHosts='localhost|127.*|[::1]'`（脚本与 IDEA 运行配置已带） |
 | 启动日志 `Flyway upgrade recommended: PostgreSQL 18.6 is newer than this version of Flyway` | Spring Boot 3.5.13 BOM 带的 Flyway 11.7.2 只声明支持到 PG 17；实测 V1 迁移正常。升级 Flyway 需在父 POM dependencyManagement 里显式钉版本，另议 |
 | 盈透 jar 不在 Central 且许可证不允许再分发 | `scripts/install-sdks.sh` 下载安装；`.gitignore` 排除 `*.jar` |
+| TWS `Contract.secType()` 返回枚举，`getSecType()` 才是字符串 | 断言与映射用 `getSecType()` |
+| 富途 proto2 枚举字段（如 `ProgramStatus.getType()`）返回枚举而不是 int | 直接比较枚举常量，别用 `_VALUE` |
+| 富途交易通道没有探测接口 | 心跳用只读 `getAccList`（限频 10/30s，30 秒一次够用） |
+| IB Gateway 上 `primaryExch=NASDAQ` 已实测可用（AAPL conId 265598） | 不必改用 ISLAND |
 
 ## 当前状态
 
-- **第 0 期骨架已交付**（1.0.0-SNAPSHOT）：多模块工程、配置分层、`EnvironmentGuard`、`/api/system/info` 与 `/actuator/health`、Vue 系统页、脚本与部署模板。
-- 两家网关只有配置校验与状态报告，`trader.ibkr.enabled` / `trader.futu.enabled` 默认 false。
-- **下一期（第 1 期）：网关接入层**——连接管理、断线重连、健康探测、请求-回调关联、限频闸门。开工前先出设计。
+- **第 0 期骨架、第 1 期网关接入层已交付**（1.0.0-SNAPSHOT，2026-09-03）：连接 / 重连 / 心跳、请求-回调关联、限频、账户与合约查询、事件时间线（V2 `gateway_event`）、`/api/gateways*`、系统页实时状态。61 个单元测试 + 4 个集成测试（真实网关 + TCP 中继断线重连）全过。
+- 本机 `config/secrets.yml` 已启用两家网关（隧道 + 开发 client-id）；入库的 `config/application.yml` 仍是 `enabled: false`。
+- **下一期（第 2 期）：行情数据底座**——标的池、富途历史日 K 线全量（标普 500 + 纳指 100）与增量、复权口径、实时订阅（不落库）、查询接口。开工前先出设计。

@@ -1,6 +1,7 @@
 package org.jdkxx.trader.core.system;
 
 import org.jdkxx.trader.ai.AiStatus;
+import org.jdkxx.trader.core.gateway.GatewayViews;
 import org.jdkxx.trader.storage.status.DatabaseStatus;
 
 import java.time.Instant;
@@ -16,10 +17,6 @@ public record SystemInfo(
         String environment,
         Instant serverTime,
         DatabaseStatus database,
-        List<GatewayView> gateways,
+        List<GatewayViews.GatewayView> gateways,
         AiStatus ai) {
-
-    public record GatewayView(String broker, String displayName, String role, String state, boolean healthy,
-                              String detail, Instant checkedAt) {
-    }
 }

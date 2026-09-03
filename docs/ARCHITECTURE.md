@@ -1,6 +1,6 @@
 # 架构设计说明书
 
-> 版本：1.0（第 0 期骨架，2026-09-03）。设计方案已于 2026-09-03 经用户认可。
+> 版本：1.1（第 0 期骨架 + 第 1 期网关接入层，2026-09-03）。两期设计均已经用户认可。
 > 本文不含任何主机名、IP、账户号、网关端口——这些只存在于被 `.gitignore` 排除的外置配置里。
 
 ## 1. 目标与分期
@@ -16,8 +16,8 @@
 
 | 期 | 内容 |
 | --- | --- |
-| 0 | **骨架**（本文）：多模块、配置分层、环境守卫、健康页、前端骨架、脚本与部署模板 |
-| 1 | 网关接入层：连接管理 / 断线重连 / 健康探测、请求-回调关联、限频与额度闸门；系统页显示真实网关状态 |
+| 0 | **骨架**（已交付）：多模块、配置分层、环境守卫、健康页、前端骨架、脚本与部署模板 |
+| 1 | **网关接入层**（已交付，§10）：连接管理 / 断线重连 / 健康探测、请求-回调关联、限频闸门、账户与合约查询、事件时间线 |
 | 2 | 行情数据底座：标的池、历史日 K 线全量与增量（富途）、复权口径、实时订阅（不落库）、查询接口 |
 | 3 | 账户与持仓：盈透账户资金、收盘持仓与盈亏的每日快照与对账 |
 | 4 | 基本面与 AI 分析：富途基本面增量、入场信号判据、OpenAI 结构化分析、信号页 |
@@ -29,12 +29,12 @@
 trading-signal/
 ├── trader-common          基础工具：AppEnvironment、MarketClock（America/New_York）、Masking。无 Spring、无 SDK
 ├── trader-domain          领域模型：Broker（含职责）、Market、Instrument。无 Spring、无 SDK
-├── trader-gateway-api     网关端口：BrokerGateway、GatewayStatus/GatewayState。上层只依赖这里
-├── trader-gateway-ibkr    盈透适配器：IbkrProperties、IbkrGateway、mapper.IbkrContracts（com.ib.client.* 只在这里）
-├── trader-gateway-futu    富途适配器：FutuProperties、FutuGateway、mapper.FutuSecurities（com.futu.openapi.* 只在这里）
-├── trader-storage         PostgreSQL：Flyway 迁移、EnvironmentGuard、pgpass 密码来源、DatabaseStatusService
+├── trader-gateway-api     网关端口：BrokerGateway / ReferenceDataGateway / GatewayListener、GatewayStatus；support.ConnectionSupervisor（与 SDK 无关的连接状态机）
+├── trader-gateway-ibkr    盈透适配器：IbkrGateway / IbkrConnection / IbkrWrapper / IbkrRequestRegistry、mapper.*（com.ib.client.* 只在这里）
+├── trader-gateway-futu    富途适配器：FutuGateway / FutuChannel / FutuReplyRegistry、mapper.*（com.futu.openapi.* 只在这里）
+├── trader-storage         PostgreSQL：Flyway 迁移（V1 app_environment、V2 gateway_event）、EnvironmentGuard、pgpass 密码来源、仓储
 ├── trader-ai              OpenAI 接入：AiProperties、OpenAiClientFactory（com.openai.* 只在这里）
-├── trader-core            业务编排：SystemInfoService（第 0 期）；后续采集、信号、风控、订单服务
+├── trader-core            业务编排：GatewayRegistry / GatewayLifecycle / GatewayEventRecorder / GatewayService、SystemInfoService
 ├── trader-app             Spring Boot 启动、REST、静态前端、fat jar；把两家适配器装配进核心
 ├── trader-web             Vue 3 + Vite + TypeScript + Element Plus（npm 工程，不是 Maven 模块）
 └── sdk/                   tws-api 安装、futu-api-shaded 重定位工程
@@ -46,7 +46,7 @@ trading-signal/
 app → { core, gateway-ibkr, gateway-futu }
 core → { gateway-api, storage, ai }
 gateway-ibkr / gateway-futu → gateway-api → domain → common
-storage → common ；ai → common
+storage → domain → common ；ai → common
 ```
 
 设计要点：
@@ -119,3 +119,46 @@ storage → common ；ai → common
 ## 9. 第 0 期验收
 
 - `./mvnw clean verify` 通过；`./scripts/run-local.sh` 启动后 `/actuator/health` 为 UP；`db_trader_dev` 上 Flyway 建出 `app_environment` 并盖上 `DEV`；`/api/system/info` 报告版本、环境、库、两家网关 `DISABLED`；`cd trader-web && npm run build` 产物随 jar 提供页面。
+
+## 10. 第 1 期：网关接入层（2026-09-03 交付）
+
+设计记录见 [design/phase1-gateway-layer.md](design/phase1-gateway-layer.md)，这里只记实现后的要点与实测结论。
+
+### 10.1 共用状态机
+
+`trader-gateway-api` 的 `ConnectionSupervisor` 与 SDK 无关：适配器只实现 `Transport`（`open()` 建连并等就绪、`close()`、`probe()` 心跳）。
+状态 `DISCONNECTED → CONNECTING → CONNECTED`，断线或心跳连续 2 次失败进入 `RECONNECTING`，指数退避 5s×2 ≤ 60s（±20% 抖动，次数默认不限），
+不可重试错误进入 `ERROR`。Transport 的 Future 一律 `whenCompleteAsync(scheduler)` 接回调度线程，**SDK 回调线程永远不跑状态机或监听器**；
+`generation` 计数丢弃过期的异步结果。重连成功发 `onConnected(reconnected=true)`，第 2 期的订阅恢复挂在这里。
+单元测试用虚拟时间的 `ManualScheduler`，结果完全确定。
+
+### 10.2 盈透
+
+- `IbkrConnection`：每次 open 新建 `EClientSocket`；`ibkr-connect` 线程跑同步握手 `eConnect`，`ibkr-reader`（EReader）+ `ibkr-pump`（`waitForSignal/processMsgs`）；就绪 = `nextValidId`。
+- `IbkrWrapper extends DefaultEWrapper` 只做分发；`IbkrRequestRegistry` 的 reqId 从 10_000_000 起，与 orderId 空间分开；Future 完成转到 `ibkr-dispatch`。
+- `currentTime` / `managedAccounts` 没有 reqId，用等待队列按到达顺序完成。
+- 令牌桶 40 条/秒；请求超时 15s；心跳 `reqCurrentTime` 30s。
+- 系统消息：2104/2106/2158 → `farm.<name>=OK`，2103/2105 BROKEN，2107/2108 INACTIVE；1100 只记事实；1101 → `notifyDataLost` 触发 reconnected 事件；326 明确提示 client-id 冲突。
+- `trader.ibkr.account` 配置了但不在受管列表 → `ERROR`（不可重试）。
+- **实测**（Gateway server version 223）：`primaryExch=NASDAQ` 可用（AAPL conId 265598，minTick 0.01，时区 US/Eastern）；查无此标的时 200 映射为空列表；中继切断后约 1 秒内重连成功。
+
+### 10.3 富途
+
+- 两条通道各一个 `FutuChannel` + 各自的 `ConnectionSupervisor`；网关状态 = 两者合成（都 CONNECTED 才算 CONNECTED；任一 ERROR → ERROR；任一 RECONNECTING → RECONNECTING）。监听器只收网关级事件。
+- 每次 open 新建 `FTAPI_Conn_Qot` / `FTAPI_Conn_Trd`；就绪 = `onInitConnect errCode==0`；`FTAPI.init()` 进程内一次。
+- `FutuReplyRegistry`：seq → Future，回复先于登记到达时暂存 early 表；`retType != 0` → `RequestRejectedException`。
+- 探测：行情通道 `getGlobalState`（顺带把 OpenD 版本、登录状态、程序状态、港美市场状态写进 facts）；交易通道没有专门探测接口，用只读 `getAccList`（限频 10/30s，心跳 30s 一次远低于此）。
+- 限频：滑动窗口 + 20ms 最小间隔，按接口名配置（`get-global-state 60/30s`、`get-acc-list 10/30s`）。
+- **实测**：OpenD 1010.7008，两通道连接后 `programStatus=Ready`；账户列表含 1 个富途证券实盘（港美权限）与若干模拟账户；中继切断后 1 秒内重连。SDK 的 `onDisconnect` errCode 打印为 -4294967296（无符号转换），仅影响日志。
+
+### 10.4 核心、存储、接口
+
+- `GatewayLifecycle`（SmartLifecycle）：启动时对 `enabled && auto-connect` 的网关异步 `connect()`（网关不可达不影响应用启动），关闭时 `disconnect()`。
+- `GatewayEventRecorder` 把连接事件写日志并落 `gateway_event`（V2），落库在自己的线程。
+- `GET /api/gateways*`（见 API.md）；健康指标 `gateways`：启用但未连接 → `DEGRADED`（HTTP 200），部署脚本的就绪判断不受影响。
+- 账户号只在服务端内存里，接口一律脱敏（`U1*****`）；facts 里没有主机、端口、账户号。
+
+### 10.5 测试
+
+- 单元 61 个：状态机（虚拟时间）、两个注册表、限流器、映射、服务与接口。
+- 集成（`-Dtrader.integration=true`，连接参数从环境变量读，缺失即跳过）：`IbkrGatewayIT`、`FutuGatewayIT`、`ReconnectIT`（本地 TCP 中继切断后自动重连，两家都过）。

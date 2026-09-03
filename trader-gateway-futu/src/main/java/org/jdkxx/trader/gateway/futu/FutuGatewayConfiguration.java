@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Configuration;
 @EnableConfigurationProperties(FutuProperties.class)
 public class FutuGatewayConfiguration {
 
-    @Bean
+    @Bean(destroyMethod = "close")
     public FutuGateway futuGateway(FutuProperties properties) {
         return new FutuGateway(properties);
     }

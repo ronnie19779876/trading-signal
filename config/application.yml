@@ -26,11 +26,13 @@ trader:
   environment: DEV
   storage:
     enabled: true
-  # 骨架阶段两家网关都不启用（连接层是第 1 期）。启用时 host/port/client-id 写在 config/secrets.yml
+  # 两家网关默认不启用，这样没有 secrets.yml 的新克隆也能启动。
+  # 本机要连网关时在 config/secrets.yml 里置 enabled: true 并填 host/port/client-id（见 secrets.yml.example）。
   ibkr:
     enabled: false
   futu:
     enabled: false
+    client-info: trading-signal-dev
 
 management:
   endpoints:
