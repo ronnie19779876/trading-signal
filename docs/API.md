@@ -83,10 +83,11 @@
 | `GET /api/pool` / `POST /api/pool/{symbol}?role=POOL|HOLDING&note=` / `DELETE /api/pool/{symbol}` | 标的池；加入后自动排深度回补作业（无法自动时返回提示）；池满 → 409 |
 | `POST /api/bars/refresh/universe?count=1000` | 全量轮转拉 K 线（零历史额度；1000 首拉 / 10 增量） |
 | `POST /api/bars/backfill/{symbol}` / `POST /api/bars/backfill` | 深度回补一只 / 所有待补的池与持仓（占历史额度，额度守卫） |
-| `POST /api/bars/increment` | 每日增量：交易日历 → 缺口补齐 → 池/持仓复权因子刷新 |
+| `POST /api/bars/increment` | 每日增量：交易日历 → 缺口补齐 → 复权因子刷新（池/持仓每日，全量 7 天到期的） |
+| `POST /api/bars/rehab/refresh?all=false` | 复权因子刷新作业：all=true 全量（约 5 分钟）；否则池/持仓 + 到期的 |
 | `GET /api/bars/{symbol}?from&to&adjust=none|forward|backward` | K 线（默认最近 90 天）；复权在读取层计算 |
 | `GET /api/bars/{symbol}/rehab` | 复权因子 |
-| `GET /api/bars/coverage` | 行数/标的数/最早最新、全量/池/持仓规模、已覆盖数、未解析数、错误数、历史额度、运行中的作业 |
+| `GET /api/bars/coverage` | 行数/标的数/最早最新、全量/池/持仓规模、已覆盖数、复权因子覆盖数、未解析数、错误数、历史额度、运行中的作业 |
 | `GET /api/bars/quota` | 历史额度（7 天滚动） |
 | `GET /api/jobs?limit=` / `GET /api/jobs/{id}` / `POST /api/jobs/cancel` | 作业记录与取消（在下一批边界停下） |
 

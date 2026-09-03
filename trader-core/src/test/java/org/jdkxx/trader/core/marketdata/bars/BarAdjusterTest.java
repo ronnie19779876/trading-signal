@@ -77,6 +77,17 @@ class BarAdjusterTest {
     }
 
     @Test
+    void 除权日当天那根的前收按前一日口径折算() {
+        // 拆股 10:1 于 06-10：06-10 的收盘不动，但它的前收（06-07 收盘 1208.88）要折成 120.888
+        RehabFactor split = new RehabFactor(AAPL, LocalDate.parse("2024-06-10"), new BigDecimal("0.1"), BigDecimal.ZERO, new BigDecimal("10"), BigDecimal.ZERO, 0, null, null, 10, 1);
+        DailyBar splitDay = new DailyBar(AAPL, LocalDate.parse("2024-06-10"), new BigDecimal("120.37"), new BigDecimal("123"), new BigDecimal("117"),
+                new BigDecimal("121.79"), new BigDecimal("1208.88"), 100, null, null, null, null, false);
+        DailyBar out = BarAdjuster.adjust(List.of(splitDay), List.of(split), Adjustment.FORWARD, FactorMode.PER_EVENT).get(0);
+        assertThat(out.close()).isEqualByComparingTo("121.79");
+        assertThat(out.lastClose()).isEqualByComparingTo("120.888");
+    }
+
+    @Test
     void 无因子或不复权原样返回() {
         List<DailyBar> bars = List.of(bar("2026-08-07", "1"));
         assertThat(BarAdjuster.adjust(bars, List.of(), Adjustment.FORWARD, FactorMode.CUMULATIVE)).isSameAs(bars);

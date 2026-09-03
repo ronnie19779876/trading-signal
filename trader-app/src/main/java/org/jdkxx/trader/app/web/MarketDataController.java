@@ -116,6 +116,11 @@ public class MarketDataController {
         return Map.of("jobId", facade.increment("MANUAL"));
     }
 
+    @PostMapping("/api/bars/rehab/refresh")
+    public Map<String, Object> refreshRehab(@RequestParam(defaultValue = "false") boolean all) {
+        return Map.of("jobId", facade.refreshRehab("MANUAL", all));
+    }
+
     @GetMapping("/api/bars/coverage")
     public MarketDataFacade.CoverageView coverage() {
         return facade.coverage();

@@ -68,7 +68,7 @@ sudo cp systemd/trading-signal.service /etc/systemd/system/   # 改 User/Group/W
 
 ## 4a. 行情数据底座（第 2 期·步骤 1）
 
-首次建库后的顺序：`POST /api/universe/sync`（约 1 分钟）→ `POST /api/bars/refresh/universe?count=1000`（约 7 分钟，零额度）→ 把候选加入池 `POST /api/pool/{symbol}`（每只占 1 个历史额度，自动排深度回补）。
+首次建库后的顺序：`POST /api/universe/sync`（约 1 分钟）→ `POST /api/bars/refresh/universe?count=1000`（约 7 分钟，零额度）→ `POST /api/bars/rehab/refresh?all=true`（约 5 分钟，零额度）→ 把候选加入池 `POST /api/pool/{symbol}`（每只占 1 个历史额度，自动排深度回补）。
 
 - 历史额度：`GET /api/bars/quota`，7 天滚动、预留 10；额度不足时深度回补作业标 PARTIAL，下周由周六的定时作业续补（或手工 `POST /api/bars/backfill`）。
 - 定时：发布包 `trader.marketdata.schedule-enabled=true`（每日 17:30 ET 增量、周六 06:30 ET 成分股同步），开发机保持 false；**同一台服务器只允许一个实例开启**。
@@ -88,7 +88,8 @@ sudo cp systemd/trading-signal.service /etc/systemd/system/   # 改 User/Group/W
 - `GET /api/gateways/events?limit=20`：盈透每日自动重启会留下一对 DISCONNECTED / RECONNECTED，属正常；频繁出现则查隧道或网关。
 - `GET /actuator/health` 为 UP（DEGRADED 表示有网关未连上，看 `components.gateways`）；`GET /api/system/info` 的 `environment` 与所在机器一致、`database.marker` 与之一致。
 - 版本：`/api/system/info` 的 `version` / `buildTime` 与发布包一致。
-- 行情：`GET /api/bars/coverage` 的 `latest` 应为最近一个已收盘交易日，`withErrors` 为 0；`GET /api/jobs` 最近的 DAILY_INCREMENT 为 OK。
+- 行情：`GET /api/bars/coverage` 的 `latest` 应为最近一个已收盘交易日，`withErrors` 为 0，`rehabCovered` 等于 `universeSize`；`GET /api/jobs` 最近的 DAILY_INCREMENT 为 OK。
+- 数据质量核查 SQL（只读，任一 psql 可跑）：每只最新交易日是否一致、每只根数分布、以某只标的日期集合为参照的缺口数、`last_close` 与上一根 `close` 是否相等（不等即漏日）、`|change_rate|>50` 的行应都能对应拆股。
 
 ## 6. 故障排查
 

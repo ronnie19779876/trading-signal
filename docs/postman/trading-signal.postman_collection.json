@@ -970,6 +970,49 @@
           "response": []
         },
         {
+          "name": "复权因子刷新（异步；all=true 全量约 5 分钟）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bars/rehab/refresh?all=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bars",
+                "rehab",
+                "refresh"
+              ],
+              "query": [
+                {
+                  "key": "all",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "all=false：池/持仓 + 全量里 7 天以上未刷新的；all=true：全量 518 只。限频 60/30s，不占历史额度。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 或 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
           "name": "每日增量（异步）",
           "request": {
             "method": "POST",

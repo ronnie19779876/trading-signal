@@ -7,6 +7,7 @@ public final class Jobs {
     public static final String UNIVERSE_REFRESH = "UNIVERSE_REFRESH";
     public static final String DEEP_BACKFILL = "DEEP_BACKFILL";
     public static final String DAILY_INCREMENT = "DAILY_INCREMENT";
+    public static final String REHAB_REFRESH = "REHAB_REFRESH";
 
     private Jobs() {
     }

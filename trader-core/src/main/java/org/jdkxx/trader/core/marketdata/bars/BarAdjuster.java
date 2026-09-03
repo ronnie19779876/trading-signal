@@ -17,6 +17,7 @@ import java.util.List;
 public final class BarAdjuster {
 
     private static final int SCALE = 6;
+    private static final BigDecimal[] IDENTITY = {BigDecimal.ONE, BigDecimal.ZERO};
 
     private BarAdjuster() {
     }
@@ -30,12 +31,19 @@ public final class BarAdjuster {
         List<DailyBar> out = new ArrayList<>(bars.size());
         for (DailyBar b : bars) {
             BigDecimal[] ab = adjustment == Adjustment.FORWARD ? forward(sorted, b, mode) : backward(sorted, b, mode);
-            if (ab == null) {
+            // 前收属于前一交易日，按前一日的事件集合折算（除权日当天那根的前收也要被当天事件调整）
+            DailyBar prev = b.withPrices(b.open(), b.high(), b.low(), b.close(), b.lastClose());
+            DailyBar prevDay = new DailyBar(b.instrument(), b.tradeDate().minusDays(1), b.open(), b.high(), b.low(), b.close(),
+                    b.lastClose(), b.volume(), b.turnover(), b.turnoverRate(), b.changeRate(), b.pe(), b.blank());
+            BigDecimal[] abPrev = adjustment == Adjustment.FORWARD ? forward(sorted, prevDay, mode) : backward(sorted, prevDay, mode);
+            if (ab == null && abPrev == null) {
                 out.add(b);
                 continue;
             }
-            out.add(b.withPrices(apply(b.open(), ab), apply(b.high(), ab), apply(b.low(), ab), apply(b.close(), ab),
-                    b.lastClose() == null ? null : apply(b.lastClose(), ab)));
+            BigDecimal[] a1 = ab == null ? IDENTITY : ab;
+            BigDecimal[] a0 = abPrev == null ? IDENTITY : abPrev;
+            out.add(prev.withPrices(apply(b.open(), a1), apply(b.high(), a1), apply(b.low(), a1), apply(b.close(), a1),
+                    b.lastClose() == null ? null : apply(b.lastClose(), a0)));
         }
         return out;
     }

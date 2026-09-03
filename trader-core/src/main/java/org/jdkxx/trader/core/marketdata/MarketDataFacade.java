@@ -91,6 +91,10 @@ public class MarketDataFacade {
         return jobs.submit(Jobs.DAILY_INCREMENT, trigger, increment::run);
     }
 
+    public long refreshRehab(String trigger, boolean all) {
+        return jobs.submit(Jobs.REHAB_REFRESH, trigger, ctx -> deep.refreshRehab(all, ctx));
+    }
+
     public List<UniverseSyncService.IndexResult> importCsv(String csv) {
         return sync.importCsv(csv);
     }
@@ -143,7 +147,7 @@ public class MarketDataFacade {
 
     public record CoverageView(long rows, long instruments, java.time.LocalDate earliest, java.time.LocalDate latest,
                                int universeSize, int poolSize, int holdingSize, long unresolved,
-                               int universeCovered, int deepCovered, int withErrors, QuotaView quota, JobService.Running runningJob) {
+                               int universeCovered, int deepCovered, int withErrors, int rehabCovered, QuotaView quota, JobService.Running runningJob) {
     }
 
     public record QuotaView(int used, int remain, int total, String detail) {
@@ -157,11 +161,12 @@ public class MarketDataFacade {
         int universeCovered = (int) universe.stream().filter(r -> st.containsKey(r.id()) && st.get(r.id()).latest() != null).count();
         int deepCovered = (int) roles.keySet().stream().filter(id -> st.containsKey(id) && BarSyncState.DEPTH_HIST.equals(st.get(id).depth())).count();
         int withErrors = (int) st.values().stream().filter(s -> s.lastError() != null).count();
+        int rehabCovered = (int) universe.stream().filter(r -> st.containsKey(r.id()) && st.get(r.id()).rehabFetchedAt() != null).count();
         long unresolved = instruments.findAll().stream().filter(r -> "UNRESOLVED".equals(r.resolveStatus())).count();
         return new CoverageView(c.rows(), c.instruments(), c.earliest(), c.latest(), universe.size(),
                 (int) roles.values().stream().filter(r -> r == PoolRole.POOL).count(),
                 (int) roles.values().stream().filter(r -> r == PoolRole.HOLDING).count(),
-                unresolved, universeCovered, deepCovered, withErrors, quota(), jobs.current().orElse(null));
+                unresolved, universeCovered, deepCovered, withErrors, rehabCovered, quota(), jobs.current().orElse(null));
     }
 
     public QuotaView quota() {

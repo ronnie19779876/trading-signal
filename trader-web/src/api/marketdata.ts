@@ -45,6 +45,7 @@ export interface CoverageView {
   universeCovered: number
   deepCovered: number
   withErrors: number
+  rehabCovered: number
   quota: QuotaView
   runningJob: RunningJob | null
 }
@@ -85,6 +86,7 @@ export const removeFromPool = async (symbol: string) => (await http.delete(`/api
 export const syncUniverse = async () => (await http.post<{ jobId: number }>('/api/universe/sync')).data
 export const refreshUniverse = async (count: number) => (await http.post<{ jobId: number }>('/api/bars/refresh/universe', null, { params: { count } })).data
 export const backfillPending = async () => (await http.post<{ jobId: number }>('/api/bars/backfill')).data
+export const refreshRehab = async (all: boolean) => (await http.post<{ jobId: number }>('/api/bars/rehab/refresh', null, { params: { all } })).data
 export const runIncrement = async () => (await http.post<{ jobId: number }>('/api/bars/increment')).data
 export const cancelJob = async () => (await http.post('/api/jobs/cancel')).data
 export const getBars = async (symbol: string, from: string, to: string, adjust: Adjust) =>

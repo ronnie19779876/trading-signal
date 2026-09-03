@@ -192,7 +192,14 @@ storage → domain → common ；ai → common
 - 表：instrument、index_constituent、pool_member、daily_bar、rehab_factor、trading_day、bar_sync_state、job_run（V3）。
 - 接口见 API.md「行情」；前端「行情」页：覆盖与额度卡片、跑批与作业记录、标的池维护、K 线查询（复权口径切换）。
 
-### 11.4 已知边界
+### 11.4 复权因子覆盖（数据质量核查后补充）
+
+- 首轮核查（2026-09-03）：518 只全部对齐到最近交易日、无缺口、无坏值；但全量标的当时没有复权因子，原始价格在拆股日断层（NVDA 10:1、CMG 50:1 等）。
+- 补充 `REHAB_REFRESH` 作业（`POST /api/bars/rehab/refresh?all=`）：全量各调一次 `requestRehab`（60/30s，不占历史额度，518 只约 5 分钟）；`bar_sync_state.rehab_fetched_at`（V4）记录刷新时刻。
+- 每日增量作业末尾刷新池与持仓 + 全量里 7 天以上未刷新的因子，全量因子自然按周滚动更新。
+- NBIS（前身 Yandex）2022-02～2024-10 停牌，最近 1000 根跨到 2020 年，中间空档是真实停牌。
+
+### 11.5 已知边界
 
 - 全量标的深度为最近 1000 根（约 4 年）；更早历史只对池与持仓（20 年）。
 - 增量判定"当天已收盘"用美东 16:15 之后 + 交易日历；盘中触发只补到前一交易日。

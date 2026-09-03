@@ -52,7 +52,7 @@ public record FutuProperties(
             Map.entry("get-kl", "60/30s"),
             Map.entry("request-history-kl", "60/30s"),
             Map.entry("request-history-kl-quota", "10/30s"),
-            Map.entry("request-rehab", "60/30s"),
+            Map.entry("request-rehab", "50/30s"),   // 文档 60/30s，实测按 60 发会被拒，留余量
             Map.entry("request-trade-date", "30/30s"),
             Map.entry("get-static-info", "30/30s"),
             Map.entry("get-sub-info", "10/30s"));

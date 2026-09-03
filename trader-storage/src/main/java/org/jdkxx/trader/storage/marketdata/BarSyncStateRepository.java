@@ -23,7 +23,8 @@ public class BarSyncStateRepository {
             rs.getInt("bar_count"),
             rs.getTimestamp("last_success_at") == null ? null : rs.getTimestamp("last_success_at").toInstant(),
             rs.getString("last_error"),
-            rs.getTimestamp("hist_quota_used_at") == null ? null : rs.getTimestamp("hist_quota_used_at").toInstant());
+            rs.getTimestamp("hist_quota_used_at") == null ? null : rs.getTimestamp("hist_quota_used_at").toInstant(),
+            rs.getTimestamp("rehab_fetched_at") == null ? null : rs.getTimestamp("rehab_fetched_at").toInstant());
 
     private final JdbcTemplate jdbc;
 
@@ -52,6 +53,25 @@ public class BarSyncStateRepository {
                     hist_quota_used_at = COALESCE(EXCLUDED.hist_quota_used_at, bar_sync_state.hist_quota_used_at), updated_at = now()""",
                 instrumentId, depth, earliest == null ? null : Date.valueOf(earliest), latest == null ? null : Date.valueOf(latest),
                 barCount, usedHistQuota ? Timestamp.from(Instant.now()) : null);
+    }
+
+    public void rehabFetched(long instrumentId) {
+        jdbc.update("""
+                INSERT INTO bar_sync_state (instrument_id, depth, rehab_fetched_at) VALUES (?, 'NONE', now())
+                ON CONFLICT (instrument_id) DO UPDATE SET rehab_fetched_at = now(), updated_at = now()""", instrumentId);
+    }
+
+    /** 复权因子从未刷新或早于 olderThan 的标的 id（只在给定集合内挑）。 */
+    public List<Long> rehabStale(java.util.Collection<Long> candidates, Instant olderThan) {
+        if (candidates.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.query("""
+                SELECT c.id FROM unnest(?::bigint[]) AS c(id)
+                LEFT JOIN bar_sync_state s ON s.instrument_id = c.id
+                WHERE s.rehab_fetched_at IS NULL OR s.rehab_fetched_at < ?
+                ORDER BY s.rehab_fetched_at NULLS FIRST""",
+                (rs, i) -> rs.getLong(1), candidates.toArray(Long[]::new), Timestamp.from(olderThan));
     }
 
     public void error(long instrumentId, String error) {

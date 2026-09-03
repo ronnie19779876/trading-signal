@@ -76,19 +76,10 @@ public class DailyIncrementService {
         ctx.progress("增量目标 " + targets.size() + " 只，其中 " + need + " 只需要补到 " + expected);
         RotationRefresher.Result r = rotation.refresh(targets, row -> plan.getOrDefault(row.id(), 0), "增量", ctx);
 
-        ctx.progress("刷新池与持仓的复权因子");
-        int rehabOk = 0;
-        for (InstrumentRow row : scope.poolAndHoldings()) {
-            try {
-                deep.refreshRehab(row);
-                rehabOk++;
-            } catch (Exception e) {
-                log.warn("{} 复权因子刷新失败：{}", row.symbol(), e.toString());
-                ctx.partial(row.symbol() + " 复权因子失败");
-            }
-        }
+        ctx.progress("刷新复权因子（池/持仓每日，全量每周）");
+        String rehab = deep.refreshRehab(false, ctx);
         return "增量到 " + expected + "：目标 " + targets.size() + " 只，需补 " + r.instruments() + " 只，成功 " + r.ok() + "，失败 " + r.failed()
-                + "，写入 K 线 " + r.bars() + "；复权因子刷新 " + rehabOk;
+                + "，写入 K 线 " + r.bars() + "；" + rehab;
     }
 
     /** 当前时刻应当已经有收盘 K 的最近交易日。 */

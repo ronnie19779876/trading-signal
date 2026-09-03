@@ -2,7 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  addToPool, backfillPending, cancelJob, getBars, getCoverage, getJobs, getPool, refreshUniverse, removeFromPool,
+  addToPool, backfillPending, cancelJob, getBars, getCoverage, getJobs, getPool, refreshRehab, refreshUniverse, removeFromPool,
   runIncrement, syncUniverse, type Adjust, type CoverageView, type DailyBar, type InstrumentView, type JobRun, type RunningJob,
 } from '../api/marketdata'
 import { getQuoteStatus, pauseQuotes, quoteStreamUrl, reconcileQuotes, resumeQuotes, type Quote, type QuoteStatus } from '../api/quotes'
@@ -207,7 +207,7 @@ function num(v: number | null | undefined, digits = 2): string {
 
     <el-row v-if="coverage" :gutter="12">
       <el-col :span="6"><el-card shadow="never"><div class="stat"><div class="stat__v">{{ coverage.rows.toLocaleString() }}</div><div class="stat__l">日 K 行数（{{ coverage.instruments }} 只）</div><div class="stat__s">{{ coverage.earliest ?? '—' }} ～ {{ coverage.latest ?? '—' }}</div></div></el-card></el-col>
-      <el-col :span="6"><el-card shadow="never"><div class="stat"><div class="stat__v">{{ coverage.universeCovered }} / {{ coverage.universeSize }}</div><div class="stat__l">全量标的已有 K 线</div><div class="stat__s">富途不认识 {{ coverage.unresolved }}，有错误 {{ coverage.withErrors }}</div></div></el-card></el-col>
+      <el-col :span="6"><el-card shadow="never"><div class="stat"><div class="stat__v">{{ coverage.universeCovered }} / {{ coverage.universeSize }}</div><div class="stat__l">全量标的已有 K 线</div><div class="stat__s">复权因子 {{ coverage.rehabCovered }}，富途不认识 {{ coverage.unresolved }}，错误 {{ coverage.withErrors }}</div></div></el-card></el-col>
       <el-col :span="6"><el-card shadow="never"><div class="stat"><div class="stat__v">{{ coverage.deepCovered }} / {{ coverage.poolSize + coverage.holdingSize }}</div><div class="stat__l">池 + 持仓已有 20 年深度</div><div class="stat__s">池 {{ coverage.poolSize }}，持仓 {{ coverage.holdingSize }}</div></div></el-card></el-col>
       <el-col :span="6"><el-card shadow="never"><div class="stat"><div class="stat__v">{{ coverage.quota.remain < 0 ? '—' : coverage.quota.remain + ' / ' + coverage.quota.total }}</div><div class="stat__l">历史 K 线额度剩余</div><div class="stat__s">{{ coverage.quota.detail }}</div></div></el-card></el-col>
     </el-row>
@@ -250,6 +250,7 @@ function num(v: number | null | undefined, digits = 2): string {
         <el-button size="small" @click="confirmRun('全量轮转拉 K 线', '对全量标的按批订阅并拉取 1000 根日 K，约 8 分钟，不占历史额度。', () => refreshUniverse(1000))">全量拉 1000 根</el-button>
         <el-button size="small" @click="confirmRun('深度回补', '对池与持仓里还没有 20 年深度的标的依次回补，每只占 1 个历史额度。', backfillPending)">深度回补池/持仓</el-button>
         <el-button size="small" @click="run('每日增量', runIncrement)">每日增量</el-button>
+        <el-button size="small" @click="confirmRun('全量复权因子', '对全量 518 只各调一次 requestRehab，约 5 分钟，不占历史额度。', () => refreshRehab(true))">全量复权因子</el-button>
         <el-button v-if="running" size="small" type="danger" plain @click="cancel">取消当前作业</el-button>
       </div>
       <el-alert v-if="running" type="info" :closable="false" show-icon class="running">
