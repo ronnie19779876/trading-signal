@@ -98,8 +98,8 @@ public class MarketDataConfiguration {
 
     @Bean
     public PoolService poolService(MarketDataProperties props, PoolRepository pool, InstrumentDirectory directory, JobService jobs,
-                                   DeepBackfillService deep) {
-        return new PoolService(props, pool, directory, jobs, deep);
+                                   DeepBackfillService deep, InstrumentRepository instruments, MarketDataGateway gateway) {
+        return new PoolService(props, pool, directory, jobs, deep, instruments, gateway);
     }
 
     @Bean
