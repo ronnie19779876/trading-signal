@@ -83,7 +83,7 @@ public class DailyIncrementService {
     }
 
     /** 当前时刻应当已经有收盘 K 的最近交易日。 */
-    static LocalDate expectedLatestTradingDay(List<LocalDate> tradingDaysAsc, ZonedDateTime nowEt) {
+    public static LocalDate expectedLatestTradingDay(List<LocalDate> tradingDaysAsc, ZonedDateTime nowEt) {
         LocalDate today = nowEt.toLocalDate();
         boolean settled = nowEt.toLocalTime().isAfter(CLOSE_SETTLED);
         LocalDate best = null;

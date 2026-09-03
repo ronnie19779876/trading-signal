@@ -2,6 +2,7 @@ package org.jdkxx.trader.app.web;
 
 import org.jdkxx.trader.core.marketdata.MarketDataFacade;
 import org.jdkxx.trader.core.marketdata.PoolService;
+import org.jdkxx.trader.core.marketdata.audit.BarAuditService;
 import org.jdkxx.trader.core.marketdata.bars.BarQueryService;
 import org.jdkxx.trader.core.marketdata.jobs.JobService;
 import org.jdkxx.trader.core.marketdata.universe.UniverseSyncService;
@@ -39,12 +40,20 @@ public class MarketDataController {
     private final PoolService pool;
     private final BarQueryService bars;
     private final JobService jobs;
+    private final BarAuditService audit;
 
-    public MarketDataController(MarketDataFacade facade, PoolService pool, BarQueryService bars, JobService jobs) {
+    public MarketDataController(MarketDataFacade facade, PoolService pool, BarQueryService bars, JobService jobs, BarAuditService audit) {
         this.facade = facade;
         this.pool = pool;
         this.bars = bars;
         this.jobs = jobs;
+        this.audit = audit;
+    }
+
+    /** 日线数据审计：默认审最近一个应有收盘 K 的交易日。 */
+    @GetMapping("/api/bars/audit")
+    public BarAuditService.Report audit(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return audit.audit(date);
     }
 
     // ------------------------------------------------------------------ 成分股 / 标的

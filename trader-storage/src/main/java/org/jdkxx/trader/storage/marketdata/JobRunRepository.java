@@ -39,6 +39,10 @@ public class JobRunRepository {
         return jdbc.query("SELECT * FROM job_run ORDER BY started_at DESC, id DESC LIMIT ?", MAPPER, Math.max(1, Math.min(limit, 200)));
     }
 
+    public Optional<JobRunRow> latestOf(String job) {
+        return jdbc.query("SELECT * FROM job_run WHERE job = ? ORDER BY started_at DESC, id DESC LIMIT 1", MAPPER, job).stream().findFirst();
+    }
+
     public Optional<JobRunRow> find(long id) {
         return jdbc.query("SELECT * FROM job_run WHERE id = ?", MAPPER, id).stream().findFirst();
     }

@@ -83,6 +83,52 @@ public class DailyBarRepository {
                         rs.getDate("mx") == null ? null : rs.getDate("mx").toLocalDate()));
     }
 
+    // ------------------------------------------------------------------ 审计查询
+
+    /** 指定交易日有 K 线的标的 id。 */
+    public java.util.Set<Long> instrumentIdsWithBarOn(LocalDate date) {
+        java.util.Set<Long> ids = new java.util.HashSet<>();
+        jdbc.query("SELECT instrument_id FROM daily_bar WHERE trade_date = ?", rs -> { ids.add(rs.getLong(1)); }, Date.valueOf(date));
+        return ids;
+    }
+
+    public record ContinuityIssue(long instrumentId, LocalDate tradeDate, java.math.BigDecimal lastClose, java.math.BigDecimal prevClose) {
+    }
+
+    /** 区间内 last_close 与上一根 close 不等的记录（不等 = 中间漏了交易日，或券商数据有误）。 */
+    public List<ContinuityIssue> continuityIssues(LocalDate from, LocalDate to, int limit) {
+        return jdbc.query("""
+                SELECT instrument_id, trade_date, last_close, prev FROM (
+                    SELECT instrument_id, trade_date, last_close,
+                           lag(close) OVER (PARTITION BY instrument_id ORDER BY trade_date) AS prev
+                    FROM daily_bar WHERE trade_date BETWEEN ? AND ?
+                ) x WHERE prev IS NOT NULL AND last_close IS NOT NULL AND abs(last_close - prev) > 0.0005
+                ORDER BY trade_date DESC, instrument_id LIMIT ?""",
+                (rs, i) -> new ContinuityIssue(rs.getLong(1), rs.getDate(2).toLocalDate(), rs.getBigDecimal(3), rs.getBigDecimal(4)),
+                Date.valueOf(from.minusDays(7)), Date.valueOf(to), Math.max(1, limit));
+    }
+
+    public record DaySanity(long bars, long ohlcInconsistent, long nonPositiveClose, long blank, long zeroVolume, long nullTurnover) {
+    }
+
+    public DaySanity sanityOn(LocalDate date) {
+        return jdbc.queryForObject("""
+                SELECT count(*) AS bars,
+                       count(*) FILTER (WHERE high < low OR close > high OR close < low OR open > high OR open < low) AS ohlc,
+                       count(*) FILTER (WHERE close <= 0) AS nonpos,
+                       count(*) FILTER (WHERE blank) AS blank,
+                       count(*) FILTER (WHERE volume = 0) AS zerovol,
+                       count(*) FILTER (WHERE turnover IS NULL) AS nullturn
+                FROM daily_bar WHERE trade_date = ?""",
+                (rs, i) -> new DaySanity(rs.getLong("bars"), rs.getLong("ohlc"), rs.getLong("nonpos"), rs.getLong("blank"),
+                        rs.getLong("zerovol"), rs.getLong("nullturn")), Date.valueOf(date));
+    }
+
+    public Optional<LocalDate> maxTradeDate() {
+        Date d = jdbc.query("SELECT max(trade_date) FROM daily_bar", rs -> rs.next() ? rs.getDate(1) : null);
+        return Optional.ofNullable(d).map(Date::toLocalDate);
+    }
+
     public List<InstrumentCoverage> coverageByInstrument() {
         return jdbc.query("SELECT instrument_id, count(*) AS rows, min(trade_date) AS mn, max(trade_date) AS mx FROM daily_bar GROUP BY instrument_id",
                 (rs, i) -> new InstrumentCoverage(rs.getLong("instrument_id"), rs.getLong("rows"),

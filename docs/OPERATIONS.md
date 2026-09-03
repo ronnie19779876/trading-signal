@@ -43,22 +43,31 @@ export TRADER_IBKR_HOST=127.0.0.1 TRADER_IBKR_PORT=<隧道端口> TRADER_IBKR_TE
 ## 3. 打包与部署
 
 ```bash
-./scripts/package.sh                      # dist/trading-signal-<版本>-<时间戳>.tar.gz
+./scripts/package.sh                      # dist/trading-signal-<版本>-<时间戳>.tar.gz（含前端）
 ```
 
-服务器（首装）：
+服务器约定（部署用户无 sudo，`/opt` 不可写）：解压到 `~/trading-signal-<版本>-<时间戳>/`，用软链 `~/trading-signal` 指向当前版本；配置与日志都在该目录内。
+
+首装：
 
 ```bash
-sudo mkdir -p /opt/trading-signal && sudo tar -C /opt -xzf trading-signal-<版本>-<时间戳>.tar.gz --strip-components=1 -C /opt/trading-signal
-cd /opt/trading-signal
-cp config/trader.env.example config/trader.env && chmod 600 config/trader.env && vi config/trader.env
+scp -P <ssh端口> dist/trading-signal-<版本>-<时间戳>.tar.gz <用户>@<主机>:~/
+ssh -p <ssh端口> <用户>@<主机>
+mkdir -p ~/trading-signal-<版本>-<时间戳> && tar -C ~/trading-signal-<版本>-<时间戳> --strip-components=1 -xzf ~/trading-signal-<版本>-<时间戳>.tar.gz
+ln -sfn ~/trading-signal-<版本>-<时间戳> ~/trading-signal && cd ~/trading-signal
+cp config/trader.env.example config/trader.env && chmod 600 config/trader.env && vi config/trader.env   # JAVA_HOME、两家网关 host/port/client-id、enabled
 bin/trader.sh start && bin/trader.sh status
-sudo cp systemd/trading-signal.service /etc/systemd/system/   # 改 User/Group/WorkingDirectory 后 enable --now
 ```
 
-升级：只替换 `lib/` 与 `bin/`，**保留服务器上的 `config/trader.env` 与 `config/application.yml` 的本地改动**；用 `systemctl restart trading-signal`，不要混用 `bin/trader.sh` 与 systemd。
+- 数据库密码：服务器用户的 `~/.pgpass`（600）里有 `localhost:5432:db_trader:trader:<密码>` 时 `TRADER_DB_PASSWORD` 留空即可。
+- 首次启动在空库 `db_trader` 上自动建表并盖 PROD 标记；`GET /api/system/info` 应显示 `environment=PROD`、`database.marker=PROD`。
+- 发布包默认 `schedule-enabled=true`、`realtime.auto-subscribe=true`，启动后即为生产形态。
 
-停止方式：`bin/trader.sh stop` 调 `POST /actuator/shutdown`（优雅关闭），不发信号；systemd 的 `TimeoutStopSec` 是兜底。
+升级：解压新版本到新的时间戳目录，把旧目录的 `config/trader.env` 拷过去，`bin/trader.sh stop`（旧）→ 改软链 → `bin/trader.sh start`（新）。不要混用 `bin/trader.sh` 与 systemd。
+
+systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `WorkingDirectory`、`PIDFile`、`ExecStart` 路径改成 `~/trading-signal`（软链）后 `sudo cp` 到 `/etc/systemd/system/`，`daemon-reload`、`enable --now`。之后只用 systemctl 管理。
+
+首轮数据装载（生产空库）：`POST /api/universe/sync` → `POST /api/bars/refresh/universe?count=1000` → `POST /api/bars/rehab/refresh?all=true` → 逐只 `POST /api/pool/{symbol}?role=HOLDING|POOL` → `POST /api/bars/backfill` → `GET /api/bars/audit`。
 
 ## 4. 数据库
 
@@ -83,6 +92,14 @@ sudo cp systemd/trading-signal.service /etc/systemd/system/   # 改 User/Group/W
 - 报价不落库；重启后缓存为空，首推后恢复。
 
 ## 5. 日常检查
+
+**收盘后必做**（美东 17:30 增量跑完后，约北京时间次日 06:00）：
+
+```bash
+./scripts/check-daily.sh http://127.0.0.1:8093        # 在服务器上跑；本机经隧道则改成隧道端口
+```
+
+它调 `GET /api/bars/audit`：完整性（全量 ∪ 池 ∪ 持仓当天都有 K 线）、字段合理性、前收连续性（漏日）、复权因子新鲜度、同步错误、增量作业、网关。`ok=false` 时看 `checks` 里失败项与样本；退出码 0 通过 / 1 未通过 / 2 接口不可达。
 
 - `GET /api/gateways`：两家 CONNECTED，`lastHeartbeatAt` 在 1 分钟内，`reconnectAttempts` 为 0；盈透 facts 里各 `farm.*` 为 OK 或 INACTIVE（INACTIVE 正常）。
 - `GET /api/gateways/events?limit=20`：盈透每日自动重启会留下一对 DISCONNECTED / RECONNECTED，属正常；频繁出现则查隧道或网关。

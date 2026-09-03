@@ -1,6 +1,7 @@
 package org.jdkxx.trader.core.marketdata;
 
 import org.jdkxx.trader.common.ratelimit.Sleeper;
+import org.jdkxx.trader.core.marketdata.audit.BarAuditService;
 import org.jdkxx.trader.core.marketdata.bars.BarQueryService;
 import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
 import org.jdkxx.trader.core.marketdata.bars.DeepBackfillService;
@@ -94,6 +95,13 @@ public class MarketDataConfiguration {
     public BarQueryService barQueryService(InstrumentDirectory directory, DailyBarRepository bars, RehabFactorRepository rehabs,
                                            MarketDataProperties props) {
         return new BarQueryService(directory, bars, rehabs, props);
+    }
+
+    @Bean
+    public BarAuditService barAuditService(MarketDataProperties props, UniverseScope scope, DailyBarRepository bars,
+                                           TradingDayRepository days, BarSyncStateRepository states, JobRunRepository jobs,
+                                           MarketDataGateway gateway) {
+        return new BarAuditService(props, scope, bars, days, states, jobs, gateway, Clock.systemUTC());
     }
 
     @Bean

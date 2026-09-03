@@ -38,6 +38,12 @@ public class TradingDayRepository {
                 (rs, i) -> rs.getDate(1).toLocalDate(), market.name(), Date.valueOf(from), Date.valueOf(to));
     }
 
+    public Optional<LocalDate> latestOnOrBefore(Market market, LocalDate date) {
+        Date d = jdbc.query("SELECT max(trade_date) FROM trading_day WHERE market = ? AND trade_date <= ?",
+                rs -> rs.next() ? rs.getDate(1) : null, market.name(), Date.valueOf(date));
+        return Optional.ofNullable(d).map(Date::toLocalDate);
+    }
+
     public Optional<LocalDate> latest(Market market) {
         Date d = jdbc.query("SELECT max(trade_date) FROM trading_day WHERE market = ?", rs -> rs.next() ? rs.getDate(1) : null, market.name());
         return Optional.ofNullable(d).map(Date::toLocalDate);

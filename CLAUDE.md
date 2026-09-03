@@ -28,6 +28,7 @@ cd trader-web && npm run dev              # Vite :5174，/api 与 /actuator 代�
 cd trader-web && npm run build            # 产物进 trader-app/src/main/resources/static（gitignore）
 ./scripts/package.sh                      # dist/trading-signal-<版本>-<时间戳>.tar.gz
 ./scripts/check-secrets.sh                # 敏感信息扫描
+./scripts/check-daily.sh [baseUrl]        # 收盘后日线数据审计（GET /api/bars/audit）
 # 集成测试（对真实网关只读；参数从环境变量读，见 OPERATIONS §2）
 ./mvnw -pl trader-app -am verify -Dtrader.integration=true -Dtest='IbkrGatewayIT,FutuGatewayIT,ReconnectIT' -Dsurefire.failIfNoSpecifiedTests=false
 ```

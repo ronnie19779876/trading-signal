@@ -506,6 +506,44 @@
           "response": []
         },
         {
+          "name": "日线数据审计（收盘后必查）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bars/audit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bars",
+                "audit"
+              ]
+            },
+            "description": "默认审最近一个应有收盘 K 的交易日：完整性（全量∪池∪持仓当天都有 K 线）、字段合理性、前收连续性（漏日）、复权因子新鲜度、同步错误、增量作业、网关。ok=true 才算过。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"审计通过 ok=true（失败时看 checks）\", () => pm.expect(body.ok, JSON.stringify(body.checks.filter(c => !c.ok))).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
           "name": "历史额度",
           "request": {
             "method": "GET",

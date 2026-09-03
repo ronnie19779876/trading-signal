@@ -10,6 +10,7 @@
 - `QuoteCache` + `QuoteStreamService`（SSE 每秒合并帧、15 秒状态）；`/api/quotes*`；前端实时报价表（EventSource）与 lightweight-charts 日 K 图。
 - 配置 `trader.marketdata.realtime.*`（开发机 auto-subscribe=false，发布包 true）；Postman 新增「实时报价」目录。
 - 测试：单元 87 个；集成 `FutuQuotesIT`。
+- `GET /api/bars/audit` 日线数据审计与 `scripts/check-daily.sh`（收盘后巡检）；生产部署到服务器用户目录（`~/trading-signal` 软链）并完成首轮装载。
 - 加入标的池时库里没有的代码（ETF、非成分股 ADR）先向富途解析静态信息并自动建档（SPY、TSM）。
 - 收尾（数据质量核查后）：V4 `bar_sync_state.rehab_fetched_at`；`REHAB_REFRESH` 作业（`POST /api/bars/rehab/refresh`）；每日增量按 7 天到期刷新全量复权因子；覆盖统计增加 `rehabCovered`。
 
