@@ -13,12 +13,13 @@ BODY="$(curl -sf --max-time 120 "$URL")" || { echo "❌ 审计接口不可达：
 echo "$BODY" | python3 -c '
 import sys, json
 r = json.load(sys.stdin)
-print(f"日线数据审计 {r[\"date\"]}  →  {\"✅ 通过\" if r[\"ok\"] else \"❌ 未通过\"}   ({r[\"generatedAt\"]})")
-print("  汇总:", ", ".join(f"{k}={v}" for k, v in r["summary"].items()))
+verdict = "✅ 通过" if r["ok"] else "❌ 未通过"
+print("日线数据审计 %s  →  %s   (%s)" % (r["date"], verdict, r["generatedAt"]))
+print("  汇总:", ", ".join("%s=%s" % (k, v) for k, v in r["summary"].items()))
 for c in r["checks"]:
     flag = "✅" if c["ok"] else ("❌" if c["critical"] else "⚠️")
-    print(f"  {flag} {c[\"name\"]:<14} {c[\"detail\"]}")
+    print("  %s %-14s %s" % (flag, c["name"], c["detail"]))
     for s in c.get("samples", [])[:10]:
-        print(f"       - {s}")
+        print("       - %s" % s)
 sys.exit(0 if r["ok"] else 1)
 '

@@ -99,6 +99,8 @@ systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `Wor
 ./scripts/check-daily.sh http://127.0.0.1:8093        # 在服务器上跑；本机经隧道则改成隧道端口
 ```
 
+本机检查需要 SSH 隧道把生产端口转发到 127.0.0.1（用 autossh，参数与兄弟项目一致：`-M 0`、`ServerAliveInterval=30`、`ServerAliveCountMax=3`、`ExitOnForwardFailure=yes`；改转发列表要先 `pkill autossh` 再重起，别叠着起第二条）。
+
 它调 `GET /api/bars/audit`：完整性（全量 ∪ 池 ∪ 持仓当天都有 K 线）、字段合理性、前收连续性（漏日）、复权因子新鲜度、同步错误、增量作业、网关。`ok=false` 时看 `checks` 里失败项与样本；退出码 0 通过 / 1 未通过 / 2 接口不可达。
 
 - `GET /api/gateways`：两家 CONNECTED，`lastHeartbeatAt` 在 1 分钟内，`reconnectAttempts` 为 0；盈透 facts 里各 `farm.*` 为 OK 或 INACTIVE（INACTIVE 正常）。
