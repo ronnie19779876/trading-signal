@@ -1,0 +1,61 @@
+# jar 内只放与环境无关的默认值。运行配置一律外置：
+#   本机开发  config/application.yml（入库，无密码）+ config/secrets.yml（gitignore）
+#   生产      deploy/config/application.yml + deploy/config/trader.env（gitignore）
+# 启动参数 --spring.config.additional-location=file:./config/
+spring:
+  application:
+    name: trading-signal
+  # 默认排除数据源与 Flyway 自动配置：只要 classpath 上有 Hikari，缺 url 时 DataSourceAutoConfiguration
+  # 会报 "Failed to determine a suitable driver class" 让应用起不来，而不是"没有 DataSource 就跳过"。
+  # 外置配置里 trader.storage.enabled=true 的同时用 exclude: [] 放回来。
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
+  flyway:
+    locations: classpath:db/migration
+  lifecycle:
+    timeout-per-shutdown-phase: 15s
+  jackson:
+    time-zone: UTC
+
+server:
+  # 端口与监听地址由外置配置决定；这里给的是生产默认值，本机开发在 config/application.yml 覆盖
+  port: 8093
+  address: 127.0.0.1
+  shutdown: graceful
+
+trader:
+  # trader.environment 没有默认值，必须由外置配置声明（DEV | PROD），见 EnvironmentGuard
+  storage:
+    enabled: false
+    pgpass:
+      # spring.datasource.password 为空时从 ~/.pgpass 取密码（与 psql 共用同一份）
+      enabled: true
+  # 两家券商默认不启用；host/port/client-id 属于敏感配置，只在 secrets.yml / trader.env 里出现
+  ibkr:
+    enabled: false
+  futu:
+    enabled: false
+  ai:
+    api-key: ${OPENAI_API_KEY:}
+    model: gpt-5.6-sol
+    timeout: 120s
+    max-retries: 2
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+  info:
+    build:
+      enabled: true
+
+logging:
+  level:
+    root: INFO
+    org.jdkxx.trader: INFO

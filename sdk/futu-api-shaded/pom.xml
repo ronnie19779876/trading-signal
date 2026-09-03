@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  富途 OpenAPI Java SDK 的重定位版本（独立小工程，不在主 reactor 里）。
+
+  为什么需要它：futu-api 的 protobuf 生成代码是 protoc 3.5.1 产物，盈透 TWS API 10.30 内置的生成代码要求
+  protobuf-java 4.x，两者不能共用平铺 classpath（实测 4.x 运行时下 com.futu.openapi.pb.Common 初始化即
+  NoSuchMethodError）。这里把 futu-api 与 protobuf-java 3.5.1 打成一个 jar，并把 com.google.protobuf
+  重定位到 org.jdkxx.trader.shaded.futu.protobuf，主工程只依赖本构件。
+
+  为什么不做成 reactor 模块：IDEA 会把 reactor 模块当源码模块解析，IDE 里跑应用时 classpath 是未重定位的
+  原始 jar；独立安装的构件让 IDE 与 Maven 看到同一个 jar。
+
+  安装（克隆仓库后一次性；升级 SDK 时改 futu-api.version 后重跑）：
+      ./scripts/install-sdks.sh            或            mvn -f sdk/futu-api-shaded/pom.xml install
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.jdkxx.trader</groupId>
+    <artifactId>futu-api-shaded</artifactId>
+    <!-- 与 futu-api 版本保持一致，主工程 pom 的 futu-api-shaded.version 引用它 -->
+    <version>10.10.7008</version>
+    <packaging>jar</packaging>
+    <name>futu-api-shaded</name>
+    <description>com.futunn.openapi:futu-api + protobuf-java 3.5.1，protobuf 包重定位到 org.jdkxx.trader.shaded.futu.protobuf</description>
+
+    <properties>
+        <futu-api.version>10.10.7008</futu-api.version>
+        <bouncycastle.version>1.68</bouncycastle.version>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.futunn.openapi</groupId>
+            <artifactId>futu-api</artifactId>
+            <version>${futu-api.version}</version>
+        </dependency>
+        <!--
+          futu-api 的传递依赖。必须在这里显式声明为直接依赖：shade 把 futu-api 打进 jar 后会把它从
+          dependency-reduced-pom 里删掉，它的传递依赖也随之消失，运行时就缺 bcprov（RSA 加密通道用）。
+        -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk15on</artifactId>
+            <version>${bouncycastle.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk15on</artifactId>
+            <version>${bouncycastle.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>true</createDependencyReducedPom>
+                            <artifactSet>
+                                <includes>
+                                    <include>com.futunn.openapi:futu-api</include>
+                                    <include>com.google.protobuf:protobuf-java</include>
+                                </includes>
+                            </artifactSet>
+                            <relocations>
+                                <relocation>
+                                    <pattern>com.google.protobuf</pattern>
+                                    <shadedPattern>org.jdkxx.trader.shaded.futu.protobuf</shadedPattern>
+                                </relocation>
+                            </relocations>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

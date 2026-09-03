@@ -1,0 +1,39 @@
+# 生产实例的外置配置模板。随发布包一起分发到 <部署目录>/config/application.yml。
+# 敏感值（数据库密码、网关 host/port/client-id、OpenAI key）来自同目录的 trader.env（不入库），
+# 由 bin/trader.sh 在启动前 source 成环境变量，Spring 宽松绑定自动映射（TRADER_IBKR_HOST → trader.ibkr.host）。
+server:
+  port: 8093
+  # 只监听本机；外部访问走 SSH 隧道
+  address: 127.0.0.1
+
+spring:
+  autoconfigure:
+    exclude: []
+  datasource:
+    url: jdbc:postgresql://${TRADER_DB_HOST:127.0.0.1}:${TRADER_DB_PORT:5432}/db_trader
+    username: trader
+    # 留空则由服务用户的 ~/.pgpass 提供
+    password: ${TRADER_DB_PASSWORD:}
+
+trader:
+  environment: PROD
+  storage:
+    enabled: true
+  ibkr:
+    enabled: false
+  futu:
+    enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # shutdown 是 bin/trader.sh stop 的关闭通道；前提是 server.address 只绑回环
+        include: health,info,shutdown
+  endpoint:
+    shutdown:
+      enabled: true
+
+logging:
+  level:
+    org.jdkxx.trader: INFO

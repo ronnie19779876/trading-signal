@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.jdkxx.trader</groupId>
+        <artifactId>trader</artifactId>
+        <version>${revision}</version>
+    </parent>
+    <artifactId>trader-storage</artifactId>
+    <name>trader-storage</name>
+    <description>PostgreSQL 存储：JdbcTemplate 仓储、Flyway 迁移、环境守卫（防止开发实例连生产库）、~/.pgpass 密码来源</description>
+    <dependencies>
+        <dependency>
+            <groupId>org.jdkxx.trader</groupId>
+            <artifactId>trader-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <!-- Flyway 10+ 把各数据库支持拆成了独立构件，PostgreSQL 必须显式引入 -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+    </dependencies>
+</project>

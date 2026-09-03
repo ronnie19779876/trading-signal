@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.jdkxx.trader</groupId>
+        <artifactId>trader</artifactId>
+        <version>${revision}</version>
+    </parent>
+    <artifactId>trader-app</artifactId>
+    <name>trader-app</name>
+    <description>Spring Boot 启动、REST 接口、静态前端；把两家券商适配器装配进核心；打 fat jar</description>
+    <dependencies>
+        <dependency>
+            <groupId>org.jdkxx.trader</groupId>
+            <artifactId>trader-core</artifactId>
+        </dependency>
+        <!-- 券商适配器在这一层插入：core 只认 gateway-api 的接口 -->
+        <dependency>
+            <groupId>org.jdkxx.trader</groupId>
+            <artifactId>trader-gateway-ibkr</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.jdkxx.trader</groupId>
+            <artifactId>trader-gateway-futu</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!--
+          三个供应商 SDK 在各自模块里标了 optional，不会传递到这里。下面的 runtime 声明只为把它们打进
+          fat jar；runtime 作用域不进编译 classpath，本模块照样 import 不了它们，边界不受影响。
+          ⚠️ 删掉任何一条构建照样过，但打出来的 jar 缺 SDK，一启动就 NoClassDefFoundError。
+        -->
+        <dependency>
+            <groupId>com.interactivebrokers</groupId>
+            <artifactId>tws-api</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.jdkxx.trader</groupId>
+            <artifactId>futu-api-shaded</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.openai</groupId>
+            <artifactId>openai-java</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <!-- 固定产物名，脚本与 systemd 单元都引用 trader-app.jar -->
+        <finalName>trader-app</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <!-- build-info 让 /actuator/info 与 /api/system/info 能报告版本与构建时间 -->
+                            <goal>build-info</goal>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

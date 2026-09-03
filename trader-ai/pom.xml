@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.jdkxx.trader</groupId>
+        <artifactId>trader</artifactId>
+        <version>${revision}</version>
+    </parent>
+    <artifactId>trader-ai</artifactId>
+    <name>trader-ai</name>
+    <description>模型供应商接入层：com.openai.* 只允许出现在本模块。换供应商只动这一个模块</description>
+    <dependencies>
+        <dependency>
+            <groupId>org.jdkxx.trader</groupId>
+            <artifactId>trader-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+        <!-- OpenAI 官方 Java SDK。optional：下游拿不到；trader-app 另有 runtime 声明只为打包 -->
+        <dependency>
+            <groupId>com.openai</groupId>
+            <artifactId>openai-java</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+</project>

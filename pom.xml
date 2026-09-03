@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.jdkxx.trader</groupId>
+    <artifactId>trader</artifactId>
+    <version>${revision}</version>
+    <packaging>pom</packaging>
+
+    <name>trading-signal</name>
+    <description>基于 AI 大模型的美股量化交易系统：盈透（持仓与执行）+ 富途（行情、基本面与信号）</description>
+
+    <!--
+      依赖方向（模块顺序即依赖顺序，不得反向）：
+        app → { core, gateway-ibkr, gateway-futu }
+        core → { gateway-api, storage, ai }
+        gateway-ibkr / gateway-futu → gateway-api → domain → common
+        storage → common ；ai → common
+      供应商 SDK 隔离：com.ib.client.* 只在 trader-gateway-ibkr；com.futu.openapi.* 只在 trader-gateway-futu；
+      com.openai.* 只在 trader-ai。三处都用 <optional>true</optional> 断掉传递，trader-app 另加 runtime 依赖只为打包。
+    -->
+    <modules>
+        <module>trader-common</module>
+        <module>trader-domain</module>
+        <module>trader-gateway-api</module>
+        <module>trader-gateway-ibkr</module>
+        <module>trader-gateway-futu</module>
+        <module>trader-storage</module>
+        <module>trader-ai</module>
+        <module>trader-core</module>
+        <module>trader-app</module>
+    </modules>
+
+    <properties>
+        <!-- 版本只改这一处。开发/测试一律 -SNAPSHOT，发布去掉 SNAPSHOT 并打 tag。规则见 README「版本规则」 -->
+        <revision>1.0.0-SNAPSHOT</revision>
+
+        <java.version>21</java.version>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <spring-boot.version>3.5.13</spring-boot.version>
+
+        <!--
+          盈透 TWS API：官方不发 Maven Central，由 scripts/install-sdks.sh 装进本地仓库（jar 不入库，许可证不允许再分发）。
+          10.30.01 内置 protobuf 生成类（gencode 4.29.5），运行时必须 protobuf-java 4.x（≥4.29.5）。
+        -->
+        <tws-api.version>10.30.01</tws-api.version>
+        <protobuf-java.version>4.32.0</protobuf-java.version>
+        <!--
+          富途 SDK 的 protobuf 生成代码是 3.5.1 产物，与上面的 4.x 运行时互斥（实测 NoSuchMethodError）。
+          所以不直接依赖 com.futunn.openapi:futu-api，而是依赖 sdk/futu-api-shaded 产出的重定位版本
+          （com.google.protobuf → org.jdkxx.trader.shaded.futu.protobuf），同样由 scripts/install-sdks.sh 安装。
+        -->
+        <futu-api-shaded.version>10.10.7008</futu-api-shaded.version>
+        <openai-java.version>4.52.0</openai-java.version>
+
+        <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
+        <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
+        <flatten-maven-plugin.version>1.8.0</flatten-maven-plugin.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>com.interactivebrokers</groupId>
+                <artifactId>tws-api</artifactId>
+                <version>${tws-api.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.protobuf</groupId>
+                <artifactId>protobuf-java</artifactId>
+                <version>${protobuf-java.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jdkxx.trader</groupId>
+                <artifactId>futu-api-shaded</artifactId>
+                <version>${futu-api-shaded.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.openai</groupId>
+                <artifactId>openai-java</artifactId>
+                <version>${openai-java.version}</version>
+            </dependency>
+
+            <!-- 本工程模块 -->
+            <dependency>
+                <groupId>org.jdkxx.trader</groupId>
+                <artifactId>trader-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jdkxx.trader</groupId>
+                <artifactId>trader-domain</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jdkxx.trader</groupId>
+                <artifactId>trader-gateway-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jdkxx.trader</groupId>
+                <artifactId>trader-gateway-ibkr</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jdkxx.trader</groupId>
+                <artifactId>trader-gateway-futu</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jdkxx.trader</groupId>
+                <artifactId>trader-storage</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jdkxx.trader</groupId>
+                <artifactId>trader-ai</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jdkxx.trader</groupId>
+                <artifactId>trader-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- 所有模块共用的测试栈（JUnit 5 / AssertJ / Mockito） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${spring-boot.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+
+        <plugins>
+            <!-- ${revision} 的落地：安装/部署时把解析后的版本写进 .flattened-pom.xml（已 gitignore） -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>flatten-maven-plugin</artifactId>
+                <version>${flatten-maven-plugin.version}</version>
+                <configuration>
+                    <updatePomFile>true</updatePomFile>
+                    <flattenMode>resolveCiFriendliesOnly</flattenMode>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>flatten</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>flatten</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>flatten-clean</id>
+                        <phase>clean</phase>
+                        <goals>
+                            <goal>clean</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${maven-compiler-plugin.version}</version>
+                <configuration>
+                    <release>${maven.compiler.release}</release>
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven-surefire-plugin.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>

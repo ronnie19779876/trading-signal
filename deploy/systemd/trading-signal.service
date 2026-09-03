@@ -1,0 +1,30 @@
+# 开机自启。安装：
+#   sudo cp systemd/trading-signal.service /etc/systemd/system/
+#   sudo vi /etc/systemd/system/trading-signal.service   # 改 User / Group / WorkingDirectory
+#   sudo systemctl daemon-reload && sudo systemctl enable --now trading-signal
+# 之后只用 systemctl 管理，别再直接调 bin/trader.sh start/stop，否则 systemd 的状态与实际进程对不上。
+[Unit]
+Description=trading-signal
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=CHANGE_ME
+Group=CHANGE_ME
+WorkingDirectory=/opt/trading-signal
+PIDFile=/opt/trading-signal/logs/trading-signal.pid
+
+ExecStart=/opt/trading-signal/bin/trader.sh start
+ExecStop=/opt/trading-signal/bin/trader.sh stop
+ExecReload=/opt/trading-signal/bin/trader.sh restart
+
+TimeoutStartSec=120
+# ExecStop 走 /actuator/shutdown 不发信号；超过 TimeoutStopSec 后 systemd 依次 SIGTERM、SIGKILL 兜底
+TimeoutStopSec=60
+
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

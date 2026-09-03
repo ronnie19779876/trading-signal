@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.jdkxx.trader</groupId>
+        <artifactId>trader</artifactId>
+        <version>${revision}</version>
+    </parent>
+    <artifactId>trader-gateway-api</artifactId>
+    <name>trader-gateway-api</name>
+    <description>券商网关的端口（接口）与事件：上层只依赖这里，不依赖任何券商 SDK。两家券商各自实现一个适配器模块</description>
+    <dependencies>
+        <dependency>
+            <groupId>org.jdkxx.trader</groupId>
+            <artifactId>trader-domain</artifactId>
+        </dependency>
+    </dependencies>
+</project>

@@ -1,0 +1,48 @@
+# 本机开发的外置配置。已入库，不含任何密码、主机、网关端口。
+# 启动：./scripts/run-local.sh      停止：./scripts/run-local.sh stop      IDEA：.run/TraderApplication (local).run.xml
+server:
+  # 端口分配：本项目开发 8083 / 生产 8093 / Vite 5174。本机 8081/8082/8090/8091/5173 已被其它项目或隧道占用
+  port: 8083
+  # 只监听本机。REST 接口没有鉴权，且开着 /actuator/shutdown；绑到全部网卡等于把它们摊给整个内网
+  address: 127.0.0.1
+
+spring:
+  # 放回 jar 内默认排除掉的数据源与 Flyway 自动配置
+  autoconfigure:
+    exclude: []
+  datasource:
+    # ⚠️ 是 db_trader_dev，不是 db_trader。两者只差一个后缀；写错会连到生产库——但应用起不来：
+    #    EnvironmentGuard 会比对库里的 app_environment 标记
+    url: jdbc:postgresql://${TRADER_DB_HOST:127.0.0.1}:${TRADER_DB_PORT:5432}/db_trader_dev
+    username: trader
+    # 密码三条来源，按优先级：环境变量 TRADER_DB_PASSWORD → config/secrets.yml → ~/.pgpass（与 psql 共用）
+    password: ${TRADER_DB_PASSWORD:}
+  config:
+    # 敏感项：数据库密码、两家网关的 host/port/client-id、OpenAI key。文件已 gitignore，从 secrets.yml.example 复制
+    import: optional:file:./config/secrets.yml
+
+trader:
+  # 必填。与数据库里 app_environment 的标记比对，不一致拒绝启动
+  environment: DEV
+  storage:
+    enabled: true
+  # 骨架阶段两家网关都不启用（连接层是第 1 期）。启用时 host/port/client-id 写在 config/secrets.yml
+  ibkr:
+    enabled: false
+  futu:
+    enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # shutdown 是 scripts/run-local.sh stop 的关闭通道（走 Spring Boot 自己的优雅关闭，不发信号）。
+        # 该端点没有鉴权，敢开的前提是上面的 server.address: 127.0.0.1
+        include: health,info,shutdown
+  endpoint:
+    shutdown:
+      enabled: true
+
+logging:
+  level:
+    org.jdkxx.trader: DEBUG

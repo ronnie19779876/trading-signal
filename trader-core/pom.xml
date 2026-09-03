@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.jdkxx.trader</groupId>
+        <artifactId>trader</artifactId>
+        <version>${revision}</version>
+    </parent>
+    <artifactId>trader-core</artifactId>
+    <name>trader-core</name>
+    <description>业务编排：只依赖网关端口（gateway-api）、存储与模型接入，不依赖任何券商适配器实现</description>
+    <dependencies>
+        <dependency>
+            <groupId>org.jdkxx.trader</groupId>
+            <artifactId>trader-gateway-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.jdkxx.trader</groupId>
+            <artifactId>trader-storage</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.jdkxx.trader</groupId>
+            <artifactId>trader-ai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+    </dependencies>
+</project>

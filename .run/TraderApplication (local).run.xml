@@ -1,0 +1,14 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="TraderApplication (local)" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot">
+    <option name="ALTERNATIVE_JRE_PATH" value="21" />
+    <option name="ALTERNATIVE_JRE_PATH_ENABLED" value="true" />
+    <module name="trader-app" />
+    <option name="PROGRAM_PARAMETERS" value="--spring.config.additional-location=file:./config/" />
+    <option name="VM_PARAMETERS" value="-DsocksNonProxyHosts=localhost|127.*|[::1]" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="org.jdkxx.trader.app.TraderApplication" />
+    <option name="WORKING_DIRECTORY" value="file://$PROJECT_DIR$" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>
