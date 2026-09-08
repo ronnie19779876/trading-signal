@@ -87,7 +87,7 @@
 | `POST /api/bars/rehab/refresh?all=false` | 复权因子刷新作业：all=true 全量（约 5 分钟）；否则池/持仓 + 到期的 |
 | `GET /api/bars/{symbol}?from&to&adjust=none|forward|backward` | K 线（默认最近 90 天）；复权在读取层计算 |
 | `GET /api/bars/{symbol}/rehab` | 复权因子 |
-| `GET /api/bars/audit?date=` | 日线数据审计（默认最近应有收盘 K 的交易日）：completeness / sanity / continuity 为关键项，rehab / syncErrors / incrementJob / gateway 为提示项；`ok` = 关键项全过 |
+| `GET /api/bars/audit?date=` | 日线数据审计（默认最近应有收盘 K 的交易日）：传入的日期若在日历里是休市日，只回一条 `calendar` 检查并判通过；completeness / sanity / continuity 为关键项，rehab / syncErrors / incrementJob / gateway 为提示项；`ok` = 关键项全过 |
 | `GET /api/bars/coverage` | 行数/标的数/最早最新、全量/池/持仓规模、已覆盖数、复权因子覆盖数、未解析数、错误数、历史额度、运行中的作业 |
 | `GET /api/bars/quota` | 历史额度（7 天滚动） |
 | `GET /api/jobs?limit=` / `GET /api/jobs/{id}` / `POST /api/jobs/cancel` | 作业记录与取消（在下一批边界停下） |

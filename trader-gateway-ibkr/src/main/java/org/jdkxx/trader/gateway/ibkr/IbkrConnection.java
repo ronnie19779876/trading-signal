@@ -13,6 +13,8 @@ import org.jdkxx.trader.gateway.support.Transport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
@@ -44,6 +46,7 @@ final class IbkrConnection implements Transport, IbkrWrapper.ConnectionEvents {
     private final RateLimiter limiter;
     private final IbkrWrapper wrapper;
     private final ExecutorService connectExecutor;
+    private final RepeatSuppressor errorLog = new RepeatSuppressor(Duration.ofMinutes(10), Clock.systemUTC());
     private final ConcurrentLinkedQueue<CompletableFuture<Instant>> timeWaiters = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<CompletableFuture<List<String>>> accountWaiters = new ConcurrentLinkedQueue<>();
 
@@ -265,6 +268,7 @@ final class IbkrConnection implements Transport, IbkrWrapper.ConnectionEvents {
         facts.nextOrderId(orderId);
         Session s = session;
         if (s != null && !s.ready.isDone()) {
+            errorLog.reset();
             s.ready.complete(null);
         }
     }
@@ -325,7 +329,13 @@ final class IbkrConnection implements Transport, IbkrWrapper.ConnectionEvents {
                     log.info("TWS 提示 {}：{}", code, message);
                 } else {
                     facts.lastSystemMessage(code + " " + message);
-                    log.warn("TWS 错误 {}：{}", code, message);
+                    RepeatSuppressor.Decision d = errorLog.offer(code);
+                    if (d.log() && d.suppressed() == 0) {
+                        log.warn("TWS 错误 {}：{}", code, message);
+                    } else if (d.log()) {
+                        log.warn("TWS 错误 {} 持续中（已 {} 分钟，期间又出现 {} 次）：{}",
+                                code, d.since().toMinutes(), d.suppressed(), message);
+                    }
                 }
             }
         }

@@ -44,6 +44,26 @@ public class TradingDayRepository {
         return Optional.ofNullable(d).map(Date::toLocalDate);
     }
 
+    /** 日历里是否明确有这一天（有 = 交易日）。 */
+    public boolean isTradingDay(Market market, LocalDate date) {
+        Integer n = jdbc.queryForObject("SELECT count(*) FROM trading_day WHERE market = ? AND trade_date = ?",
+                Integer.class, market.name(), Date.valueOf(date));
+        return n != null && n > 0;
+    }
+
+    /**
+     * 日历是否覆盖了这一天：前后都有交易日记录。
+     * 日历只装最近一段时间，覆盖不到的日期不能凭"不在日历里"判成休市。
+     */
+    public boolean covers(Market market, LocalDate date) {
+        Integer n = jdbc.queryForObject("""
+                SELECT CASE WHEN EXISTS (SELECT 1 FROM trading_day WHERE market = ? AND trade_date <= ?)
+                             AND EXISTS (SELECT 1 FROM trading_day WHERE market = ? AND trade_date >= ?)
+                            THEN 1 ELSE 0 END""",
+                Integer.class, market.name(), Date.valueOf(date), market.name(), Date.valueOf(date));
+        return n != null && n == 1;
+    }
+
     public Optional<LocalDate> latest(Market market) {
         Date d = jdbc.query("SELECT max(trade_date) FROM trading_day WHERE market = ?", rs -> rs.next() ? rs.getDate(1) : null, market.name());
         return Optional.ofNullable(d).map(Date::toLocalDate);

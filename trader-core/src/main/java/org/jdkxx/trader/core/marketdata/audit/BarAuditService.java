@@ -79,6 +79,14 @@ public class BarAuditService {
         List<Check> checks = new ArrayList<>();
         Map<String, Object> summary = new LinkedHashMap<>();
 
+        // 0. 休市日没有收盘数据，其余检查无从谈起；日历覆盖不到的日期照常审计（不能凭"不在日历里"判休市）
+        if (tradingDays.covers(Market.US, d) && !tradingDays.isTradingDay(Market.US, d)) {
+            summary.put("tradingDay", false);
+            checks.add(new Check("calendar", true, true, d + " 美股休市，当天没有收盘数据", 0, List.of()));
+            return new Report(d, true, clock.instant(), summary, checks);
+        }
+        summary.put("tradingDay", true);
+
         // 1. 全量 ∪ 池 ∪ 持仓 当天都有 K 线
         Map<Long, InstrumentRow> targets = new LinkedHashMap<>();
         scope.universe().forEach(r -> targets.put(r.id(), r));
