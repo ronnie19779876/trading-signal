@@ -8,6 +8,10 @@ import org.jdkxx.trader.domain.AccountRef;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.domain.DailyBar;
 import org.jdkxx.trader.domain.HistoryQuota;
+import org.jdkxx.trader.domain.CompanyProfile;
+import org.jdkxx.trader.domain.FinancialReport;
+import org.jdkxx.trader.domain.FinancialStatement;
+import org.jdkxx.trader.domain.ValuationSnapshot;
 import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.InstrumentStatic;
 import org.jdkxx.trader.domain.Market;
@@ -325,6 +329,25 @@ public class FutuGateway implements BrokerGateway, MarketDataGateway, AutoClosea
     @Override
     public void addQuoteListener(QuoteListener listener) {
         quoteListeners.add(listener);
+    }
+
+    @Override
+    public CompletableFuture<List<ValuationSnapshot>> snapshots(List<Instrument> instruments) {
+        if (instruments.size() > SNAPSHOT_BATCH) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException(
+                    "快照一次最多 " + SNAPSHOT_BATCH + " 只，收到 " + instruments.size() + " 只，请分批"));
+        }
+        return requireQot(() -> marketData.snapshots(instruments));
+    }
+
+    @Override
+    public CompletableFuture<List<FinancialReport>> financials(Instrument instrument, FinancialStatement statement, int periods) {
+        return requireQot(() -> marketData.financials(instrument, statement, periods));
+    }
+
+    @Override
+    public CompletableFuture<CompanyProfile> companyProfile(Instrument instrument) {
+        return requireQot(() -> marketData.companyProfile(instrument));
     }
 
     /** 当前时段：优先心跳拿到的 marketUS，否则美东时钟。 */

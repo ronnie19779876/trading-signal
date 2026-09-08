@@ -1,7 +1,10 @@
 package org.jdkxx.trader.gateway.futu.marketdata;
 
 import com.futu.openapi.pb.QotCommon;
+import com.futu.openapi.pb.QotGetCompanyProfile;
+import com.futu.openapi.pb.QotGetFinancialsStatements;
 import com.futu.openapi.pb.QotGetKL;
+import com.futu.openapi.pb.QotGetSecuritySnapshot;
 import com.futu.openapi.pb.QotGetSubInfo;
 import com.futu.openapi.pb.QotGetStaticInfo;
 import com.futu.openapi.pb.QotRequestHistoryKL;
@@ -9,7 +12,10 @@ import com.futu.openapi.pb.QotRequestHistoryKLQuota;
 import com.futu.openapi.pb.QotRequestRehab;
 import com.futu.openapi.pb.QotRequestTradeDate;
 import com.futu.openapi.pb.QotSub;
+import org.jdkxx.trader.domain.CompanyProfile;
 import org.jdkxx.trader.domain.DailyBar;
+import org.jdkxx.trader.domain.FinancialReport;
+import org.jdkxx.trader.domain.FinancialStatement;
 import org.jdkxx.trader.domain.HistoryQuota;
 import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.InstrumentStatic;
@@ -17,7 +23,9 @@ import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.RehabFactor;
 import org.jdkxx.trader.domain.SubscriptionInfo;
 import org.jdkxx.trader.domain.TradingDay;
+import org.jdkxx.trader.domain.ValuationSnapshot;
 import org.jdkxx.trader.gateway.futu.mapper.FutuBars;
+import org.jdkxx.trader.gateway.futu.mapper.FutuFundamentals;
 import org.jdkxx.trader.gateway.futu.mapper.FutuRehabs;
 import org.jdkxx.trader.gateway.futu.mapper.FutuSecurities;
 import org.jdkxx.trader.gateway.futu.mapper.FutuStatics;
@@ -43,6 +51,8 @@ public final class FutuMarketData {
     static final int KL_DAY = QotCommon.KLType.KLType_Day_VALUE;
     static final int SUB_KL_DAY = QotCommon.SubType.SubType_KL_Day_VALUE;
     static final int HISTORY_PAGE = 1000;
+    /** 券商对财报期数的单次上限。 */
+    static final int MAX_FINANCIAL_PERIODS = 50;
     private static final ZoneId HK = ZoneId.of("Asia/Hong_Kong");
 
     private final QotCalls qot;
@@ -206,4 +216,43 @@ public final class FutuMarketData {
     static LocalDateTime nowHk() {
         return LocalDateTime.now(HK);
     }
+
+    // ------------------------------------------------------------------ 基本面（步骤 3）
+
+    /** 估值快照：不需要订阅，也不消耗历史 K 线额度。一次最多 400 只，分批由调用方决定。 */
+    public CompletableFuture<List<ValuationSnapshot>> snapshots(List<Instrument> instruments) {
+        QotGetSecuritySnapshot.C2S.Builder c2s = QotGetSecuritySnapshot.C2S.newBuilder();
+        instruments.forEach(i -> c2s.addSecurityList(FutuSecurities.of(i)));
+        QotGetSecuritySnapshot.Request req = QotGetSecuritySnapshot.Request.newBuilder().setC2S(c2s).build();
+        return qot.call("get-security-snapshot", "getSecuritySnapshot", QotGetSecuritySnapshot.Response.class,
+                        c -> c.getSecuritySnapshot(req))
+                .thenApply(rsp -> FutuFundamentals.toSnapshots(rsp.getS2C().getSnapshotListList()));
+    }
+
+    /**
+     * 财务报表：一次一只，num 是期数（券商上限 50）。默认 QuarterlyAnnual，季报年报混排，
+     * 这样一次就能拿到季度序列而不用分两种周期各拉一遍。
+     */
+    public CompletableFuture<List<FinancialReport>> financials(Instrument instrument, FinancialStatement statement, int periods) {
+        QotGetFinancialsStatements.C2S c2s = QotGetFinancialsStatements.C2S.newBuilder()
+                .setSecurity(FutuSecurities.of(instrument))
+                .setStatementType(QotCommon.FinancialStatementsType.forNumber(FutuFundamentals.statementType(statement)))
+                .setFinancialType(QotCommon.F10Type.F10Type_QuarterlyAnnual)
+                .setNum(Math.clamp(periods, 1, MAX_FINANCIAL_PERIODS))
+                .build();
+        QotGetFinancialsStatements.Request req = QotGetFinancialsStatements.Request.newBuilder().setC2S(c2s).build();
+        return qot.call("get-financials", "getFinancialsStatements", QotGetFinancialsStatements.Response.class,
+                        c -> c.getFinancialsStatements(req))
+                .thenApply(rsp -> FutuFundamentals.toReports(instrument, statement, rsp.getS2C()));
+    }
+
+    public CompletableFuture<CompanyProfile> companyProfile(Instrument instrument) {
+        QotGetCompanyProfile.Request req = QotGetCompanyProfile.Request.newBuilder()
+                .setC2S(QotGetCompanyProfile.C2S.newBuilder().setSecurity(FutuSecurities.of(instrument)))
+                .build();
+        return qot.call("get-company-profile", "getCompanyProfile", QotGetCompanyProfile.Response.class,
+                        c -> c.getCompanyProfile(req))
+                .thenApply(rsp -> FutuFundamentals.toProfile(instrument, rsp.getS2C()));
+    }
+
 }

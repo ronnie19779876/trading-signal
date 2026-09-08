@@ -1,6 +1,9 @@
 package org.jdkxx.trader.gateway;
 
+import org.jdkxx.trader.domain.CompanyProfile;
 import org.jdkxx.trader.domain.DailyBar;
+import org.jdkxx.trader.domain.FinancialReport;
+import org.jdkxx.trader.domain.FinancialStatement;
 import org.jdkxx.trader.domain.HistoryQuota;
 import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.InstrumentStatic;
@@ -8,6 +11,7 @@ import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.RehabFactor;
 import org.jdkxx.trader.domain.SubscriptionInfo;
 import org.jdkxx.trader.domain.TradingDay;
+import org.jdkxx.trader.domain.ValuationSnapshot;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -52,4 +56,20 @@ public interface MarketDataGateway {
     CompletableFuture<SubscriptionInfo> subscriptionInfo();
 
     void addQuoteListener(QuoteListener listener);
+
+    // ------------------------------------------------------------------ 基本面（步骤 3）
+
+    /**
+     * 估值快照，无需订阅，不占订阅与历史 K 线额度。一次最多 {@link #SNAPSHOT_BATCH} 只，超出由调用方分批。
+     * 市值随价格变动，取数时点决定这批数字属于盘中还是收盘。
+     */
+    CompletableFuture<List<ValuationSnapshot>> snapshots(List<Instrument> instruments);
+
+    /** 一只标的一类报表的最近若干期，按期末从新到旧。 */
+    CompletableFuture<List<FinancialReport>> financials(Instrument instrument, FinancialStatement statement, int periods);
+
+    CompletableFuture<CompanyProfile> companyProfile(Instrument instrument);
+
+    /** 券商对快照接口的单次上限。 */
+    int SNAPSHOT_BATCH = 400;
 }

@@ -2,6 +2,13 @@
 
 ## 1.1.0-SNAPSHOT
 
+### 第 2 期·步骤 3：基本面数据（进行中）
+
+- 第 1 步网关层：`MarketDataGateway` 增加 `snapshots` / `financials` / `companyProfile`（富途快照、四类财务报表、公司简介），
+  新增三个限流名与 `FutuFundamentals` 映射器；领域新增 `ValuationSnapshot` / `FinancialReport` / `FinancialStatement` / `CompanyProfile`。
+- 对真实 OpenD 实测确认取值口径：估值字段是 proto required（判空无效）、亏损股市盈率为负、
+  美股 ETF 净值多数缺失以 0 占位、四类报表字段编号不跨表通用；并修正了设计里年报与四季报期末同日导致的唯一键冲突。
+
 - 审计接口识别休市日：显式传入非交易日时回"当天休市"并判通过，不再误报 520 只缺 K 线（日历覆盖不到的旧日期照常审计）。
 - 盈透同一错误码持续复现时日志降频：首次照常告警，之后每 10 分钟汇总一条并带上被压掉的次数，连上后复位。一次 25 小时的网关停机曾刷出 1500 多行同样的 502。
 

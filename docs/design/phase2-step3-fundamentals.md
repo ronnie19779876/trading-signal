@@ -1,6 +1,6 @@
 # 第 2 期·步骤 3：基本面数据
 
-> 状态：**待认可**。目标是给选股与 AI 分析提供估值与财务底座，跟日 K 线一样先把"取得全、对得上、跑得稳"做实。
+> 状态：**已认可，实施中**。第 1 步网关层已完成并对真实 OpenD 实测。目标是给选股与 AI 分析提供估值与财务底座，跟日 K 线一样先把"取得全、对得上、跑得稳"做实。
 
 ## 1. 要解决的问题
 
@@ -86,13 +86,13 @@ CREATE TABLE financial_report (
     statement     text        NOT NULL,   -- INCOME / BALANCE_SHEET / CASH_FLOW / MAIN_INDEX
     period_end    date        NOT NULL,   -- 财报截止日
     fiscal_year   int,
-    period_text   text,                   -- 2024/Q3、2024/FY
-    period_type   text,                   -- Q1..Q4 / ANNUAL
+    period_text   text        NOT NULL,   -- 2024/Q3、2024/FY
+    period_type   text        NOT NULL,   -- Q1..Q4 / ANNUAL
     currency      text,
     accounting_standards text,
     auditor_report       text,
     fetched_at    timestamptz NOT NULL,
-    UNIQUE (instrument_id, statement, period_end)
+    UNIQUE (instrument_id, statement, period_end, period_type)   -- 见 §10：FY 与 Q4 期末同一天
 );
 
 -- 财报数据项：长表，不随富途加字段而改结构
@@ -159,9 +159,41 @@ CREATE INDEX idx_report_instrument ON financial_report (instrument_id, statement
 
 每步都能独立验证，跟日 K 线的节奏一致。
 
-## 9. 待实测确认的点
+## 9. 实测结论（2026-09-09 对真实 OpenD 跑通，400 只成分股 + 亏损股样本）
 
-- `getCompanyProfile` 的限频文档没写，先按 30/30s 配，实测后收敛。
-- 美股财报 `fieldId` 的稳定性：先对 20 只取一轮，比对两次结果的字段集合是否一致。
-- `MainIndex`（主要指标）与另外三张表的字段是否重叠，决定要不要四类全存。
-- 快照在盘中与盘后取到的估值是否不同（市值随价格变），决定作业时点是否必须在收盘后。
+设计里的四个待确认点全部有了答案，其中两条推翻了原先的假设：
+
+1. **估值字段在 proto 里是 required**，`has*()` 恒为 true，靠判空区分"有没有数据"行不通。
+   400 只里市盈率、市值没有一个是 0，说明 0 不是哨兵，**直接取值即可**。
+2. **亏损股的市盈率市净率是负数，不是 0 也不是缺失**（实测 INTC 市盈率 TTM -49.99、
+   LCID -0.34 且市净率 -1.72）。负值是真实数据，必须原样入库，审计不能把负值当异常。
+3. **ETF 的净值多数取不到**：400 只里的 19 只 ETF 净值全为 0，而 SPY 有净值 769.35。
+   所以净值为 0 视作无数据，连同由它算出的溢价一并置空。
+4. **四类报表字段完全不重叠，且字段编号在不同报表下含义不同**：编号 8001 在利润表是"总收入"，
+   在资产负债表是"资产合计"；主要指标是另一段编号 14001~14050（毛利率、ROE、ROA、ROIC、
+   流动比率等 30 项）。所以四类都值得存，且数据项的主键必须是（报表行 id，字段编号），
+   不能只用字段编号——原设计已经如此，正确。
+5. **公司简介 18 项**，键名是中文（公司名称、CEO、员工数量、年结日、ISIN 代码、网址、公司简介等），
+   值全是字符串，直接按名值对存 jsonb 即可。
+
+## 10. 实测发现的设计错误（已修正）
+
+**财报唯一键漏了期别**。原设计是 `UNIQUE (instrument_id, statement, period_end)`，
+实测发现英伟达的 `2026/FY` 与 `2026/Q4` 期末**同为 2026-01-24**，年报与四季报撞在同一天，
+按原设计后写的会覆盖先写的，年报或四季报必丢一个。已把期别加进唯一键。
+
+顺带两点值得记住：
+
+- **财年可能领先自然年**：英伟达 2026-07-25 那期的 `fiscalYear` 是 2027，期别文本 `2027/Q2`。
+  所以排序、取"最近一期"都要以期末日期为准，不能用财年。
+- **分页没走完**：一次 4 期的请求返回的 `nextKey` 不是 `-1` 而是具体游标，说明还有更早的期数。
+  作业里要按需翻页，别以为一次就取全了。
+
+## 11. 排查记录：自建探针把连接搞断
+
+第一次跑探针时快照请求挂住、后续请求全部返回 `retType=-200`（连接已断）。
+原因是探针在 SDK 回调里用 `%d` 打印了一个枚举字段，抛出的异常跑在富途的网络线程上，
+把整条连接的读循环打死了。这不是富途的问题，也不会发生在本项目里——
+`FutuReplyRegistry.onReply` 在 SDK 线程上只做表操作，解析与映射都转到 dispatch 线程且包了 try/catch。
+但它再次印证了两条既有纪律：**SDK 回调线程上不做任何可能抛异常的事**，
+以及**富途 proto2 的枚举字段返回枚举而不是 int**。
