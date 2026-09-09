@@ -84,6 +84,7 @@ storage → common ；ai → common
 | 富途美股板块没有标普/纳指完整成分股 | 成分股来自 Wikipedia，SPY 持仓交叉核对，CSV 兜底 |
 | `getStaticInfo` 对不认识的代码也回一条（"未知股票"、brokerId=0） | 以 brokerId=0 判 UNRESOLVED |
 | 富途 Basic 报价在盘前盘后 curPrice/volume 冻结，只更新 preMarket/afterMarket 子结构；逐笔盘前无成交推送 | 有效价按时段取（`FutuQuotes`），别拿 curPrice 当实时价 |
+| 盘前盘后券商的 `lastClose`（昨收）**也冻结**，仍是上一个常规时段的前收；券商却是拿冻结的 curPrice 算盘前涨跌的（实测 AAPL 盘前昨收 319.97、实际基准 316.22） | 展示与计算基准一律用 `Quote.referenceClose`，别用 lastClose |
 | 订阅额度按「标的 × 类型」计，账户共 100；订阅满 1 分钟才能反订阅 | 只订 Basic；反订阅前查订阅时刻，未满的延后 |
 | 快照的估值字段在 proto 里是 required，`has*()` 恒为 true；亏损股的市盈率市净率是**负数**不是 0（实测 INTC -49.99、LCID -1.72） | 直接取值，负值原样入库；别用 has() 判有无，也别把负值当异常 |
 | 富途把**美股 REITs 也归为 Trust**（实测标普 500 里 25 只 REITs 全是 Trust，被我们映射成 ETF；真 ETF 只有 SPY）。REITs 有财报，按"ETF 没财报"跳过会漏掉 25 只 | 取财报不按类型过滤，真基金回空列表即可；判断"该不该有财报"看有没有取到，别看 secType |

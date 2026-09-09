@@ -1373,7 +1373,8 @@
                   "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
                   "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));",
-                  "body.forEach(q => pm.test(`${q.instrument.symbol} 时段合法`, () => pm.expect(q.session).to.be.oneOf([\"PRE\",\"RTH\",\"AFTER\",\"OVERNIGHT\",\"CLOSED\"])));"
+                  "body.forEach(q => pm.test(`${q.instrument.symbol} 时段合法`, () => pm.expect(q.session).to.be.oneOf([\"PRE\",\"RTH\",\"AFTER\",\"OVERNIGHT\",\"CLOSED\"])));",
+                  "body.forEach(q => pm.test(`${q.instrument.symbol} 参考价与时段一致`, () => pm.expect(q.referenceClose).to.eql([\"PRE\",\"AFTER\",\"OVERNIGHT\"].includes(q.session) ? q.rthPrice : q.lastClose)));"
                 ]
               }
             }

@@ -45,6 +45,28 @@ class FutuQuotesTest {
     }
 
     @Test
+    void 基准价按时段取_盘前盘后用上一个常规收盘而不是券商的昨收() {
+        // 券商在非常规时段拿冻结的 curPrice（上一个常规收盘）算涨跌，lastClose 还停在更早一天，
+        // 展示"参考价"必须用 referenceClose，否则读者自己算出来的涨跌幅与我们显示的对不上
+        Quote pre = FutuQuotes.toQuote(preMarketSample(), MarketSession.PRE, Instant.EPOCH);
+        assertThat(pre.referenceClose()).isEqualByComparingTo("357.01");
+        assertThat(pre.lastClose()).isEqualByComparingTo("355.0");
+        assertThat(pre.price().subtract(pre.referenceClose())).isEqualByComparingTo(pre.change());
+
+        Quote after = FutuQuotes.toQuote(preMarketSample(), MarketSession.AFTER, Instant.EPOCH);
+        assertThat(after.referenceClose()).isEqualByComparingTo("357.01");
+
+        Quote overnight = FutuQuotes.toQuote(preMarketSample(), MarketSession.OVERNIGHT, Instant.EPOCH);
+        assertThat(overnight.referenceClose()).as("夜盘没有独立子结构时退回盘后").isEqualByComparingTo("357.01");
+
+        Quote rth = FutuQuotes.toQuote(preMarketSample(), MarketSession.RTH, Instant.EPOCH);
+        assertThat(rth.referenceClose()).as("常规时段就是券商的昨收").isEqualByComparingTo("355.0");
+
+        Quote closed = FutuQuotes.toQuote(preMarketSample(), MarketSession.CLOSED, Instant.EPOCH);
+        assertThat(closed.referenceClose()).isEqualByComparingTo("355.0");
+    }
+
+    @Test
     void 时段判定优先市场状态其次美东时钟() {
         ZonedDateTime et = ZonedDateTime.of(2026, 9, 3, 5, 58, 0, 0, ZoneId.of("America/New_York"));
         assertThat(FutuQuotes.session("PreMarketBegin", et)).isEqualTo(MarketSession.PRE);

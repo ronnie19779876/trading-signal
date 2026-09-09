@@ -17,7 +17,7 @@ class QuoteCacheAndStreamTest {
 
     private static Quote quote(String symbol, String price) {
         BigDecimal p = new BigDecimal(price);
-        return new Quote(Instrument.us(symbol), MarketSession.RTH, p, null, null, p, p, p, p, p, 1, null, null, null, null,
+        return new Quote(Instrument.us(symbol), MarketSession.RTH, p, null, null, p, p, p, p, p, p, 1, null, null, null, null,
                 Instant.now(), Instant.now(), false);
     }
 

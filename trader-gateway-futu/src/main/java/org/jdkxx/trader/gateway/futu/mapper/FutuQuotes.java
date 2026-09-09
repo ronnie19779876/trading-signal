@@ -44,13 +44,17 @@ public final class FutuQuotes {
             case OVERNIGHT -> overnight != null ? overnight : after;
             default -> null;
         };
+        // 基准价：常规时段是券商的"昨收"；盘前盘后夜盘券商是拿上一个常规收盘（curPrice 冻结值）算涨跌的，
+        // 此时 lastClose 还停在上一个常规时段的前收，拿它当基准会算出完全不同的涨跌幅
+        BigDecimal referenceClose = lastClose;
         if (effective != null && effective.price() != null && effective.price().signum() > 0) {
             price = effective.price();
             change = effective.change();
             changeRate = effective.changeRate();
+            referenceClose = cur;
         }
         return new Quote(instrument, session, price, change, changeRate,
-                price(q.getOpenPrice()), price(q.getHighPrice()), price(q.getLowPrice()), cur, lastClose,
+                price(q.getOpenPrice()), price(q.getHighPrice()), price(q.getLowPrice()), cur, lastClose, referenceClose,
                 q.getVolume(), q.hasTurnover() ? BigDecimal.valueOf(q.getTurnover()).setScale(2, RoundingMode.HALF_UP) : null,
                 pre, after, overnight, quoteTime(q), receivedAt, q.getIsSuspended());
     }

@@ -19,7 +19,10 @@ export interface Quote {
   high: number | null
   low: number | null
   rthPrice: number | null
+  /** 券商给的"昨收"：常规时段的前一交易日收盘；盘前盘后它不随时段推进，别拿来算涨跌 */
   lastClose: number | null
+  /** change / changeRate 实际用的基准：常规时段与收市为 lastClose，盘前盘后夜盘为 rthPrice。展示"参考价"用这个 */
+  referenceClose: number | null
   volume: number
   turnover: number | null
   preMarket: SessionQuote | null

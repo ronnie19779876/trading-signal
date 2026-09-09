@@ -12,6 +12,8 @@
 - `POST /api/fundamentals/financials/refresh?all=true` 支持全量成分股回补（518 只约 41 分钟，不取公司简介）。
 - 修正：富途把美股 REITs 也归为 Trust（标普 500 里 25 只），按"ETF 没财报"跳过会漏掉它们；改为不按类型过滤，
   审计也区分"有财报但过旧"与"从来没有财报（基金正常）"。
+- 报价新增 `referenceClose`（涨跌基准）：常规时段为券商昨收，盘前盘后夜盘为上一个常规时段收盘。
+  此前前端把券商 `lastClose` 当昨收显示，盘前时它比真实基准早一个交易日，读者自算的涨跌幅与显示值对不上。
 - 修：`valuation-cron` / `financials-cron` 只写在配置记录的 `@DefaultValue` 上、没进 jar 内 `application.yml`，
   开发实例调度关闭发现不了，生产（调度开启）启动即失败。补齐 yaml，并加 `ScheduledPlaceholdersTest` 守住这条。
 - 前端「基本面」页：估值概览与序列、四类财务报表（字段按券商返回动态成列）、公司简介、作业触发。

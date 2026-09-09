@@ -220,7 +220,7 @@ ENDPOINTS = [
              "desc": "期望 = 池 ∪ 持仓；新增订阅、多余反订阅（未满 1 分钟延后）。网关未连接时 error 字段给出原因。",
              "tests": T_200 + T_JSON + ['pm.test("有 desired/subscribed", () => { pm.expect(body.desired).to.be.a("number"); pm.expect(body.subscribed).to.be.a("number"); });']},
             {"name": "全部报价快照", "method": "GET", "path": "/api/quotes", "desc": "缓存里的最新报价（有效价按时段取）。",
-             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));', 'body.forEach(q => pm.test(`${q.instrument.symbol} 时段合法`, () => pm.expect(q.session).to.be.oneOf(["PRE","RTH","AFTER","OVERNIGHT","CLOSED"])));']},
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));', 'body.forEach(q => pm.test(`${q.instrument.symbol} 时段合法`, () => pm.expect(q.session).to.be.oneOf(["PRE","RTH","AFTER","OVERNIGHT","CLOSED"])));', 'body.forEach(q => pm.test(`${q.instrument.symbol} 参考价与时段一致`, () => pm.expect(q.referenceClose).to.eql(["PRE","AFTER","OVERNIGHT"].includes(q.session) ? q.rthPrice : q.lastClose)));']},
             {"name": "单个报价", "method": "GET", "path": "/api/quotes/{{symbol}}", "desc": "未订阅或未收到推送 → 404。",
              "tests": ['pm.test("200 或 404", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));']},
             {"name": "暂停订阅（释放额度）", "method": "POST", "path": "/api/quotes/subscriptions/pause", "desc": "反订阅全部并清空缓存。", "tests": T_200},

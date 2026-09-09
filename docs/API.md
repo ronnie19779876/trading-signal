@@ -118,6 +118,10 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 
 ## 实时报价（第 2 期·步骤 2，不落库）
 
+报价里有三个价格字段，别混用：`price` 是按时段取的有效价，`rthPrice` 是常规时段价（盘前盘后冻结在上个收盘），
+`lastClose` 是券商给的"昨收"。**盘前盘后 `lastClose` 不随时段推进**，仍是上一个常规时段的前收，
+拿它算涨跌会与 `changeRate` 对不上；要展示基准价用 `referenceClose`（常规时段等于 `lastClose`，盘前盘后等于 `rthPrice`）。
+
 | 接口 | 说明 |
 | --- | --- |
 | `GET /api/quotes` | 缓存里的全部最新报价 |

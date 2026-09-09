@@ -10,7 +10,10 @@ import java.util.Objects;
  * PRE / AFTER / OVERNIGHT 用对应子结构（券商在非常规时段冻结 curPrice，只更新子结构）。
  *
  * @param rthPrice  常规时段价（券商 curPrice，非常规时段冻结在上个收盘）
- * @param lastClose 上一交易日收盘
+ * @param lastClose 券商给的"昨收"：<b>常规时段的前一交易日收盘</b>。非常规时段它不随时段推进，
+ *                  仍是上一个常规时段的前收，别拿它当盘前盘后涨跌的基准
+ * @param referenceClose 当前 change / changeRate 实际用的基准价：常规时段与收市为 lastClose，
+ *                  盘前盘后与夜盘为 rthPrice（上一个常规时段收盘）。展示"参考价"用这个
  * @param quoteTime 券商报价时间（常规时段的 updateTime；非常规时段可能仍是收盘时刻）
  */
 public record Quote(
@@ -24,6 +27,7 @@ public record Quote(
         BigDecimal low,
         BigDecimal rthPrice,
         BigDecimal lastClose,
+        BigDecimal referenceClose,
         long volume,
         BigDecimal turnover,
         SessionQuote preMarket,
