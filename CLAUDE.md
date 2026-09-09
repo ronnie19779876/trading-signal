@@ -92,6 +92,7 @@ storage → common ；ai → common
 | 财报字段编号在不同报表类型下含义不同（8001 在利润表是总收入，在资产负债表是资产合计） | 数据项按（报表行, 字段编号）定位，不要跨报表复用编号 |
 | 财报按 30/30s 发会被富途拒（同复权因子） | 限流配 25/30s 留余量 |
 | 新增富途请求后忘了在 `FutuChannel` 的 SPI 里注册 `onReply_*`，表现是**请求超时**而不是编译错误（实测快照 400 只只要 228ms，超时必是没注册） | 加请求必同时加 SPI 回调，见"模块与依赖方向"最后一条 |
+| 新增 `@Scheduled` 用的配置项只写在 `MarketDataProperties` 的 `@DefaultValue` 上不够——**占位符解析不看记录默认值**。开发实例 `schedule-enabled=false` 不装配调度器，本地全绿、一上生产就起不来 | 新 cron 必须同时写进 jar 内 `application.yml`；`ScheduledPlaceholdersTest` 会守住这条 |
 
 ## 当前状态
 

@@ -66,6 +66,8 @@ trader:
   marketdata:
     schedule-enabled: false
     increment-cron: "0 30 17 * * MON-FRI"
+    valuation-cron: "0 40 17 * * MON-FRI"     # 估值快照排在每日增量之后：市值随价格走，收盘后取才代表当日
+    financials-cron: "0 0 7 * * SAT"
     zone: America/New_York
     universe:
       cross-check-spy: true
@@ -82,6 +84,12 @@ trader:
     history:
       from: 2006-01-01
       quota-reserve: 10
+    fundamentals:
+      enabled: true
+      snapshot-batch-size: 400        # 券商上限；实测 400 只往返 228ms
+      financial-periods: 12
+      profile-refresh-after: 30d
+      financial-stale-after: 180d
     adjust:
       factor-mode: PER_EVENT   # 实测：富途因子是逐事件比例，需复合（见 FactorMode）
     # 实时报价（不落库）：auto-subscribe 由外置配置决定（开发机 false / 发布包 true，两个实例同时订会占双份额度）
