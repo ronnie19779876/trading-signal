@@ -108,9 +108,21 @@ bin/trader.sh start && bin/trader.sh status
 
 升级：解压新版本到新的时间戳目录，把旧目录的 `config/trader.env` 拷过去，`bin/trader.sh stop`（旧）→ 改软链 → `bin/trader.sh start`（新）。不要混用 `bin/trader.sh` 与 systemd。
 
+**升级前必看**（2026-09-09 踩过）：
+
+- 生产 `schedule-enabled=true` 而开发是 false，**调度器只在生产装配**。新增 `@Scheduled` 用到的配置项如果只写在
+  `MarketDataProperties` 的 `@DefaultValue` 上、没进 jar 内 `application.yml`，本地怎么跑都正常，一上生产启动直接失败。
+  `ScheduledPlaceholdersTest` 现在会守住这条，但改调度相关配置时仍要留意这个开发/生产差异。
+- 起不来先看 `logs/console.log` 的第一条 `Application run failed`，配置类问题在那里说得很清楚。
+- 旧版本目录不要马上删：回滚就是把软链指回去再 `bin/trader.sh start`。
+- 本机偶发 `Could not resolve hostname`（macOS 系统解析器坏了，`host` 命令却能解）：
+  用 `host <主机名>` 取到地址后按地址连，或重启 mDNSResponder。隧道已建立的连接不受影响。
+
 systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `WorkingDirectory`、`PIDFile`、`ExecStart` 路径改成 `~/trading-signal`（软链）后 `sudo cp` 到 `/etc/systemd/system/`，`daemon-reload`、`enable --now`。之后只用 systemctl 管理。
 
 首轮数据装载（生产空库）：`POST /api/universe/sync` → `POST /api/bars/refresh/universe?count=1000` → `POST /api/bars/rehab/refresh?all=true` → 逐只 `POST /api/pool/{symbol}?role=HOLDING|POOL` → `POST /api/bars/backfill` → `GET /api/bars/audit`。
+
+基本面首轮装载：`POST /api/fundamentals/valuation/refresh`（520 只，几秒）→ `POST /api/fundamentals/financials/refresh?all=true`（520 只四类报表，约 42 分钟）→ `GET /api/fundamentals/audit`。两者都不占订阅与历史 K 线额度，但会占住作业线程，别和轮转类作业排一起。
 
 ## 4. 数据库
 
