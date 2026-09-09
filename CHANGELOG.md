@@ -9,6 +9,9 @@
 - 存储层 V5：`valuation_snapshot`、`financial_report`（唯一键带期别）、`financial_item`（长表）、`instrument.profile`。
 - 核心层：`VALUATION_SNAPSHOT`（全量每交易日，一次 400 只）与 `FINANCIALS_REFRESH`（池与持仓每周，四类报表）两个作业、
   基本面审计、查询服务；`/api/fundamentals/*` 七个接口、Postman 与前端 API 同步。
+- `POST /api/fundamentals/financials/refresh?all=true` 支持全量成分股回补（518 只约 41 分钟，不取公司简介）。
+- 修正：富途把美股 REITs 也归为 Trust（标普 500 里 25 只），按"ETF 没财报"跳过会漏掉它们；改为不按类型过滤，
+  审计也区分"有财报但过旧"与"从来没有财报（基金正常）"。
 - 开发实例对真实网关跑通：520 只估值零失败、19 只个股 889 期财报零失败、20 只公司简介，审计通过。
 - 对真实 OpenD 实测确认取值口径：估值字段是 proto required（判空无效）、亏损股市盈率为负、
   美股 ETF 净值多数缺失以 0 占位、四类报表字段编号不跨表通用；并修正了设计里年报与四季报期末同日导致的唯一键冲突。

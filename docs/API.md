@@ -104,11 +104,12 @@
 | `GET /api/fundamentals/coverage` | 覆盖：最新估值日期、当天有估值的只数、财报期数、池里有财报的只数 |
 | `GET /api/fundamentals/audit?date=` | 基本面审计；休市日直接判过 |
 | `POST /api/fundamentals/valuation/refresh` | 估值快照作业（全量 ∪ 池 ∪ 持仓，一次 400 只） |
-| `POST /api/fundamentals/financials/refresh` | 财报作业（池 + 持仓，四类报表，约 80 秒） |
+| `POST /api/fundamentals/financials/refresh?all=false` | 财报作业。`all=false` 只做池与持仓（约 80 秒，带公司简介）；`all=true` 做全量成分股（518 只约 41 分钟，不取简介） |
 
 读这些数据前要知道的三件事：
 
-- ETF 没有市盈率市净率，个股没有净值；两套口径共用一张表，缺的字段是 `null`。富途对多数美股 ETF 不给净值。
+- ETF 没有市盈率市净率，个股没有净值；两套口径共用一张表，缺的字段是 `null`。
+- **富途把美股 REITs 也归为 Trust**，所以 `type=ETF` 的标的里绝大多数其实是房地产信托，它们有完整财报；净值只有真 ETF 才有。
 - 年报与四季报的**期末可能是同一天**，靠 `periodText`（如 `2026/FY` 与 `2026/Q4`）区分。
 - `fiscalYear` 可能领先自然年，排序与取"最近一期"一律用 `periodEnd`。
 

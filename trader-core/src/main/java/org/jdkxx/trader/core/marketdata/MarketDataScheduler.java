@@ -39,7 +39,7 @@ public class MarketDataScheduler {
 
     @Scheduled(cron = "${trader.marketdata.financials-cron}", zone = "${trader.marketdata.zone}")
     public void financials() {
-        submit("财报刷新", () -> fundamentals.refreshFinancials("SCHEDULE"));
+        submit("财报刷新", () -> fundamentals.refreshFinancials("SCHEDULE", false));
     }
 
     private void submit(String what, java.util.function.LongSupplier action) {

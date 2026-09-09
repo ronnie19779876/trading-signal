@@ -111,6 +111,33 @@ class FundamentalsAuditServiceTest {
     }
 
     @Test
+    void 从来没有财报的标的不算过旧_只在说明里提一句() {
+        // SPY 这类真基金没有财务报表；REITs 虽然也被富途归为 Trust，但取得到财报，会走上面的路径
+        TradingDayRepository days = mock(TradingDayRepository.class);
+        when(days.covers(eq(Market.US), any())).thenReturn(true);
+        when(days.isTradingDay(Market.US, DAY)).thenReturn(true);
+        UniverseScope scope = mock(UniverseScope.class);
+        when(scope.universe()).thenReturn(List.of(row(1, "NVDA")));
+        when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "NVDA"), row(2, "SPY")));
+        ValuationRepository valuations = mock(ValuationRepository.class);
+        when(valuations.instrumentIdsOn(DAY)).thenReturn(Set.of(1L, 2L));
+        when(valuations.statsOn(DAY)).thenReturn(new ValuationRepository.DayStats(2, 0, 1, 0));
+        FinancialRepository financials = mock(FinancialRepository.class);
+        when(financials.latestPeriods()).thenReturn(List.of(
+                new FinancialRepository.Latest(1, "INCOME", DAY.minusDays(40))));
+        JobRunRepository jobs = mock(JobRunRepository.class);
+        when(jobs.latestOf(any())).thenReturn(Optional.empty());
+
+        BarAuditService.Report r = new FundamentalsAuditService(props(), scope, valuations, financials, days, jobs,
+                Clock.systemUTC()).audit(DAY);
+
+        BarAuditService.Check c = r.checks().stream().filter(x -> x.name().equals("financialsFreshness")).findFirst().orElseThrow();
+        assertThat(c.ok()).as("没有财报不等于过旧").isTrue();
+        assertThat(c.detail()).contains("SPY").contains("基金正常没有");
+        assertThat(r.summary()).containsEntry("poolWithoutReports", 1);
+    }
+
+    @Test
     void 财报过旧只是提示不影响总判定() {
         TradingDayRepository days = mock(TradingDayRepository.class);
         when(days.covers(eq(Market.US), any())).thenReturn(true);

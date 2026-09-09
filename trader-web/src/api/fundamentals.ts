@@ -82,5 +82,7 @@ export const fundamentalsApi = {
     ),
   coverage: () => http<FundamentalsCoverage>('/api/fundamentals/coverage'),
   refreshValuation: () => http<{ jobId: number }>('/api/fundamentals/valuation/refresh', { method: 'POST' }),
-  refreshFinancials: () => http<{ jobId: number }>('/api/fundamentals/financials/refresh', { method: 'POST' }),
+  /** all=true 做全量成分股，约 41 分钟且不取公司简介；默认只做池与持仓。 */
+  refreshFinancials: (all = false) =>
+    http<{ jobId: number }>(`/api/fundamentals/financials/refresh?all=${all}`, { method: 'POST' }),
 }

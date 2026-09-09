@@ -29,8 +29,8 @@ import java.util.Map;
  *   <li>估值字段在 proto 里是 required，{@code has*()} 恒为 true，判空没有意义；</li>
  *   <li>亏损股的市盈率、市净率是<b>负数</b>而不是 0 或缺失（实测 INTC -49.99、LCID -0.34），负值要原样保留；</li>
  *   <li>400 只里市盈率、市值没有一个是 0，说明 0 不是"无数据"的哨兵，直接取值即可；</li>
- *   <li>唯一的例外是 ETF 净值：实测富途对美股 ETF 多数不给，返回 0，这种 0 要转成 null，
- *       溢价由净值算出，净值缺失时一并作废；</li>
+ *   <li>唯一的例外是 Trust 类的净值：实测富途对标普 500 里的 25 只 REITs 都不给净值（返回 0），
+ *       只有真 ETF（SPY）有，这种 0 要转成 null，溢价由净值算出，净值缺失时一并作废；</li>
  *   <li>股息为 0 是真实的"不分红"（400 只里 86 只如此），保留 0，不要转 null。</li>
  * </ul>
  */
@@ -68,7 +68,7 @@ public final class FutuFundamentals {
                         turnoverRate, null, null));
             } else if (s.hasTrustExData()) {
                 QotGetSecuritySnapshot.TrustSnapshotExData t = s.getTrustExData();
-                boolean hasNav = t.getNetAssetValue() != 0;   // 富途对多数美股 ETF 不给净值，用 0 占位
+                boolean hasNav = t.getNetAssetValue() != 0;   // 富途对 REITs 不给净值，用 0 占位；真 ETF 才有
                 out.add(new ValuationSnapshot(instrument, asOf, b.getIsSuspend(),
                         null, null, null,
                         t.getOutstandingUnits(),

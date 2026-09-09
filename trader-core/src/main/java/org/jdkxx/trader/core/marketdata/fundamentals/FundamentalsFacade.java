@@ -29,8 +29,8 @@ public class FundamentalsFacade {
         return jobs.submit(Jobs.VALUATION_SNAPSHOT, trigger, valuation::run);
     }
 
-    public long refreshFinancials(String trigger) {
-        return jobs.submit(Jobs.FINANCIALS_REFRESH, trigger, financials::run);
+    public long refreshFinancials(String trigger, boolean all) {
+        return jobs.submit(Jobs.FINANCIALS_REFRESH, trigger, all ? financials::runAll : financials::run);
     }
 
     /** 池新增成员时补齐它自己的财报，不必等每周作业。 */

@@ -1757,7 +1757,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/fundamentals/financials/refresh",
+              "raw": "{{baseUrl}}/api/fundamentals/financials/refresh?all=false",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -1766,9 +1766,15 @@
                 "fundamentals",
                 "financials",
                 "refresh"
+              ],
+              "query": [
+                {
+                  "key": "all",
+                  "value": "false"
+                }
               ]
             },
-            "description": "只做池与持仓，四类报表各取最近若干期，约 80 秒。返回 jobId。"
+            "description": "all=false 只做池与持仓（约 80 秒，带公司简介）；all=true 做全量成分股（518 只约 41 分钟，不取简介）。返回 jobId。"
           },
           "event": [
             {

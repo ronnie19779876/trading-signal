@@ -78,9 +78,10 @@ public class FundamentalsController {
         return Map.of("jobId", facade.refreshValuation("MANUAL"));
     }
 
+    /** all=false 只做池与持仓（约 80 秒）；all=true 做全量成分股（518 只约 41 分钟，不取公司简介）。 */
     @PostMapping("/api/fundamentals/financials/refresh")
-    public Map<String, Object> refreshFinancials() {
-        return Map.of("jobId", facade.refreshFinancials("MANUAL"));
+    public Map<String, Object> refreshFinancials(@RequestParam(defaultValue = "false") boolean all) {
+        return Map.of("jobId", facade.refreshFinancials("MANUAL", all));
     }
 
     private static FinancialStatement statement(String raw) {

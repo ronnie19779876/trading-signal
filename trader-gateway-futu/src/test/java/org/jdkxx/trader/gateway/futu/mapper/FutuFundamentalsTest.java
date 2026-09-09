@@ -104,8 +104,8 @@ class FutuFundamentalsTest {
     }
 
     @Test
-    void ETF净值为0表示富途没有该数据_连同溢价一起作废() {
-        // 实测 400 只成分股里的 19 只 ETF 净值全为 0，富途对美股 ETF 多数不给净值
+    void 净值为0表示富途没有该数据_连同溢价一起作废() {
+        // 实测标普 500 里的 25 只 REITs 也被富途归为 Trust，净值全为 0；只有真 ETF（SPY）有净值
         QotGetSecuritySnapshot.Snapshot s = QotGetSecuritySnapshot.Snapshot.newBuilder()
                 .setBasic(basic("XYZ").setType(QotCommon.SecurityType.SecurityType_Trust_VALUE))
                 .setTrustExData(trust().setNetAssetValue(0).setPremium(0))

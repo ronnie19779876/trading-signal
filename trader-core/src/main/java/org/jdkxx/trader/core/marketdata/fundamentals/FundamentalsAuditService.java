@@ -7,7 +7,6 @@ import org.jdkxx.trader.core.marketdata.audit.BarAuditService.Report;
 import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
 import org.jdkxx.trader.domain.Market;
-import org.jdkxx.trader.domain.SecurityType;
 import org.jdkxx.trader.storage.marketdata.FinancialRepository;
 import org.jdkxx.trader.storage.marketdata.InstrumentRow;
 import org.jdkxx.trader.storage.marketdata.JobRunRepository;
@@ -104,15 +103,20 @@ public class FundamentalsAuditService {
             latest.merge(l.instrumentId(), l.periodEnd(), (a, b) -> a.isAfter(b) ? a : b);
         }
         LocalDate staleBefore = d.minusDays(props.fundamentals().financialStaleAfter().toDays());
-        List<String> stale = scope.poolAndHoldings().stream()
-                .filter(r -> r.type() == SecurityType.STOCK)   // ETF 本来就没有财务报表，不算缺失
-                .filter(r -> latest.get(r.id()) == null || latest.get(r.id()).isBefore(staleBefore))
-                .map(r -> r.symbol() + (latest.get(r.id()) == null ? "（没有）" : "（最近 " + latest.get(r.id()) + "）"))
+        // 有财报但过旧 = 财报季没跟上，值得报；从来没有财报 = 多半是真基金（不像 REITs，富途也归为 Trust），只作提示
+        List<InstrumentRow> pool = scope.poolAndHoldings();
+        List<String> stale = pool.stream()
+                .filter(r -> latest.get(r.id()) != null && latest.get(r.id()).isBefore(staleBefore))
+                .map(r -> r.symbol() + "（最近 " + latest.get(r.id()) + "）")
                 .sorted().toList();
+        List<String> noReports = pool.stream().filter(r -> latest.get(r.id()) == null)
+                .map(InstrumentRow::symbol).sorted().toList();
         summary.put("reports", financials.countReports());
+        summary.put("poolWithoutReports", noReports.size());
         checks.add(new Check("financialsFreshness", stale.isEmpty(), false,
-                stale.isEmpty() ? "池与持仓里的个股财报都在 " + staleBefore + " 之后"
-                        : stale.size() + " 只财报过旧或缺失", stale.size(), head(stale, 20)));
+                (stale.isEmpty() ? "池与持仓有财报的标的都在 " + staleBefore + " 之后" : stale.size() + " 只财报过旧")
+                        + (noReports.isEmpty() ? "" : "；另有 " + noReports.size() + " 只从来没有财报（基金正常没有）：" + head(noReports, 10)),
+                stale.size(), head(stale, 20)));
 
         // 4. 最近一次估值作业
         Optional<JobRunRow> last = jobs.latestOf(Jobs.VALUATION_SNAPSHOT);
