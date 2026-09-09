@@ -68,21 +68,19 @@ export interface FundamentalsCoverage {
 export type StatementKind = 'income' | 'balance_sheet' | 'cash_flow' | 'main_index'
 
 export const fundamentalsApi = {
-  overview: (symbol: string) => http<FundamentalsOverview>(`/api/fundamentals/${encodeURIComponent(symbol)}`),
-  valuation: (symbol: string, from?: string, to?: string) => {
-    const q = new URLSearchParams()
-    if (from) q.set('from', from)
-    if (to) q.set('to', to)
-    const suffix = q.toString() ? `?${q}` : ''
-    return http<ValuationSnapshot[]>(`/api/fundamentals/${encodeURIComponent(symbol)}/valuation${suffix}`)
-  },
-  reports: (symbol: string, statement: StatementKind = 'main_index', limit = 8) =>
-    http<FinancialReport[]>(
-      `/api/fundamentals/${encodeURIComponent(symbol)}/reports?statement=${statement}&limit=${limit}`,
-    ),
-  coverage: () => http<FundamentalsCoverage>('/api/fundamentals/coverage'),
-  refreshValuation: () => http<{ jobId: number }>('/api/fundamentals/valuation/refresh', { method: 'POST' }),
+  overview: async (symbol: string) =>
+    (await http.get<FundamentalsOverview>(`/api/fundamentals/${encodeURIComponent(symbol)}`)).data,
+  valuation: async (symbol: string, from?: string, to?: string) =>
+    (await http.get<ValuationSnapshot[]>(`/api/fundamentals/${encodeURIComponent(symbol)}/valuation`, {
+      params: { ...(from ? { from } : {}), ...(to ? { to } : {}) },
+    })).data,
+  reports: async (symbol: string, statement: StatementKind = 'main_index', limit = 8) =>
+    (await http.get<FinancialReport[]>(`/api/fundamentals/${encodeURIComponent(symbol)}/reports`, {
+      params: { statement, limit },
+    })).data,
+  coverage: async () => (await http.get<FundamentalsCoverage>('/api/fundamentals/coverage')).data,
+  refreshValuation: async () => (await http.post<{ jobId: number }>('/api/fundamentals/valuation/refresh')).data,
   /** all=true 做全量成分股，约 41 分钟且不取公司简介；默认只做池与持仓。 */
-  refreshFinancials: (all = false) =>
-    http<{ jobId: number }>(`/api/fundamentals/financials/refresh?all=${all}`, { method: 'POST' }),
+  refreshFinancials: async (all = false) =>
+    (await http.post<{ jobId: number }>('/api/fundamentals/financials/refresh', null, { params: { all } })).data,
 }
