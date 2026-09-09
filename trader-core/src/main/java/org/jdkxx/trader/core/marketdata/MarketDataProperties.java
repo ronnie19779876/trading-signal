@@ -17,8 +17,11 @@ public record MarketDataProperties(
         @DefaultValue History history,
         @DefaultValue Adjust adjust,
         @DefaultValue Realtime realtime,
+        @DefaultValue Fundamentals fundamentals,
         @DefaultValue("false") boolean scheduleEnabled,
         @DefaultValue("0 30 17 * * MON-FRI") String incrementCron,
+        @DefaultValue("0 40 17 * * MON-FRI") String valuationCron,
+        @DefaultValue("0 0 7 * * SAT") String financialsCron,
         @DefaultValue("America/New_York") String zone) {
 
     public record Universe(
@@ -55,6 +58,18 @@ public record MarketDataProperties(
      * 实时报价（不落库）。auto-subscribe：开发机 false / 发布包 true——两个实例同时订会占双份额度。
      * pause-during-refresh：全量轮转期间暂停实时订阅（释放额度给 90 只一批的轮转），结束后恢复。
      */
+    /**
+     * 基本面。估值快照全量每交易日一次（一次 400 只，不占订阅与历史额度）；
+     * 财报只给池与持仓，每周一次——全量做要 35 分钟且绝大多数标的用不上。
+     */
+    public record Fundamentals(
+            @DefaultValue("true") boolean enabled,
+            @DefaultValue("400") int snapshotBatchSize,
+            @DefaultValue("12") int financialPeriods,
+            @DefaultValue("30d") java.time.Duration profileRefreshAfter,
+            @DefaultValue("180d") java.time.Duration financialStaleAfter) {
+    }
+
     public record Realtime(
             @DefaultValue("true") boolean enabled,
             @DefaultValue("false") boolean autoSubscribe,

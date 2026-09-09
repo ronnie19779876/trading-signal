@@ -9,6 +9,9 @@ import com.futu.openapi.FTSPI_Trd;
 import com.futu.openapi.pb.GetGlobalState;
 import com.futu.openapi.pb.Notify;
 import com.futu.openapi.pb.QotGetKL;
+import com.futu.openapi.pb.QotGetCompanyProfile;
+import com.futu.openapi.pb.QotGetFinancialsStatements;
+import com.futu.openapi.pb.QotGetSecuritySnapshot;
 import com.futu.openapi.pb.QotGetSubInfo;
 import com.futu.openapi.pb.QotUpdateBasicQot;
 import com.futu.openapi.pb.QotGetStaticInfo;
@@ -141,6 +144,21 @@ final class FutuChannel implements Transport {
 
         @Override
         public void onReply_GetStaticInfo(FTAPI_Conn client, int nSerialNo, QotGetStaticInfo.Response rsp) {
+            registry.onReply(nSerialNo, rsp);
+        }
+
+        @Override
+        public void onReply_GetSecuritySnapshot(FTAPI_Conn client, int nSerialNo, QotGetSecuritySnapshot.Response rsp) {
+            registry.onReply(nSerialNo, rsp);
+        }
+
+        @Override
+        public void onReply_GetFinancialsStatements(FTAPI_Conn client, int nSerialNo, QotGetFinancialsStatements.Response rsp) {
+            registry.onReply(nSerialNo, rsp);
+        }
+
+        @Override
+        public void onReply_GetCompanyProfile(FTAPI_Conn client, int nSerialNo, QotGetCompanyProfile.Response rsp) {
             registry.onReply(nSerialNo, rsp);
         }
 

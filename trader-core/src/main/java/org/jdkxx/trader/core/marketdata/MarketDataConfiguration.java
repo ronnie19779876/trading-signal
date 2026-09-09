@@ -3,6 +3,11 @@ package org.jdkxx.trader.core.marketdata;
 import org.jdkxx.trader.common.ratelimit.Sleeper;
 import org.jdkxx.trader.core.marketdata.audit.BarAuditService;
 import org.jdkxx.trader.core.marketdata.bars.BarQueryService;
+import org.jdkxx.trader.core.marketdata.fundamentals.FinancialsRefreshService;
+import org.jdkxx.trader.core.marketdata.fundamentals.FundamentalsAuditService;
+import org.jdkxx.trader.core.marketdata.fundamentals.FundamentalsFacade;
+import org.jdkxx.trader.core.marketdata.fundamentals.FundamentalsQueryService;
+import org.jdkxx.trader.core.marketdata.fundamentals.ValuationSnapshotService;
 import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
 import org.jdkxx.trader.core.marketdata.bars.DeepBackfillService;
 import org.jdkxx.trader.core.marketdata.bars.RotationRefresher;
@@ -24,6 +29,9 @@ import org.jdkxx.trader.storage.marketdata.InstrumentRepository;
 import org.jdkxx.trader.storage.marketdata.JobRunRepository;
 import org.jdkxx.trader.storage.marketdata.PoolRepository;
 import org.jdkxx.trader.storage.marketdata.RehabFactorRepository;
+import org.jdkxx.trader.storage.marketdata.ValuationRepository;
+import org.jdkxx.trader.storage.marketdata.FinancialRepository;
+import org.jdkxx.trader.storage.marketdata.CompanyProfileRepository;
 import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -104,6 +112,43 @@ public class MarketDataConfiguration {
         return new BarAuditService(props, scope, bars, days, states, jobs, gateway, Clock.systemUTC());
     }
 
+    // ------------------------------------------------------------------ 基本面（步骤 3）
+
+    @Bean
+    public ValuationSnapshotService valuationSnapshotService(MarketDataProperties props, UniverseScope scope,
+                                                            MarketDataGateway gateway, ValuationRepository valuations,
+                                                            TradingDayRepository days) {
+        return new ValuationSnapshotService(props, scope, gateway, valuations, days, Clock.systemUTC());
+    }
+
+    @Bean
+    public FinancialsRefreshService financialsRefreshService(MarketDataProperties props, UniverseScope scope,
+                                                            MarketDataGateway gateway, FinancialRepository financials,
+                                                            CompanyProfileRepository profiles) {
+        return new FinancialsRefreshService(props, scope, gateway, financials, profiles, Clock.systemUTC());
+    }
+
+    @Bean
+    public FundamentalsQueryService fundamentalsQueryService(InstrumentDirectory directory, ValuationRepository valuations,
+                                                             FinancialRepository financials, CompanyProfileRepository profiles,
+                                                             UniverseScope scope, MarketDataProperties props) {
+        return new FundamentalsQueryService(directory, valuations, financials, profiles, scope, props);
+    }
+
+    @Bean
+    public FundamentalsAuditService fundamentalsAuditService(MarketDataProperties props, UniverseScope scope,
+                                                             ValuationRepository valuations, FinancialRepository financials,
+                                                             TradingDayRepository days, JobRunRepository jobs) {
+        return new FundamentalsAuditService(props, scope, valuations, financials, days, jobs, Clock.systemUTC());
+    }
+
+    @Bean
+    public FundamentalsFacade fundamentalsFacade(JobService jobs, ValuationSnapshotService valuation,
+                                                 FinancialsRefreshService financials, FundamentalsQueryService query,
+                                                 UniverseScope scope) {
+        return new FundamentalsFacade(jobs, valuation, financials, query, scope);
+    }
+
     @Bean
     public PoolService poolService(MarketDataProperties props, PoolRepository pool, InstrumentDirectory directory, JobService jobs,
                                    DeepBackfillService deep, InstrumentRepository instruments, MarketDataGateway gateway) {
@@ -122,8 +167,8 @@ public class MarketDataConfiguration {
 
     @Bean
     @ConditionalOnProperty(name = "trader.marketdata.schedule-enabled", havingValue = "true")
-    public MarketDataScheduler marketDataScheduler(MarketDataFacade facade) {
-        return new MarketDataScheduler(facade);
+    public MarketDataScheduler marketDataScheduler(MarketDataFacade facade, FundamentalsFacade fundamentals) {
+        return new MarketDataScheduler(facade, fundamentals);
     }
 
     // ------------------------------------------------------------------ 实时报价（步骤 2，不落库）

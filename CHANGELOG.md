@@ -6,6 +6,10 @@
 
 - 第 1 步网关层：`MarketDataGateway` 增加 `snapshots` / `financials` / `companyProfile`（富途快照、四类财务报表、公司简介），
   新增三个限流名与 `FutuFundamentals` 映射器；领域新增 `ValuationSnapshot` / `FinancialReport` / `FinancialStatement` / `CompanyProfile`。
+- 存储层 V5：`valuation_snapshot`、`financial_report`（唯一键带期别）、`financial_item`（长表）、`instrument.profile`。
+- 核心层：`VALUATION_SNAPSHOT`（全量每交易日，一次 400 只）与 `FINANCIALS_REFRESH`（池与持仓每周，四类报表）两个作业、
+  基本面审计、查询服务；`/api/fundamentals/*` 七个接口、Postman 与前端 API 同步。
+- 开发实例对真实网关跑通：520 只估值零失败、19 只个股 889 期财报零失败、20 只公司简介，审计通过。
 - 对真实 OpenD 实测确认取值口径：估值字段是 proto required（判空无效）、亏损股市盈率为负、
   美股 ETF 净值多数缺失以 0 占位、四类报表字段编号不跨表通用；并修正了设计里年报与四季报期末同日导致的唯一键冲突。
 

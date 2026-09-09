@@ -228,6 +228,32 @@ ENDPOINTS = [
         ],
     },
     {
+        "folder": "基本面（第 2 期·步骤 3）",
+        "items": [
+            {"name": "基本面审计（收盘后必查）", "method": "GET", "path": "/api/fundamentals/audit",
+             "desc": "默认审最近一个应有收盘数据的交易日：估值完整性、合理性（负市盈率是亏损股的真实数据，不算错）、池与持仓的财报陈旧度、估值作业。休市日直接判过。",
+             "tests": T_200 + T_JSON + ['pm.test("审计通过 ok=true（失败时看 checks）", () => pm.expect(body.ok, JSON.stringify(body.checks.filter(c => !c.ok))).to.eql(true));']},
+            {"name": "覆盖情况", "method": "GET", "path": "/api/fundamentals/coverage",
+             "desc": "最新估值日期、当天有估值的标的数、财报期数、池里有财报的只数。",
+             "tests": T_200 + T_JSON + ['pm.test("有 targets 与 reports", () => { pm.expect(body.targets).to.be.a("number"); pm.expect(body.reports).to.be.a("number"); });']},
+            {"name": "单只概览", "method": "GET", "path": "/api/fundamentals/{{symbol}}",
+             "desc": "最新估值 + 最近 4 期主要指标 + 公司简介。库里没有这个代码 → 404。",
+             "tests": T_200 + T_JSON + ['pm.test("有 symbol", () => pm.expect(body.symbol).to.be.a("string"));']},
+            {"name": "估值序列", "method": "GET", "path": "/api/fundamentals/{{symbol}}/valuation", "query": [{"key": "from", "value": "2026-08-01"}, {"key": "to", "value": "2026-09-30"}],
+             "desc": "估值时间序列，默认最近 90 天。亏损股的市盈率为负是真实数据。",
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
+            {"name": "财务报表", "method": "GET", "path": "/api/fundamentals/{{symbol}}/reports", "query": [{"key": "statement", "value": "main_index"}, {"key": "limit", "value": "8"}],
+             "desc": "statement 取 income / balance_sheet / cash_flow / main_index。注意年报与四季报期末可能同一天，靠 periodText 区分；财年可能领先自然年。",
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
+            {"name": "估值快照刷新（异步作业）", "method": "POST", "path": "/api/fundamentals/valuation/refresh",
+             "desc": "全量 ∪ 池 ∪ 持仓，一次 400 只，不占订阅与历史额度。返回 jobId；已有作业在跑 → 409。",
+             "tests": T_200 + T_JSON + ['pm.test("有 jobId", () => pm.expect(body.jobId).to.be.a("number"));']},
+            {"name": "财报刷新（异步作业）", "method": "POST", "path": "/api/fundamentals/financials/refresh",
+             "desc": "只做池与持仓，四类报表各取最近若干期，约 80 秒。返回 jobId。",
+             "tests": T_200 + T_JSON + ['pm.test("有 jobId", () => pm.expect(body.jobId).to.be.a("number"));']},
+        ],
+    },
+    {
         "folder": "Actuator",
         "items": [
             {

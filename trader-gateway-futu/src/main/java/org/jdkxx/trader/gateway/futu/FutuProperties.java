@@ -57,7 +57,7 @@ public record FutuProperties(
             Map.entry("get-static-info", "30/30s"),
             Map.entry("get-sub-info", "10/30s"),
             Map.entry("get-security-snapshot", "60/30s"),
-            Map.entry("get-financials", "30/30s"),
+            Map.entry("get-financials", "25/30s"),      // 文档 30/30s，实测按 30 发会被拒，留余量（同 request-rehab）
             Map.entry("get-company-profile", "30/30s"));   // 文档未写限频，先按同类接口配，实测后收敛
 
     public FutuProperties {

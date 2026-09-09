@@ -92,6 +92,27 @@
 | `GET /api/bars/quota` | 历史额度（7 天滚动） |
 | `GET /api/jobs?limit=` / `GET /api/jobs/{id}` / `POST /api/jobs/cancel` | 作业记录与取消（在下一批边界停下） |
 
+## 基本面（第 2 期·步骤 3）
+
+估值快照全量每交易日一次，财报只做池与持仓、每周一次。两者都不占订阅额度与历史 K 线额度。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/fundamentals/{symbol}` | 概览：最新估值 + 最近 4 期主要指标 + 公司简介 |
+| `GET /api/fundamentals/{symbol}/valuation?from&to` | 估值时间序列（默认最近 90 天）。**亏损股的市盈率市净率为负是真实数据** |
+| `GET /api/fundamentals/{symbol}/reports?statement&limit` | 财报期次与数据项；statement 取 `income`/`balance_sheet`/`cash_flow`/`main_index` |
+| `GET /api/fundamentals/coverage` | 覆盖：最新估值日期、当天有估值的只数、财报期数、池里有财报的只数 |
+| `GET /api/fundamentals/audit?date=` | 基本面审计；休市日直接判过 |
+| `POST /api/fundamentals/valuation/refresh` | 估值快照作业（全量 ∪ 池 ∪ 持仓，一次 400 只） |
+| `POST /api/fundamentals/financials/refresh` | 财报作业（池 + 持仓，四类报表，约 80 秒） |
+
+读这些数据前要知道的三件事：
+
+- ETF 没有市盈率市净率，个股没有净值；两套口径共用一张表，缺的字段是 `null`。富途对多数美股 ETF 不给净值。
+- 年报与四季报的**期末可能是同一天**，靠 `periodText`（如 `2026/FY` 与 `2026/Q4`）区分。
+- `fiscalYear` 可能领先自然年，排序与取"最近一期"一律用 `periodEnd`。
+
+
 K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, turnoverRate(小数), changeRate(百分数), pe, blank`。
 
 ## 实时报价（第 2 期·步骤 2，不落库）
