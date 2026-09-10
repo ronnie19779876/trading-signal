@@ -111,6 +111,23 @@ public class MarketDataFacade {
         return tradingDays.list(Market.US, from, to);
     }
 
+    /** 对照交易日历深扫缺口。前收连续性检查查不出这类问题，只有比对日历才行。 */
+    public List<GapView> gaps(java.time.LocalDate from, java.time.LocalDate to, int limit) {
+        Map<Long, InstrumentRow> byId = new HashMap<>();
+        instruments.findAll().forEach(r -> byId.put(r.id(), r));
+        List<GapView> out = new ArrayList<>();
+        for (DailyBarRepository.InstrumentGap g : bars.gaps(from, to, limit)) {
+            InstrumentRow r = byId.get(g.instrumentId());
+            out.add(new GapView(r == null ? "#" + g.instrumentId() : r.symbol(),
+                    r == null ? null : r.name(), g.missing(), g.firstMissing(), g.lastMissing()));
+        }
+        return out;
+    }
+
+    public record GapView(String symbol, String name, long missing,
+                          java.time.LocalDate firstMissing, java.time.LocalDate lastMissing) {
+    }
+
     public List<UniverseSyncService.IndexResult> importCsv(String csv) {
         return sync.importCsv(csv);
     }

@@ -151,6 +151,42 @@ public class DailyBarRepository {
                 (rs, i) -> rs.getDate(1).toLocalDate(), Date.valueOf(from), Date.valueOf(to), min);
     }
 
+    /**
+     * 对照交易日历找缺口：标的在自己有数据的区间内、日历上有而库里没有的交易日。
+     *
+     * <p>这类缺口<b>前收连续性检查发现不了</b>——实测富途的 SPY 缺了 26 个交易日（2009~2012），
+     * 而它给的 last_close 与缺口自洽，比对前收完全看不出来。只有拿日历比对才查得到。
+     *
+     * @param from 起始日（含），只统计标的自身有数据的区间与之相交的部分
+     * @param to   截止日（含）
+     */
+    public List<InstrumentGap> gaps(LocalDate from, LocalDate to, int limit) {
+        return jdbc.query("""
+                WITH span AS (
+                    SELECT instrument_id, min(trade_date) AS first_bar, max(trade_date) AS last_bar
+                    FROM daily_bar GROUP BY instrument_id)
+                SELECT s.instrument_id,
+                       count(*) AS missing,
+                       min(t.trade_date) AS first_missing,
+                       max(t.trade_date) AS last_missing
+                FROM span s
+                JOIN trading_day t ON t.market = 'US'
+                     AND t.trade_date BETWEEN greatest(s.first_bar, ?) AND least(s.last_bar, ?)
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM daily_bar b
+                    WHERE b.instrument_id = s.instrument_id AND b.trade_date = t.trade_date)
+                GROUP BY s.instrument_id
+                ORDER BY missing DESC
+                LIMIT ?""",
+                (rs, i) -> new InstrumentGap(rs.getLong("instrument_id"), rs.getLong("missing"),
+                        rs.getDate("first_missing").toLocalDate(), rs.getDate("last_missing").toLocalDate()),
+                Date.valueOf(from), Date.valueOf(to), limit);
+    }
+
+    /** 一只标的对照日历缺失的交易日。 */
+    public record InstrumentGap(long instrumentId, long missing, LocalDate firstMissing, LocalDate lastMissing) {
+    }
+
     public List<InstrumentCoverage> coverageByInstrument() {
         return jdbc.query("SELECT instrument_id, count(*) AS rows, min(trade_date) AS mn, max(trade_date) AS mx FROM daily_bar GROUP BY instrument_id",
                 (rs, i) -> new InstrumentCoverage(rs.getLong("instrument_id"), rs.getLong("rows"),

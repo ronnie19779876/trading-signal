@@ -156,6 +156,9 @@ systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `Wor
 
 本机执行需要 §1a 的隧道把 8093 转发到 127.0.0.1。
 
+`historyGaps` 报警时：最近 90 天的缺口先重跑增量（`POST /api/bars/increment`）；补不回来的多是券商缺数。
+全历史深扫用 `GET /api/bars/gaps`，已知长期缺口有 NBIS（停牌 664 天）与 SPY（券商缺数 26 天），两者都补不回来。
+
 它调 `GET /api/bars/audit`：完整性（全量 ∪ 池 ∪ 持仓当天都有 K 线）、字段合理性、前收连续性（漏日）、复权因子新鲜度、同步错误、增量作业、网关。`ok=false` 时看 `checks` 里失败项与样本；退出码 0 通过 / 1 未通过 / 2 接口不可达。假日（如劳工节）不带参数跑会自动审计上一个交易日；显式传休市日则回"当天休市"并判通过。
 
 - `GET /api/gateways`：两家 CONNECTED，`lastHeartbeatAt` 在 1 分钟内，`reconnectAttempts` 为 0；盈透 facts 里各 `farm.*` 为 OK 或 INACTIVE（INACTIVE 正常）。

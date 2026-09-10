@@ -76,6 +76,23 @@ public class MarketDataController {
         return facade.calendar(start, end);
     }
 
+    /**
+     * 对照交易日历深扫缺口（默认全历史）。
+     * 前收连续性检查发现不了这类问题：券商缺数时它自己的前收与缺口自洽。
+     */
+    @GetMapping("/api/bars/gaps")
+    public List<MarketDataFacade.GapView> gaps(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(defaultValue = "50") int limit) {
+        LocalDate end = to == null ? LocalDate.now() : to;
+        LocalDate start = from == null ? LocalDate.of(2000, 1, 1) : from;
+        if (start.isAfter(end)) {
+            throw new IllegalArgumentException("from 不能晚于 to");
+        }
+        return facade.gaps(start, end, Math.clamp(limit, 1, 500));
+    }
+
     // ------------------------------------------------------------------ 成分股 / 标的
 
     @PostMapping("/api/universe/sync")

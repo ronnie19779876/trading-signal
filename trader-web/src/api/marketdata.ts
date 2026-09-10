@@ -99,6 +99,17 @@ export interface TradingDay {
 export const getCoverage = async () => (await http.get<CoverageView>('/api/bars/coverage')).data
 export const getCalendar = async (from?: string, to?: string) =>
   (await http.get<TradingDay[]>('/api/bars/calendar', { params: { ...(from ? { from } : {}), ...(to ? { to } : {}) } })).data
+export interface GapView {
+  symbol: string
+  name: string | null
+  missing: number
+  firstMissing: string
+  lastMissing: string
+}
+
+/** 对照交易日历深扫缺口；前收连续性检查查不出这类问题。 */
+export const getGaps = async (limit = 50) =>
+  (await http.get<GapView[]>('/api/bars/gaps', { params: { limit } })).data
 export const backfillCalendar = async () => (await http.post<{ jobId: number }>('/api/bars/calendar/backfill')).data
 export const getJobs = async (limit = 15) => (await http.get<{ running: RunningJob | Record<string, never>; recent: JobRun[] }>('/api/jobs', { params: { limit } })).data
 export const getPool = async () => (await http.get<InstrumentView[]>('/api/pool')).data

@@ -37,6 +37,9 @@ import java.util.stream.Collectors;
  */
 public class BarAuditService {
 
+    /** 缺口检查只看最近这么多天：这段运维能靠重跑增量补上，更早的深扫走 /api/bars/gaps。 */
+    static final int GAP_WINDOW_DAYS = 90;
+
     public record Check(String name, boolean ok, boolean critical, String detail, long count, List<String> samples) {
     }
 
@@ -158,12 +161,34 @@ public class BarAuditService {
                                 + (calOk ? "" : "；最早 K 线在 " + earliestDeep + "，日历没覆盖到，跑一次日历回补"),
                 cal.days(), List.of()));
 
-        // 8. 富途网关
+        // 8. 最近窗口对照日历的缺口。
+        // 只看最近 GAP_WINDOW_DAYS 天：这段是运维能补的（增量重跑）；更早的多是券商侧的洞，
+        // 补不回来，天天报红会让整个巡检失去意义，改由 GET /api/bars/gaps 按需深扫。
+        // 判为提示项而非关键项，同样因为常见成因是券商缺数而不是我们漏跑。
+        List<DailyBarRepository.InstrumentGap> gaps = bars.gaps(d.minusDays(GAP_WINDOW_DAYS), d, 20).stream()
+                .filter(g -> targets.containsKey(g.instrumentId())).toList();
+        List<String> gapSamples = gaps.stream()
+                .map(g -> symbolOf(targets, g.instrumentId()) + " 缺 " + g.missing() + " 天（"
+                        + g.firstMissing() + " ~ " + g.lastMissing() + "）").toList();
+        long missingDays = gaps.stream().mapToLong(DailyBarRepository.InstrumentGap::missing).sum();
+        summary.put("recentGapDays", missingDays);
+        checks.add(new Check("historyGaps", gaps.isEmpty(), false,
+                gaps.isEmpty() ? "最近 " + GAP_WINDOW_DAYS + " 天对照交易日历没有缺口"
+                        : gaps.size() + " 只在最近 " + GAP_WINDOW_DAYS + " 天有缺口，共 " + missingDays
+                                + " 天；能补的重跑增量，补不回来的多是券商缺数（深扫用 /api/bars/gaps）",
+                missingDays, head(gapSamples, 20)));
+
+        // 9. 富途网关
         boolean futuUp = gateway instanceof BrokerGateway g && g.status().state() == GatewayState.CONNECTED;
         checks.add(new Check("gateway", futuUp, false, futuUp ? "富途网关已连接" : "富途网关未连接（" + Broker.FUTU + "）", 0, List.of()));
 
         boolean ok = checks.stream().filter(Check::critical).allMatch(Check::ok);
         return new Report(d, ok, clock.instant(), summary, checks);
+    }
+
+    private static String symbolOf(Map<Long, InstrumentRow> targets, long id) {
+        InstrumentRow r = targets.get(id);
+        return r == null ? "#" + id : r.symbol();
     }
 
     private static List<String> head(List<String> list, int n) {
