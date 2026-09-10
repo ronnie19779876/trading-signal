@@ -28,6 +28,7 @@ export interface QuotaView {
 export interface RunningJob {
   id: number
   job: string
+  /** MANUAL 手工、SCHEDULE 定时、CATCHUP 当天补偿检查补跑 */
   trigger: string
   startedAt: string
   progress: string
@@ -68,7 +69,8 @@ export interface JobRun {
   trigger: string
   startedAt: string
   finishedAt: string | null
-  status: 'RUNNING' | 'OK' | 'PARTIAL' | 'FAILED'
+  /** SKIPPED = 调度重试到底仍被占用而放弃 */
+  status: 'RUNNING' | 'OK' | 'PARTIAL' | 'FAILED' | 'SKIPPED'
   summary: string | null
 }
 
@@ -111,6 +113,27 @@ export interface GapView {
 export const getGaps = async (limit = 50) =>
   (await http.get<GapView[]>('/api/bars/gaps', { params: { limit } })).data
 export const backfillCalendar = async () => (await http.post<{ jobId: number }>('/api/bars/calendar/backfill')).data
+
+/** 落在交易日历之外的 K 线（券商在美股假日给过脏数据）。 */
+export interface PhantomCleanup {
+  applied: boolean
+  found: number
+  deleted: number
+  bars: {
+    symbol: string
+    tradeDate: string
+    open: number
+    high: number
+    low: number
+    close: number
+    volume: number
+    turnover: number | null
+  }[]
+}
+
+/** apply 默认 false 只试跑列清单；确认无误后传 true 才真删。 */
+export const cleanupPhantomBars = async (apply = false) =>
+  (await http.post<PhantomCleanup>('/api/bars/cleanup/phantom', null, { params: { apply } })).data
 export const getJobs = async (limit = 15) => (await http.get<{ running: RunningJob | Record<string, never>; recent: JobRun[] }>('/api/jobs', { params: { limit } })).data
 export const getPool = async () => (await http.get<InstrumentView[]>('/api/pool')).data
 export const getUniverse = async (index?: string) => (await http.get<InstrumentView[]>('/api/universe', { params: index ? { index } : {} })).data

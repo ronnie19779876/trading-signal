@@ -90,6 +90,7 @@
 | `POST /api/bars/calendar/backfill` | 交易日历回补作业：券商段（约 2016-09 起）+ 更早的从日 K 线反推。幂等，几秒 |
 | `GET /api/bars/calendar?from&to` | 交易日列表（默认最近一年）。`source=FUTU` 券商给的，`DERIVED` 从日 K 线反推 |
 | `GET /api/bars/gaps?from&to&limit` | 对照交易日历深扫缺口（默认全历史）。**前收连续性检查查不出这类问题**：券商缺数时它自己的前收与缺口自洽 |
+| `POST /api/bars/cleanup/phantom?apply=false` | 幽灵 K 线订正：落在交易日历之外的 K 线（券商在美股假日给过脏数据）。默认只试跑列清单，`apply=true` 才真删 |
 | `GET /api/bars/audit?date=` | 日线数据审计（默认最近应有收盘 K 的交易日）：传入的日期若在日历里是休市日，只回一条 `calendar` 检查并判通过；completeness / sanity / continuity 为关键项，rehab / syncErrors / incrementJob / gateway 为提示项；`ok` = 关键项全过 |
 | `GET /api/bars/coverage` | 行数/标的数/最早最新、全量/池/持仓规模、已覆盖数、复权因子覆盖数、未解析数、错误数、历史额度、运行中的作业 |
 | `GET /api/bars/quota` | 历史额度（7 天滚动） |

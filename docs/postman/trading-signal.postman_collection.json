@@ -544,6 +544,51 @@
           "response": []
         },
         {
+          "name": "幽灵 K 线订正（先试跑）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bars/cleanup/phantom?apply=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bars",
+                "cleanup",
+                "phantom"
+              ],
+              "query": [
+                {
+                  "key": "apply",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "列出落在交易日历之外的 K 线（券商在美股假日给过脏数据：成交额 0、价格离谱）。apply=false 只试跑，确认清单无误后再改 true 真删。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"试跑不应删除\", () => { pm.expect(body.applied).to.eql(false); pm.expect(body.deleted).to.eql(0); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
           "name": "交易日历回补（异步作业）",
           "request": {
             "method": "POST",

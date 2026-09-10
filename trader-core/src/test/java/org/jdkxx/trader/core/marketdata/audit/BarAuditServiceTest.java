@@ -69,6 +69,7 @@ class BarAuditServiceTest {
         when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(0, 0, 0, 0, 0, 0));
         when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
         when(bars.coverageByInstrument()).thenReturn(List.of());
+        when(bars.phantomBars(anyInt())).thenReturn(List.of());
         when(days.coverage(Market.US)).thenReturn(
                 new TradingDayRepository.Coverage(LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 18), 5000, 2591, 2409));
         UniverseScope scope = mock(UniverseScope.class);
@@ -87,6 +88,42 @@ class BarAuditServiceTest {
     }
 
     @Test
+    void 幽灵K线只提示不判失败() {
+        // 券商在美股假日给过脏 K 线：日历里没有这天，K 线表里却有
+        TradingDayRepository days = mock(TradingDayRepository.class);
+        when(days.covers(eq(Market.US), any())).thenReturn(false);
+        when(days.coverage(Market.US)).thenReturn(
+                new TradingDayRepository.Coverage(LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 18), 5051, 2519, 2532));
+        DailyBarRepository bars = mock(DailyBarRepository.class);
+        when(bars.instrumentIdsWithBarOn(any())).thenReturn(Set.of(1L));
+        when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(1, 0, 0, 0, 0, 0));
+        when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
+        when(bars.gaps(any(), any(), anyInt())).thenReturn(List.of());
+        when(bars.coverageByInstrument()).thenReturn(List.of(
+                new DailyBarRepository.InstrumentCoverage(1L, 5000, LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 9))));
+        when(bars.phantomBars(anyInt())).thenReturn(List.of(new DailyBarRepository.PhantomBar(
+                1L, LocalDate.of(2011, 7, 4), new java.math.BigDecimal("128.24"), new java.math.BigDecimal("129.30"),
+                new java.math.BigDecimal("109.57"), new java.math.BigDecimal("109.57"), 285890054L, java.math.BigDecimal.ZERO)));
+        UniverseScope scope = mock(UniverseScope.class);
+        when(scope.universe()).thenReturn(List.of(row(1, "SPY")));
+        when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "SPY")));
+        BarSyncStateRepository states = mock(BarSyncStateRepository.class);
+        when(states.findAll()).thenReturn(List.of());
+        JobRunRepository jobs = mock(JobRunRepository.class);
+        when(jobs.latestOf(any())).thenReturn(Optional.empty());
+
+        BarAuditService.Report r = new BarAuditService(props(), scope, bars, days, states, jobs, null, Clock.systemUTC())
+                .audit(LocalDate.of(2026, 9, 9));
+
+        BarAuditService.Check c = r.checks().stream().filter(x -> x.name().equals("phantomBars")).findFirst().orElseThrow();
+        assertThat(c.ok()).isFalse();
+        assertThat(c.critical()).as("脏数据不影响当日正确性，提示即可").isFalse();
+        assertThat(c.detail()).contains("交易日历之外");
+        assertThat(c.samples()).singleElement().asString().contains("SPY").contains("2011-07-04");
+        assertThat(r.ok()).as("关键项都过，总判定仍为通过").isTrue();
+    }
+
+    @Test
     void 日历没覆盖到最早K线时给出提示但不判失败() {
         TradingDayRepository days = mock(TradingDayRepository.class);
         when(days.covers(eq(Market.US), any())).thenReturn(false);
@@ -99,6 +136,7 @@ class BarAuditServiceTest {
         when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
         when(bars.coverageByInstrument()).thenReturn(List.of(
                 new DailyBarRepository.InstrumentCoverage(1L, 5000, LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 9))));
+        when(bars.phantomBars(anyInt())).thenReturn(List.of());
         UniverseScope scope = mock(UniverseScope.class);
         when(scope.universe()).thenReturn(List.of(row(1, "SPY")));
         when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "SPY")));

@@ -187,6 +187,43 @@ public class DailyBarRepository {
     public record InstrumentGap(long instrumentId, long missing, LocalDate firstMissing, LocalDate lastMissing) {
     }
 
+    /**
+     * 幽灵 K 线：落在日历覆盖区间内、却不在交易日历里的行。
+     *
+     * <p>实测富途给 SPY 在三个美股假日留了脏 K 线（2011-07-04、2012-04-06、2012-05-28，成交额都是 0，
+     * 独立日那根还凭空造出 15% 的日内暴跌）。日历已被独立验证在该区间内完全正确，
+     * 所以"不在日历里"等价于"不该存在"。区间外（日历没覆盖的年份）一律不碰。
+     */
+    public List<PhantomBar> phantomBars(int limit) {
+        return jdbc.query("""
+                WITH span AS (SELECT min(trade_date) AS lo, max(trade_date) AS hi FROM trading_day WHERE market = 'US')
+                SELECT b.instrument_id, b.trade_date, b.open, b.high, b.low, b.close, b.volume, b.turnover
+                FROM daily_bar b, span s
+                WHERE b.trade_date BETWEEN s.lo AND s.hi
+                  AND NOT EXISTS (SELECT 1 FROM trading_day t WHERE t.market = 'US' AND t.trade_date = b.trade_date)
+                ORDER BY b.trade_date
+                LIMIT ?""",
+                (rs, i) -> new PhantomBar(rs.getLong("instrument_id"), rs.getDate("trade_date").toLocalDate(),
+                        rs.getBigDecimal("open"), rs.getBigDecimal("high"), rs.getBigDecimal("low"),
+                        rs.getBigDecimal("close"), rs.getLong("volume"), rs.getBigDecimal("turnover")),
+                Math.max(1, Math.min(limit, 1000)));
+    }
+
+    /** 删除幽灵 K 线，返回删除条数。与 {@link #phantomBars} 用同一个条件。 */
+    public int deletePhantomBars() {
+        return jdbc.update("""
+                WITH span AS (SELECT min(trade_date) AS lo, max(trade_date) AS hi FROM trading_day WHERE market = 'US')
+                DELETE FROM daily_bar b
+                USING span s
+                WHERE b.trade_date BETWEEN s.lo AND s.hi
+                  AND NOT EXISTS (SELECT 1 FROM trading_day t WHERE t.market = 'US' AND t.trade_date = b.trade_date)""");
+    }
+
+    public record PhantomBar(long instrumentId, LocalDate tradeDate, java.math.BigDecimal open, java.math.BigDecimal high,
+                             java.math.BigDecimal low, java.math.BigDecimal close, long volume,
+                             java.math.BigDecimal turnover) {
+    }
+
     public List<InstrumentCoverage> coverageByInstrument() {
         return jdbc.query("SELECT instrument_id, count(*) AS rows, min(trade_date) AS mn, max(trade_date) AS mx FROM daily_bar GROUP BY instrument_id",
                 (rs, i) -> new InstrumentCoverage(rs.getLong("instrument_id"), rs.getLong("rows"),

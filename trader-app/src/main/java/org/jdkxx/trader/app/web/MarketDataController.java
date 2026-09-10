@@ -93,6 +93,15 @@ public class MarketDataController {
         return facade.gaps(start, end, Math.clamp(limit, 1, 500));
     }
 
+    /**
+     * 幽灵 K 线订正：落在交易日历之外的 K 线（券商在美股假日给过脏数据）。
+     * 默认 apply=false 只试跑列清单，确认无误后再用 apply=true 真删。
+     */
+    @PostMapping("/api/bars/cleanup/phantom")
+    public MarketDataFacade.PhantomCleanup cleanupPhantom(@RequestParam(defaultValue = "false") boolean apply) {
+        return facade.cleanupPhantomBars(apply);
+    }
+
     // ------------------------------------------------------------------ 成分股 / 标的
 
     @PostMapping("/api/universe/sync")

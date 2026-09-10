@@ -178,7 +178,19 @@ public class BarAuditService {
                                 + " 天；能补的重跑增量，补不回来的多是券商缺数（深扫用 /api/bars/gaps）",
                 missingDays, head(gapSamples, 20)));
 
-        // 9. 富途网关
+        // 9. 幽灵 K 线：落在日历覆盖区间内却不在日历里的行（券商在美股假日给过脏数据）
+        List<DailyBarRepository.PhantomBar> phantom = bars.phantomBars(20);
+        List<String> phantomSamples = phantom.stream()
+                .map(p -> symbolOf(targets, p.instrumentId()) + " " + p.tradeDate()
+                        + "（收 " + p.close() + "，成交额 " + p.turnover() + "）").toList();
+        summary.put("phantomBars", phantom.size());
+        checks.add(new Check("phantomBars", phantom.isEmpty(), false,
+                phantom.isEmpty() ? "没有落在交易日历之外的 K 线"
+                        : phantom.size() + " 根 K 线落在交易日历之外（券商脏数据），"
+                                + "用 POST /api/bars/cleanup/phantom 先试跑再订正",
+                phantom.size(), head(phantomSamples, 20)));
+
+        // 10. 富途网关
         boolean futuUp = gateway instanceof BrokerGateway g && g.status().state() == GatewayState.CONNECTED;
         checks.add(new Check("gateway", futuUp, false, futuUp ? "富途网关已连接" : "富途网关未连接（" + Broker.FUTU + "）", 0, List.of()));
 

@@ -115,6 +115,9 @@ bin/trader.sh start && bin/trader.sh status
   `ScheduledPlaceholdersTest` 现在会守住这条，但改调度相关配置时仍要留意这个开发/生产差异。
 - 起不来先看 `logs/console.log` 的第一条 `Application run failed`，配置类问题在那里说得很清楚。
 - 旧版本目录不要马上删：回滚就是把软链指回去再 `bin/trader.sh start`。
+- **清理旧版本目录前先把 `logs/` 拷出来**：日志在版本目录里，删目录等于把事后追查的依据一起删掉
+  （2026-09-10 复查时就发生过前一晚增量的日志已找不到）。`logs/trading-signal.log` 按天滚动保留 14 天，
+  `console.log` 是 nohup 重定向、不滚动。
 - 本机偶发 `Could not resolve hostname`（macOS 系统解析器坏了，`host` 命令却能解）：
   用 `host <主机名>` 取到地址后按地址连，或重启 mDNSResponder。隧道已建立的连接不受影响。
 

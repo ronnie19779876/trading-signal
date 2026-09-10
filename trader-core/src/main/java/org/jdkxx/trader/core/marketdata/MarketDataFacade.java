@@ -128,6 +128,31 @@ public class MarketDataFacade {
                           java.time.LocalDate firstMissing, java.time.LocalDate lastMissing) {
     }
 
+    /**
+     * 幽灵 K 线订正：默认只试跑列出清单，apply=true 才真删。
+     * 券商在美股假日给过脏 K 线（成交额 0、价格离谱），日历里没有这些天，留着会让按标的自身序列
+     * 遍历的回测多出交易日。
+     */
+    public PhantomCleanup cleanupPhantomBars(boolean apply) {
+        List<DailyBarRepository.PhantomBar> found = bars.phantomBars(200);
+        List<PhantomView> view = found.stream().map(p -> {
+            InstrumentRow row = instruments.findById(p.instrumentId()).orElse(null);
+            return new PhantomView(row == null ? "#" + p.instrumentId() : row.symbol(), p.tradeDate(),
+                    p.open(), p.high(), p.low(), p.close(), p.volume(), p.turnover());
+        }).toList();
+        int deleted = apply && !found.isEmpty() ? bars.deletePhantomBars() : 0;
+        return new PhantomCleanup(apply, view.size(), deleted, view);
+    }
+
+    public record PhantomView(String symbol, java.time.LocalDate tradeDate, java.math.BigDecimal open,
+                              java.math.BigDecimal high, java.math.BigDecimal low, java.math.BigDecimal close,
+                              long volume, java.math.BigDecimal turnover) {
+    }
+
+    /** applied=false 表示只是试跑；deleted 只有真删时才非零。 */
+    public record PhantomCleanup(boolean applied, int found, int deleted, List<PhantomView> bars) {
+    }
+
     public List<UniverseSyncService.IndexResult> importCsv(String csv) {
         return sync.importCsv(csv);
     }
