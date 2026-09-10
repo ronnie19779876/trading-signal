@@ -1,6 +1,7 @@
 package org.jdkxx.trader.core.marketdata.bars;
 
 import org.jdkxx.trader.core.marketdata.MarketDataProperties;
+import org.jdkxx.trader.core.marketdata.TestProperties;
 import org.jdkxx.trader.core.marketdata.jobs.JobContext;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
 import org.jdkxx.trader.domain.Market;
@@ -36,10 +37,7 @@ class CalendarBackfillServiceTest {
     private static final LocalDate BROKER_EARLIEST = LocalDate.of(2016, 9, 12);
 
     private static MarketDataProperties props() {
-        return new MarketDataProperties(null, null, new MarketDataProperties.Refresh(90, 65, true, 1000, 5),
-                null, null, null,
-                new MarketDataProperties.Fundamentals(true, 400, 12, Duration.ofDays(30), Duration.ofDays(180)),
-                false, "", "", "", "America/New_York");
+        return TestProperties.defaults();
     }
 
     private static InstrumentRow row(long id, String symbol) {

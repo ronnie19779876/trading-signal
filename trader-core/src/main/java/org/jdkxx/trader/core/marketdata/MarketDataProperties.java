@@ -22,6 +22,7 @@ public record MarketDataProperties(
         @DefaultValue("0 30 17 * * MON-FRI") String incrementCron,
         @DefaultValue("0 40 17 * * MON-FRI") String valuationCron,
         @DefaultValue("0 0 7 * * SAT") String financialsCron,
+        @DefaultValue("0 0 21 * * MON-FRI") String catchupCron,
         @DefaultValue("America/New_York") String zone) {
 
     public record Universe(

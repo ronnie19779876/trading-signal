@@ -68,6 +68,8 @@ trader:
     increment-cron: "0 30 17 * * MON-FRI"
     valuation-cron: "0 40 17 * * MON-FRI"     # 估值快照排在每日增量之后：市值随价格走，收盘后取才代表当日
     financials-cron: "0 0 7 * * SAT"
+    # 当天补偿检查：晚于收盘、早于次日盘前（券商过了盘前就不再给当日口径的快照）
+    catchup-cron: "0 0 21 * * MON-FRI"
     zone: America/New_York
     universe:
       cross-check-spy: true

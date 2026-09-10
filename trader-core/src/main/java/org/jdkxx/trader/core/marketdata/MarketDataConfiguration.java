@@ -12,6 +12,7 @@ import org.jdkxx.trader.core.marketdata.fundamentals.ValuationSnapshotService;
 import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
 import org.jdkxx.trader.core.marketdata.bars.DeepBackfillService;
 import org.jdkxx.trader.core.marketdata.bars.RotationRefresher;
+import org.jdkxx.trader.core.marketdata.jobs.CatchUpService;
 import org.jdkxx.trader.core.marketdata.jobs.JobService;
 import org.jdkxx.trader.core.marketdata.quotes.QuoteCache;
 import org.jdkxx.trader.core.marketdata.quotes.QuoteStreamService;
@@ -175,9 +176,16 @@ public class MarketDataConfiguration {
     }
 
     @Bean
+    public CatchUpService catchUpService(MarketDataProperties props, UniverseScope scope, DailyBarRepository bars,
+                                         ValuationRepository valuations, TradingDayRepository days) {
+        return new CatchUpService(props, scope, bars, valuations, days, Clock.systemUTC());
+    }
+
+    @Bean
     @ConditionalOnProperty(name = "trader.marketdata.schedule-enabled", havingValue = "true")
-    public MarketDataScheduler marketDataScheduler(MarketDataFacade facade, FundamentalsFacade fundamentals) {
-        return new MarketDataScheduler(facade, fundamentals);
+    public MarketDataScheduler marketDataScheduler(MarketDataFacade facade, FundamentalsFacade fundamentals,
+                                                   JobRunRepository jobRuns, CatchUpService catchUpService) {
+        return new MarketDataScheduler(facade, fundamentals, jobRuns, catchUpService);
     }
 
     // ------------------------------------------------------------------ 实时报价（步骤 2，不落库）

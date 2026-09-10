@@ -1,6 +1,7 @@
 package org.jdkxx.trader.core.marketdata.audit;
 
 import org.jdkxx.trader.core.marketdata.MarketDataProperties;
+import org.jdkxx.trader.core.marketdata.TestProperties;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.SecurityType;
@@ -34,8 +35,7 @@ class BarAuditServiceTest {
     }
 
     private static MarketDataProperties props() {
-        return new MarketDataProperties(null, null, new MarketDataProperties.Refresh(90, 65, true, 1000, 5),
-                null, null, null, null, false, "", "", "", "America/New_York");
+        return TestProperties.defaults();
     }
 
     @Test
