@@ -1,5 +1,6 @@
 package org.jdkxx.trader.core.marketdata;
 
+import org.jdkxx.trader.core.marketdata.bars.CalendarBackfillService;
 import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
 import org.jdkxx.trader.core.marketdata.bars.DeepBackfillService;
 import org.jdkxx.trader.core.marketdata.bars.RotationRefresher;
@@ -8,6 +9,7 @@ import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
 import org.jdkxx.trader.core.marketdata.universe.UniverseSyncService;
 import org.jdkxx.trader.domain.HistoryQuota;
 import org.jdkxx.trader.domain.IndexCode;
+import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.PoolRole;
 import org.jdkxx.trader.gateway.MarketDataGateway;
 import org.jdkxx.trader.storage.marketdata.BarSyncState;
@@ -17,6 +19,7 @@ import org.jdkxx.trader.storage.marketdata.DailyBarRepository;
 import org.jdkxx.trader.storage.marketdata.IndexConstituentRepository;
 import org.jdkxx.trader.storage.marketdata.InstrumentRepository;
 import org.jdkxx.trader.storage.marketdata.InstrumentRow;
+import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -37,6 +40,8 @@ public class MarketDataFacade {
     private final RotationRefresher rotation;
     private final DeepBackfillService deep;
     private final DailyIncrementService increment;
+    private final CalendarBackfillService calendar;
+    private final TradingDayRepository tradingDays;
     private final InstrumentRepository instruments;
     private final IndexConstituentRepository constituents;
     private final DailyBarRepository bars;
@@ -46,6 +51,7 @@ public class MarketDataFacade {
 
     public MarketDataFacade(MarketDataProperties props, JobService jobs, UniverseSyncService sync, UniverseScope scope,
                             RotationRefresher rotation, DeepBackfillService deep, DailyIncrementService increment,
+                            CalendarBackfillService calendar, TradingDayRepository tradingDays,
                             InstrumentRepository instruments, IndexConstituentRepository constituents, DailyBarRepository bars,
                             BarSyncStateRepository states, MarketDataGateway gateway, InstrumentDirectory directory) {
         this.props = props;
@@ -55,6 +61,8 @@ public class MarketDataFacade {
         this.rotation = rotation;
         this.deep = deep;
         this.increment = increment;
+        this.calendar = calendar;
+        this.tradingDays = tradingDays;
         this.instruments = instruments;
         this.constituents = constituents;
         this.bars = bars;
@@ -93,6 +101,14 @@ public class MarketDataFacade {
 
     public long refreshRehab(String trigger, boolean all) {
         return jobs.submit(Jobs.REHAB_REFRESH, trigger, ctx -> deep.refreshRehab(all, ctx));
+    }
+
+    public long backfillCalendar(String trigger) {
+        return jobs.submit(Jobs.CALENDAR_BACKFILL, trigger, calendar::run);
+    }
+
+    public List<TradingDayRepository.Day> calendar(java.time.LocalDate from, java.time.LocalDate to) {
+        return tradingDays.list(Market.US, from, to);
     }
 
     public List<UniverseSyncService.IndexResult> importCsv(String csv) {
@@ -146,8 +162,14 @@ public class MarketDataFacade {
     }
 
     public record CoverageView(long rows, long instruments, java.time.LocalDate earliest, java.time.LocalDate latest,
-                               int universeSize, int poolSize, int holdingSize, long unresolved,
-                               int universeCovered, int deepCovered, int withErrors, int rehabCovered, QuotaView quota, JobService.Running runningJob) {
+                               int universeSize, int poolSize, int holdingSize, int benchmarkSize, long unresolved,
+                               int universeCovered, int deepCovered, int withErrors, int rehabCovered,
+                               CalendarView calendar, QuotaView quota, JobService.Running runningJob) {
+    }
+
+    /** 交易日历覆盖。券商只能给到约 2016-09，更早的是从日 K 线反推的。 */
+    public record CalendarView(java.time.LocalDate earliest, java.time.LocalDate latest, long days,
+                               long fromBroker, long derived) {
     }
 
     public record QuotaView(int used, int remain, int total, String detail) {
@@ -163,10 +185,14 @@ public class MarketDataFacade {
         int withErrors = (int) st.values().stream().filter(s -> s.lastError() != null).count();
         int rehabCovered = (int) universe.stream().filter(r -> st.containsKey(r.id()) && st.get(r.id()).rehabFetchedAt() != null).count();
         long unresolved = instruments.findAll().stream().filter(r -> "UNRESOLVED".equals(r.resolveStatus())).count();
+        TradingDayRepository.Coverage cal = tradingDays.coverage(Market.US);
         return new CoverageView(c.rows(), c.instruments(), c.earliest(), c.latest(), universe.size(),
                 (int) roles.values().stream().filter(r -> r == PoolRole.POOL).count(),
                 (int) roles.values().stream().filter(r -> r == PoolRole.HOLDING).count(),
-                unresolved, universeCovered, deepCovered, withErrors, rehabCovered, quota(), jobs.current().orElse(null));
+                (int) roles.values().stream().filter(r -> r == PoolRole.BENCHMARK).count(),
+                unresolved, universeCovered, deepCovered, withErrors, rehabCovered,
+                new CalendarView(cal.earliest(), cal.latest(), cal.days(), cal.fromBroker(), cal.derived()),
+                quota(), jobs.current().orElse(null));
     }
 
     public QuotaView quota() {

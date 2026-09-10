@@ -10,7 +10,7 @@ export interface InstrumentView {
   indexes: string[]
   sector: string | null
   subIndustry: string | null
-  role: 'POOL' | 'HOLDING' | null
+  role: 'POOL' | 'HOLDING' | 'BENCHMARK' | null
   depth: string | null
   earliest: string | null
   latest: string | null
@@ -33,6 +33,15 @@ export interface RunningJob {
   progress: string
 }
 
+/** 交易日历覆盖。券商只能给到约 2016-09，更早的是从日 K 线反推的。 */
+export interface CalendarView {
+  earliest: string | null
+  latest: string | null
+  days: number
+  fromBroker: number
+  derived: number
+}
+
 export interface CoverageView {
   rows: number
   instruments: number
@@ -41,11 +50,14 @@ export interface CoverageView {
   universeSize: number
   poolSize: number
   holdingSize: number
+  /** 基准标的（只采集不选股，如纳指 100 ETF） */
+  benchmarkSize: number
   unresolved: number
   universeCovered: number
   deepCovered: number
   withErrors: number
   rehabCovered: number
+  calendar: CalendarView
   quota: QuotaView
   runningJob: RunningJob | null
 }
@@ -77,11 +89,21 @@ export interface DailyBar {
 
 export type Adjust = 'none' | 'forward' | 'backward'
 
+export interface TradingDay {
+  date: string
+  kind: number
+  /** FUTU 券商给的（约 2016-09 起）；DERIVED 从日 K 线反推（更早，券商取不到） */
+  source: 'FUTU' | 'DERIVED'
+}
+
 export const getCoverage = async () => (await http.get<CoverageView>('/api/bars/coverage')).data
+export const getCalendar = async (from?: string, to?: string) =>
+  (await http.get<TradingDay[]>('/api/bars/calendar', { params: { ...(from ? { from } : {}), ...(to ? { to } : {}) } })).data
+export const backfillCalendar = async () => (await http.post<{ jobId: number }>('/api/bars/calendar/backfill')).data
 export const getJobs = async (limit = 15) => (await http.get<{ running: RunningJob | Record<string, never>; recent: JobRun[] }>('/api/jobs', { params: { limit } })).data
 export const getPool = async () => (await http.get<InstrumentView[]>('/api/pool')).data
 export const getUniverse = async (index?: string) => (await http.get<InstrumentView[]>('/api/universe', { params: index ? { index } : {} })).data
-export const addToPool = async (symbol: string, role: 'POOL' | 'HOLDING') => (await http.post(`/api/pool/${symbol}`, null, { params: { role } })).data
+export const addToPool = async (symbol: string, role: 'POOL' | 'HOLDING' | 'BENCHMARK') => (await http.post(`/api/pool/${symbol}`, null, { params: { role } })).data
 export const removeFromPool = async (symbol: string) => (await http.delete(`/api/pool/${symbol}`)).data
 export const syncUniverse = async () => (await http.post<{ jobId: number }>('/api/universe/sync')).data
 export const refreshUniverse = async (count: number) => (await http.post<{ jobId: number }>('/api/bars/refresh/universe', null, { params: { count } })).data

@@ -143,7 +143,22 @@ public class BarAuditService {
                 last.map(j -> "最近一次增量 #" + j.id() + " " + j.status() + "（" + j.startedAt() + "）：" + j.summary()).orElse("还没有跑过增量作业"),
                 last.isPresent() ? 1 : 0, List.of()));
 
-        // 7. 富途网关
+        // 7. 交易日历覆盖：应回到深度标的最早的 K 线，否则反推段没跑或跑漏了
+        TradingDayRepository.Coverage cal = tradingDays.coverage(Market.US);
+        LocalDate earliestDeep = bars.coverageByInstrument().stream()
+                .filter(x -> targets.containsKey(x.instrumentId()))
+                .map(DailyBarRepository.InstrumentCoverage::earliest)
+                .filter(java.util.Objects::nonNull).min(LocalDate::compareTo).orElse(null);
+        boolean calOk = cal.earliest() != null && (earliestDeep == null || !cal.earliest().isAfter(earliestDeep));
+        summary.put("calendarDays", cal.days());
+        checks.add(new Check("calendarCoverage", calOk, false,
+                cal.earliest() == null ? "交易日历为空，跑一次日历回补"
+                        : "交易日历 " + cal.earliest() + " 至 " + cal.latest() + " 共 " + cal.days()
+                                + " 天（券商 " + cal.fromBroker() + "，反推 " + cal.derived() + "）"
+                                + (calOk ? "" : "；最早 K 线在 " + earliestDeep + "，日历没覆盖到，跑一次日历回补"),
+                cal.days(), List.of()));
+
+        // 8. 富途网关
         boolean futuUp = gateway instanceof BrokerGateway g && g.status().state() == GatewayState.CONNECTED;
         checks.add(new Check("gateway", futuUp, false, futuUp ? "富途网关已连接" : "富途网关未连接（" + Broker.FUTU + "）", 0, List.of()));
 

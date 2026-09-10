@@ -3,6 +3,7 @@ package org.jdkxx.trader.core.marketdata;
 import org.jdkxx.trader.common.ratelimit.Sleeper;
 import org.jdkxx.trader.core.marketdata.audit.BarAuditService;
 import org.jdkxx.trader.core.marketdata.bars.BarQueryService;
+import org.jdkxx.trader.core.marketdata.bars.CalendarBackfillService;
 import org.jdkxx.trader.core.marketdata.fundamentals.FinancialsRefreshService;
 import org.jdkxx.trader.core.marketdata.fundamentals.FundamentalsAuditService;
 import org.jdkxx.trader.core.marketdata.fundamentals.FundamentalsFacade;
@@ -106,6 +107,13 @@ public class MarketDataConfiguration {
     }
 
     @Bean
+    public CalendarBackfillService calendarBackfillService(MarketDataProperties props, MarketDataGateway gateway,
+                                                           TradingDayRepository days, DailyBarRepository bars,
+                                                           UniverseScope scope) {
+        return new CalendarBackfillService(props, gateway, days, bars, scope, Clock.systemUTC());
+    }
+
+    @Bean
     public BarAuditService barAuditService(MarketDataProperties props, UniverseScope scope, DailyBarRepository bars,
                                            TradingDayRepository days, BarSyncStateRepository states, JobRunRepository jobs,
                                            MarketDataGateway gateway) {
@@ -158,11 +166,12 @@ public class MarketDataConfiguration {
     @Bean
     public MarketDataFacade marketDataFacade(MarketDataProperties props, JobService jobs, UniverseSyncService sync, UniverseScope scope,
                                              RotationRefresher rotation, DeepBackfillService deep, DailyIncrementService increment,
+                                             CalendarBackfillService calendar, TradingDayRepository days,
                                              InstrumentRepository instruments, IndexConstituentRepository constituents,
                                              DailyBarRepository bars, BarSyncStateRepository states, MarketDataGateway gateway,
                                              InstrumentDirectory directory) {
-        return new MarketDataFacade(props, jobs, sync, scope, rotation, deep, increment, instruments, constituents, bars, states,
-                gateway, directory);
+        return new MarketDataFacade(props, jobs, sync, scope, rotation, deep, increment, calendar, days,
+                instruments, constituents, bars, states, gateway, directory);
     }
 
     @Bean

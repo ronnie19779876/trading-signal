@@ -2,6 +2,13 @@
 
 ## 1.1.0-SNAPSHOT
 
+### 第 2 期·步骤 4：基准标的与交易日历（开发中）
+
+- 新增 `BENCHMARK` 角色（V6/V7）：基准照常采集日 K、复权、实时订阅，但不参与选股（`UniverseScope.candidates()` 排除）。
+- 交易日历回补作业 `CALENDAR_BACKFILL`：券商段（实测只能回到 2016-09）+ 更早的从池/持仓/基准的日 K 线反推，
+  `trading_day.source` 区分来源；`GET /api/bars/calendar`、`POST /api/bars/calendar/backfill`、覆盖视图与审计项。
+- 反推要求一天≥2 只标的同时成交：实测富途给 SPY 在三个美股假日留了脏 K 线，只取并集会把假日算成交易日。
+
 ### 第 2 期·步骤 3：基本面数据（进行中）
 
 - 第 1 步网关层：`MarketDataGateway` 增加 `snapshots` / `financials` / `companyProfile`（富途快照、四类财务报表、公司简介），

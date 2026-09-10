@@ -1,6 +1,7 @@
 package org.jdkxx.trader.app.web;
 
 import org.jdkxx.trader.core.marketdata.MarketDataFacade;
+import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
 import org.jdkxx.trader.core.marketdata.PoolService;
 import org.jdkxx.trader.core.marketdata.audit.BarAuditService;
 import org.jdkxx.trader.core.marketdata.bars.BarQueryService;
@@ -54,6 +55,25 @@ public class MarketDataController {
     @GetMapping("/api/bars/audit")
     public BarAuditService.Report audit(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         return audit.audit(date);
+    }
+
+    /** 交易日历回补：券商段（约 2016-09 起）+ 更早的从日 K 线反推。幂等，几秒。 */
+    @PostMapping("/api/bars/calendar/backfill")
+    public Map<String, Object> backfillCalendar() {
+        return Map.of("jobId", facade.backfillCalendar("MANUAL"));
+    }
+
+    /** 交易日列表，默认最近一年。source=FUTU 是券商给的，DERIVED 是从日 K 线反推的。 */
+    @GetMapping("/api/bars/calendar")
+    public List<TradingDayRepository.Day> calendar(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        LocalDate end = to == null ? LocalDate.now().plusDays(10) : to;
+        LocalDate start = from == null ? end.minusYears(1) : from;
+        if (start.isAfter(end)) {
+            throw new IllegalArgumentException("from 不能晚于 to");
+        }
+        return facade.calendar(start, end);
     }
 
     // ------------------------------------------------------------------ 成分股 / 标的

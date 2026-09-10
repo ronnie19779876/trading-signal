@@ -544,6 +544,93 @@
           "response": []
         },
         {
+          "name": "交易日历回补（异步作业）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bars/calendar/backfill",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bars",
+                "calendar",
+                "backfill"
+              ]
+            },
+            "description": "券商只能给到约 2016-09（实测请求 21 年与 27 年返回相同），更早的从池/持仓/基准的日 K 线反推。幂等。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"有 jobId\", () => pm.expect(body.jobId).to.be.a(\"number\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "交易日历",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/bars/calendar?from=2026-01-01&to=2026-12-31",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "bars",
+                "calendar"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2026-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-12-31"
+                }
+              ]
+            },
+            "description": "交易日列表；source=FUTU 券商给的，DERIVED 从日 K 线反推。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"是数组且来源合法\", () => { pm.expect(body).to.be.an(\"array\"); body.forEach(d => pm.expect(d.source).to.be.oneOf([\"FUTU\",\"DERIVED\"])); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
           "name": "历史额度",
           "request": {
             "method": "GET",

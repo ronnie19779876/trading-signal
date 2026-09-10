@@ -9,6 +9,7 @@ import org.springframework.stereotype.Repository;
 import java.sql.Date;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -127,6 +128,27 @@ public class DailyBarRepository {
     public Optional<LocalDate> maxTradeDate() {
         Date d = jdbc.query("SELECT max(trade_date) FROM daily_bar", rs -> rs.next() ? rs.getDate(1) : null);
         return Optional.ofNullable(d).map(Date::toLocalDate);
+    }
+
+    /**
+     * 指定标的在 [from, to) 内、<b>至少 minInstruments 只同时有 K 线</b>的交易日（去重升序）。
+     * 用来反推券商给不出的早年交易日历：传入的应是大盘股（池/持仓/基准），它们每个交易日都有成交。
+     *
+     * <p>阈值不能省：实测富途对 SPY 在三个美股假日（2011-07-04 独立日、2012-04-06 耶稣受难日、
+     * 2012-05-28 阵亡将士纪念日）给出了脏 K 线（成交额 0、最低价明显异常），只按"有没有 K 线"取并集
+     * 会把这些假日当成交易日。真实交易日有 13 只以上同时成交，脏数据只有 1 只，中间断层很宽，
+     * 阈值取 2 就够，且离两边都远。
+     */
+    public List<LocalDate> distinctTradeDates(Collection<Long> instrumentIds, LocalDate from, LocalDate to,
+                                              int minInstruments) {
+        if (instrumentIds.isEmpty()) {
+            return List.of();
+        }
+        String ids = instrumentIds.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        int min = Math.max(1, Math.min(minInstruments, instrumentIds.size()));
+        return jdbc.query("SELECT trade_date FROM daily_bar WHERE instrument_id IN (" + ids
+                        + ") AND trade_date >= ? AND trade_date < ? GROUP BY trade_date HAVING count(*) >= ? ORDER BY trade_date",
+                (rs, i) -> rs.getDate(1).toLocalDate(), Date.valueOf(from), Date.valueOf(to), min);
     }
 
     public List<InstrumentCoverage> coverageByInstrument() {
