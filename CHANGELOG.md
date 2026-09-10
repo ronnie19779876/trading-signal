@@ -10,6 +10,8 @@
 - 新增 `jobs` 健康指标：任一定时作业 FAILED / SKIPPED / 逾期未跑 → DEGRADED。
 - 幽灵 K 线订正 `POST /api/bars/cleanup/phantom?apply=false`（默认试跑）与审计提示项 `phantomBars`：
   券商在美股假日给过脏 K 线（SPY 三根，成交额 0，独立日那根凭空造出 15% 日内暴跌）。
+- `SpringBeanConstructorTest`：禁止 Spring 组件有多个未标注的公开构造器
+  （`JobsHealthIndicator` 曾因此让生产启动失败——该 bean 只在开了跑批的实例装配，本地发现不了）。
 - 日志按天滚动保留 14 天（`logback-spring.xml`），此前只有不滚动的 nohup 重定向且随版本目录清理丢失。
 - `scripts/check-daily.sh` 合并三段：日线审计 + 基本面审计 + 运行健康。此前只调日线审计，
   恰好漏掉唯一能发现估值缺失的检查。

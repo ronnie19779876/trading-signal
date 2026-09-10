@@ -40,15 +40,21 @@ public class JobsHealthIndicator implements HealthIndicator {
             Jobs.DAILY_INCREMENT, Jobs.VALUATION_SNAPSHOT, Jobs.UNIVERSE_SYNC, Jobs.FINANCIALS_REFRESH);
 
     private final JobRunRepository jobs;
-    private final Clock clock;
+    /**
+     * 只保留<b>一个</b>构造器：两个公开构造器会让 Spring 找不到该用哪个，
+     * 转而去找无参构造器并在启动时炸掉——而这个 bean 只在开了跑批的实例装配，本地根本发现不了。
+     * 时钟改成测试可替换的字段。
+     */
+    private Clock clock = Clock.systemUTC();
 
     public JobsHealthIndicator(JobRunRepository jobs) {
-        this(jobs, Clock.systemUTC());
+        this.jobs = jobs;
     }
 
-    JobsHealthIndicator(JobRunRepository jobs, Clock clock) {
-        this.jobs = jobs;
+    /** 测试用：固定时钟。 */
+    JobsHealthIndicator clock(Clock clock) {
         this.clock = clock;
+        return this;
     }
 
     @Override

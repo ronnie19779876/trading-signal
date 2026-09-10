@@ -96,6 +96,7 @@ storage → common ；ai → common
 | 券商的**交易日历只能回到约 2016-09**（实测请求 21 年与 27 年返回完全相同的 2591 天），更早的取不到 | 早年日历从池/持仓/基准的日 K 线反推，`trading_day.source` 标 DERIVED |
 | 富途给 SPY 在美股假日留了**脏 K 线**（实测 2011-07-04、2012-04-06、2012-05-28：成交额 0、最低价异常） | 反推日历要求当天≥2 只标的同时成交；真实交易日有 13 只以上，脏数据只有 1 只 |
 | 富途的 SPY 历史**缺 26 个交易日**（2009~2012），而且它自己的 `last_close` 与缺口自洽，所以**前收连续性检查查不出来** | 查历史缺口必须拿交易日历比对，别只信连续性检查 |
+| Spring 组件有**两个公开构造器**（一个给容器、一个给测试）时，容器选不出来就去找无参构造器并在启动时炸；只在生产装配的 bean（`@ConditionalOnProperty`）本地压根不创建，发现不了 | 只留一个公开构造器，测试要替换依赖就用可写字段；`SpringBeanConstructorTest` 会守住。注意别用 Spring 的类路径扫描写这种检查——它会评估 `@Conditional` 跳过这些类，测试会假通过 |
 | 新增 `@Scheduled` 用的配置项只写在 `MarketDataProperties` 的 `@DefaultValue` 上不够——**占位符解析不看记录默认值**。开发实例 `schedule-enabled=false` 不装配调度器，本地全绿、一上生产就起不来 | 新 cron 必须同时写进 jar 内 `application.yml`；`ScheduledPlaceholdersTest` 会守住这条 |
 
 ## 当前状态
