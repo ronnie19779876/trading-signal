@@ -32,3 +32,10 @@ deploy/config/trader.env
 trader-web/node_modules/
 trader-web/dist/
 trader-app/src/main/resources/static/
+
+# Postman 客户端（Git 集成）的工作产物：它会把生成的 JSON 集合拆成目录树并改用 yaml 存环境变量，
+# 与 build_collection.py 的生成物冲突。集合以 JSON 为准，客户端产物不入库。
+docs/postman/.postman/
+docs/postman/postman/
+docs/postman/trading-signal/
+docs/postman/*.environment.yaml

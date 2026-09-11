@@ -25,3 +25,21 @@
 ```bash
 npx --yes newman run docs/postman/trading-signal.postman_collection.json -e docs/postman/trading-signal.dev.postman_environment.json
 ```
+
+## 文件被 Postman 客户端改写了怎么办
+
+新版 Postman 客户端接管目录后会把 JSON 集合拆成目录树、把环境变量改成 yaml，
+并删掉原来的三个 JSON。它们是 `build_collection.py` 的生成物，重跑即可恢复：
+
+```bash
+python3 docs/postman/build_collection.py
+```
+
+客户端产物（`.postman/`、`postman/`、`trading-signal/`、`*.environment.yaml`）已在 `.gitignore` 里排除，
+集合始终以 JSON 为准。
+
+## 注意：别对生产整集跑 newman
+
+集合里有 POST，会触发真实跑批（成分股同步、日历回补、估值与财报刷新等）。
+要验证集合可用性就对开发实例跑（`-e ...dev...`，先启动 `./scripts/run-local.sh`），
+或只跑 GET 的文件夹。
