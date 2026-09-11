@@ -13,7 +13,7 @@
 3. **开发与测试只连 `db_trader_dev`**。生产库 `db_trader` 只允许服务器上的生产实例连接。`EnvironmentGuard` 会拦截错连，但不要依赖它当保险。
 4. **实测优先**：券商 SDK 的行为常与文档不符，涉及 IB / 富途行为的判断先 `javap` 查 jar 真实签名或对真实网关跑一次再下结论。
 5. **全新编写、独立思考**：`~/Projects/ib-auto-trader` 与 `~/Projects/futu-trader` 是用户的两个私有项目，只借鉴模式，不搬代码。
-6. 版本只改父 POM 的 `<revision>`；规则见 README。
+6. 版本只改父 POM 的 `<revision>`；规则见 README。**部署到生产的必须是正式版，`-SNAPSHOT` 只能留在开发与测试**。
 7. **新增 / 改动 REST 接口必须同步三处**：`docs/API.md`、`docs/postman/build_collection.py` 的 `ENDPOINTS`（改完重跑生成 JSON，用户要重新导入 Postman）、前端 `trader-web/src/api/*.ts`（若页面用到）。Postman JSON 是生成物，不要手改。
 
 ## 命令

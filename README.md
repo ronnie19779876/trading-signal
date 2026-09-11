@@ -75,7 +75,13 @@ docs/                    ARCHITECTURE / API / OPERATIONS
 
 ## 版本规则
 
-版本号只改父 POM 的 `<revision>` 一处。开发与测试一律 `-SNAPSHOT`，发布时去掉 `-SNAPSHOT`、打 tag `v<版本>`、写 CHANGELOG，随后开发版本按规则递增：
+版本号只改父 POM 的 `<revision>` 一处。开发与测试一律 `-SNAPSHOT`；
+**部署到生产的必须是正式版，不允许把 `-SNAPSHOT` 发到生产**。
+
+发布流程：改 `<revision>` 去掉 `-SNAPSHOT` → `./mvnw clean verify` → `./scripts/package.sh` →
+打 tag `v<版本>` → 写 CHANGELOG → 部署 → 随后把 `<revision>` 递增回 `-SNAPSHOT` 继续开发。
+
+递增规则：
 
 | 变更类型 | 示例 |
 | --- | --- |
