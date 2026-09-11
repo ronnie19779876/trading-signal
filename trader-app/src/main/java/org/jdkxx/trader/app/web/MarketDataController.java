@@ -127,11 +127,12 @@ public class MarketDataController {
 
     // ------------------------------------------------------------------ 标的池
 
+    /** 池成员：全部角色。别按角色写死枚举一遍，加新角色时会漏（BENCHMARK 就漏过一次）。 */
     @GetMapping("/api/pool")
     public List<MarketDataFacade.InstrumentView> pool() {
-        List<MarketDataFacade.InstrumentView> p = facade.universe(null, PoolRole.POOL);
-        List<MarketDataFacade.InstrumentView> h = facade.universe(null, PoolRole.HOLDING);
-        return java.util.stream.Stream.concat(p.stream(), h.stream()).toList();
+        return java.util.Arrays.stream(PoolRole.values())
+                .flatMap(r -> facade.universe(null, r).stream())
+                .toList();
     }
 
     @PostMapping("/api/pool/{symbol}")
