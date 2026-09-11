@@ -108,6 +108,12 @@ bin/trader.sh start && bin/trader.sh status
 
 升级：解压新版本到新的时间戳目录，把旧目录的 `config/trader.env` 拷过去，`bin/trader.sh stop`（旧）→ 改软链 → `bin/trader.sh start`（新）。不要混用 `bin/trader.sh` 与 systemd。
 
+**发布到生产的必须是正式版**（`<revision>` 不带 `-SNAPSHOT`，见 README「版本规则」）。
+
+**验证通过后清理**：删掉旧版本目录与**全部** `.tar.gz` 安装包（含当前版本的，包已解压不再需要），
+只留当前版本目录与 `~/trading-signal-logs/`。清理前先确认三件事：当前配置在位、应用能响应、
+只有一个进程且工作目录指向当前版本。回滚从本机 `dist/` 重传。
+
 **升级前必看**（2026-09-09 踩过）：
 
 - 生产 `schedule-enabled=true` 而开发是 false，**调度器只在生产装配**。新增 `@Scheduled` 用到的配置项如果只写在
