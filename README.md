@@ -79,7 +79,14 @@ docs/                    ARCHITECTURE / API / OPERATIONS
 **部署到生产的必须是正式版，不允许把 `-SNAPSHOT` 发到生产**。
 
 发布流程：改 `<revision>` 去掉 `-SNAPSHOT` → `./mvnw clean verify` → `./scripts/package.sh` →
-打 tag `v<版本>` → 写 CHANGELOG → 部署 → 随后把 `<revision>` 递增回 `-SNAPSHOT` 继续开发。
+写 CHANGELOG → 提交 → 打 tag `v<版本>` → 部署并验证 → 清理服务器上的旧目录与安装包 →
+把 `<revision>` 递增回 `-SNAPSHOT` 继续开发。
+
+**tag 要单独推送**，GitHub 客户端默认只推提交：
+
+```bash
+git push origin v<版本>        # 或 git push origin --tags
+```
 
 递增规则：
 
