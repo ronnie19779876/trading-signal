@@ -78,6 +78,52 @@ class JobsHealthIndicatorTest {
     }
 
     @Test
+    void 补偿检查停摆时降级() {
+        // 1.1.x 的盲区：补偿检查数据齐全时不留痕，它自己不跑了没人知道
+        JobRunRepository r = repo(List.of(
+                row(Jobs.DAILY_INCREMENT, "OK", NOW.minusSeconds(3600)),
+                row(Jobs.CATCHUP_CHECK, "OK", NOW.minusSeconds(6 * 86400))), true);
+        when(r.succeededSince(eq(Jobs.CATCHUP_CHECK), any())).thenReturn(false);
+
+        Health h = indicator(r).health();
+
+        assertThat(h.getStatus()).isEqualTo(GatewaysHealthIndicator.DEGRADED);
+        assertThat(h.getDetails()).containsKey("catchupOverdue");
+    }
+
+    @Test
+    void 补偿检查正常时不降级() {
+        JobRunRepository r = repo(List.of(
+                row(Jobs.DAILY_INCREMENT, "OK", NOW.minusSeconds(3600)),
+                row(Jobs.CATCHUP_CHECK, "OK", NOW.minusSeconds(600))), true);
+        when(r.succeededSince(eq(Jobs.CATCHUP_CHECK), any())).thenReturn(true);
+
+        Health h = indicator(r).health();
+
+        assertThat(h.getStatus()).isEqualTo(Status.UP);
+        assertThat(h.getDetails()).doesNotContainKey("catchupOverdue");
+    }
+
+    @Test
+    void 补偿检查刚上线从未跑过不算降级() {
+        Health h = indicator(repo(List.of(
+                row(Jobs.DAILY_INCREMENT, "OK", NOW.minusSeconds(3600))), true)).health();
+
+        assertThat(h.getStatus()).isEqualTo(Status.UP);
+        assertThat(h.getDetails().get(Jobs.CATCHUP_CHECK)).isEqualTo("从未跑过");
+    }
+
+    @Test
+    void 补偿检查失败时降级() {
+        JobRunRepository r = repo(List.of(
+                row(Jobs.DAILY_INCREMENT, "OK", NOW.minusSeconds(3600)),
+                row(Jobs.CATCHUP_CHECK, "FAILED", NOW.minusSeconds(600))), true);
+        when(r.succeededSince(eq(Jobs.CATCHUP_CHECK), any())).thenReturn(true);
+
+        assertThat(indicator(r).health().getStatus()).isEqualTo(GatewaysHealthIndicator.DEGRADED);
+    }
+
+    @Test
     void 查库出错也不让健康端点报错() {
         JobRunRepository r = mock(JobRunRepository.class);
         when(r.latestPerJob()).thenThrow(new IllegalStateException("db down"));

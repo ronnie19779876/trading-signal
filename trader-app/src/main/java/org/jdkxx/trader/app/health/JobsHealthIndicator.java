@@ -24,7 +24,8 @@ import java.util.Map;
  * <p>DEGRADED（HTTP 仍 200，与 {@code gateways} 一致）的条件：
  * <ul>
  *   <li>任一作业最近一次是 FAILED 或 SKIPPED；</li>
- *   <li>每日增量逾期未跑——距上次成功超过 {@link #OVERDUE} 且期间有过交易日收盘。</li>
+ *   <li>每日增量逾期未跑——距上次成功超过 {@link #OVERDUE} 且期间有过交易日收盘；</li>
+ *   <li>补偿检查停摆——跑过却超过 {@link #OVERDUE} 没成功（它每个工作日都写一行，含非交易日；刚上线从未跑过不算）。</li>
  * </ul>
  * 只在开了定时跑批的实例上装配：开发实例不跑批，报"逾期"没有意义。
  */
@@ -37,7 +38,7 @@ public class JobsHealthIndicator implements HealthIndicator {
 
     /** 参与"最近一次是否失败"判断的作业。 */
     private static final List<String> WATCHED = List.of(
-            Jobs.DAILY_INCREMENT, Jobs.VALUATION_SNAPSHOT, Jobs.UNIVERSE_SYNC, Jobs.FINANCIALS_REFRESH);
+            Jobs.DAILY_INCREMENT, Jobs.VALUATION_SNAPSHOT, Jobs.UNIVERSE_SYNC, Jobs.FINANCIALS_REFRESH, Jobs.CATCHUP_CHECK);
 
     private final JobRunRepository jobs;
     /**
@@ -80,6 +81,10 @@ public class JobsHealthIndicator implements HealthIndicator {
             Instant since = clock.instant().minus(OVERDUE);
             if (!jobs.succeededSince(Jobs.DAILY_INCREMENT, since)) {
                 b.withDetail("overdue", "每日增量超过 " + OVERDUE.toHours() + " 小时没有成功跑过");
+                degraded = true;
+            }
+            if (latest.containsKey(Jobs.CATCHUP_CHECK) && !jobs.succeededSince(Jobs.CATCHUP_CHECK, since)) {
+                b.withDetail("catchupOverdue", "补偿检查超过 " + OVERDUE.toHours() + " 小时没有成功跑过");
                 degraded = true;
             }
         } catch (RuntimeException e) {

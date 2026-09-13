@@ -83,6 +83,7 @@ trader:
       universe-increment: true
       full-count: 1000
       overlap: 5
+      rehab-spread-days: 5    # 全量复权因子到期后每次增量最多刷 1/5（最久未刷优先），免得集中到期拖长增量
     history:
       from: 2006-01-01
       quota-reserve: 10

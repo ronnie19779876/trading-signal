@@ -11,6 +11,8 @@ public final class Jobs {
     public static final String CALENDAR_BACKFILL = "CALENDAR_BACKFILL";
     public static final String VALUATION_SNAPSHOT = "VALUATION_SNAPSHOT";
     public static final String FINANCIALS_REFRESH = "FINANCIALS_REFRESH";
+    /** 当天补偿检查本身（不走作业线程，只写一行运行记录；补跑的作业仍记在各自的作业名下）。 */
+    public static final String CATCHUP_CHECK = "CATCHUP_CHECK";
 
     private Jobs() {
     }

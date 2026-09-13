@@ -83,8 +83,8 @@
 | `GET /api/pool` / `POST /api/pool/{symbol}?role=POOL|HOLDING&note=` / `DELETE /api/pool/{symbol}` | 标的池；库里没有的代码（ETF、非成分股 ADR）先向富途解析并建档，富途不认识 → 404；加入后自动排深度回补作业（无法自动时返回提示）；池满 → 409 |
 | `POST /api/bars/refresh/universe?count=1000` | 全量轮转拉 K 线（零历史额度；1000 首拉 / 10 增量） |
 | `POST /api/bars/backfill/{symbol}` / `POST /api/bars/backfill` | 深度回补一只 / 所有待补的池与持仓（占历史额度，额度守卫） |
-| `POST /api/bars/increment` | 每日增量：交易日历 → 缺口补齐 → 复权因子刷新（池/持仓每日，全量 7 天到期的） |
-| `POST /api/bars/rehab/refresh?all=false` | 复权因子刷新作业：all=true 全量（约 5 分钟）；否则池/持仓 + 到期的 |
+| `POST /api/bars/increment` | 每日增量：交易日历 → 缺口补齐 → 复权因子刷新（池/持仓每日；全量 7 天到期的按最久未刷优先，每次最多全量的 1/`rehab-spread-days`） |
+| `POST /api/bars/rehab/refresh?all=false` | 复权因子刷新作业：all=true 全量（约 5 分钟）；否则池/持仓 + 到期的（同样限量，摘要里写明顺延几只） |
 | `GET /api/bars/{symbol}?from&to&adjust=none|forward|backward` | K 线（默认最近 90 天）；复权在读取层计算 |
 | `GET /api/bars/{symbol}/rehab` | 复权因子 |
 | `POST /api/bars/calendar/backfill` | 交易日历回补作业：券商段（约 2016-09 起）+ 更早的从日 K 线反推。幂等，几秒 |

@@ -75,6 +75,9 @@ public class MarketDataScheduler {
     /**
      * 当天补偿检查：确认当日数据齐了，缺什么补什么。
      * 排在收盘后较晚的时点，但要早于次日盘前——券商收盘后冻结当前价，过了盘前就取不到当日口径了。
+     *
+     * <p>每次运行都写一行 {@link Jobs#CATCHUP_CHECK}（非交易日、都齐了也写）。1.1.x 数据齐全时只打日志，
+     * 它自己停摆了库里毫无痕迹、健康指标也看不见——而它恰恰是估值数据的最后一道防线。
      */
     @Scheduled(cron = "${trader.marketdata.catchup-cron}", zone = "${trader.marketdata.zone}")
     public void catchUp() {
@@ -83,17 +86,22 @@ public class MarketDataScheduler {
             gap = catchUpService.check();
         } catch (RuntimeException e) {
             log.error("补偿检查失败：{}", e.toString());
+            note("FAILED", "检查失败：" + e);
             return;
         }
         if (!gap.tradingDay()) {
             log.info("{}", gap.describe());
+            note("OK", gap.describe());
             return;
         }
         if (!gap.barsMissing() && !gap.valuationMissing()) {
             log.info("{}；都齐了", gap.describe());
+            note("OK", gap.describe() + "；都齐了");
             return;
         }
         log.warn("{}；开始补跑", gap.describe());
+        note("OK", gap.describe() + "；已提交补跑："
+                + (gap.barsMissing() ? "每日增量 " : "") + (gap.valuationMissing() ? "估值快照" : ""));
         if (gap.barsMissing()) {
             submit("补跑每日增量", Jobs.DAILY_INCREMENT, () -> facade.increment("CATCHUP"));
         }
@@ -126,6 +134,15 @@ public class MarketDataScheduler {
                 log.error("排重试失败（{}）：{}", what, scheduleFailed.toString());
                 record(job, "无法排重试：" + scheduleFailed);
             }
+        }
+    }
+
+    /** 补偿检查的运行记录；写失败不能挡住后面的补跑。 */
+    private void note(String status, String summary) {
+        try {
+            jobRuns.record(Jobs.CATCHUP_CHECK, "SCHEDULE", status, summary);
+        } catch (RuntimeException e) {
+            log.warn("写补偿检查记录失败：{}", e.toString());
         }
     }
 

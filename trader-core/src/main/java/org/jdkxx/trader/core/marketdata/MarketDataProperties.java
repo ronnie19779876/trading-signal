@@ -40,13 +40,15 @@ public record MarketDataProperties(
 
     /**
      * 订阅轮转：每批订阅 batchSize 只（≤ 订阅额度 − 预留），批内至少停留 holdSeconds 秒才反订阅（券商规则：满 1 分钟）。
+     * rehabSpreadDays：全量标的的复权因子到期后，每次增量最多刷全量的 1/rehabSpreadDays（最久未刷优先），≤1 表示不限。
      */
     public record Refresh(
             @DefaultValue("90") int batchSize,
             @DefaultValue("65") int holdSeconds,
             @DefaultValue("true") boolean universeIncrement,
             @DefaultValue("1000") int fullCount,
-            @DefaultValue("5") int overlap) {
+            @DefaultValue("5") int overlap,
+            @DefaultValue("5") int rehabSpreadDays) {
     }
 
     public record History(@DefaultValue("2006-01-01") LocalDate from, @DefaultValue("10") int quotaReserve) {

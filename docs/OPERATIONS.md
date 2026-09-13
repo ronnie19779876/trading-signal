@@ -160,7 +160,8 @@ systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `Wor
 ## 5. 日常检查
 
 > 定时作业不再静默丢失：碰撞时每 5 分钟重试、最多半小时，仍失败会写一行 `SKIPPED`；
-> 美东 21:00 还有一次当天补偿检查，缺 K 线或估值就补跑（触发方式记 `CATCHUP`）。
+> 美东 21:00 还有一次当天补偿检查，缺 K 线或估值就补跑（触发方式记 `CATCHUP`）；
+> 检查本身每个工作日都写一行 `CATCHUP_CHECK`（非交易日、数据齐全也写），停摆或出错会让 `jobs` 健康指标降级。
 > 补偿必须早于次日盘前——券商收盘后冻结当前价，过了盘前就取不到当日口径的估值快照了。
 
 
@@ -179,7 +180,7 @@ systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `Wor
 
 1. `GET /api/bars/audit` 日线审计：完整性、字段合理性、前收连续性、复权新鲜度、同步错误、增量作业、日历覆盖、对照日历的近期缺口、网关。
 2. `GET /api/fundamentals/audit` 基本面审计：估值完整性与合理性、财报陈旧度、估值作业。
-3. `GET /actuator/health` 运行健康：`jobs` 组件在任一定时作业 FAILED / SKIPPED / 逾期时降级，`gateways` 在网关掉线时降级。
+3. `GET /actuator/health` 运行健康：`jobs` 组件在任一定时作业 FAILED / SKIPPED / 逾期（`overdue` 每日增量、`catchupOverdue` 补偿检查）时降级，`gateways` 在网关掉线时降级。
 
 `ok=false` 时看 `checks` 里失败项与样本；退出码 0 全通过 / 1 有关键项失败或健康降级 / 2 接口不可达。假日（如劳工节）不带参数跑会自动审计上一个交易日；显式传休市日则回"当天休市"并判通过。
 

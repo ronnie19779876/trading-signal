@@ -78,19 +78,39 @@ public class DeepBackfillService {
         states.rehabFetched(row.id());
     }
 
-    /** 复权因子刷新：all=true 全量标的；否则只刷池与持仓 + 全量里 7 天以上未刷新的。限频 60/30s，不占历史额度。 */
+    /**
+     * 全量里到期的标的（已按最久未刷排好）中，本次该刷哪些：跳过已在目标里的（池/持仓），
+     * 最多 ceil(全量 / spreadDays) 只；spreadDays ≤ 1 不限。
+     */
+    static List<Long> dueToday(List<Long> staleOldestFirst, java.util.Set<Long> alreadyTargeted, int universeSize, int spreadDays) {
+        long cap = spreadDays <= 1 ? Long.MAX_VALUE : Math.max(1, (universeSize + spreadDays - 1) / spreadDays);
+        return staleOldestFirst.stream().filter(id -> !alreadyTargeted.contains(id)).limit(cap).toList();
+    }
+
+    /**
+     * 复权因子刷新：all=true 全量标的；否则池与持仓每只都刷，全量里 7 天以上未刷新的按最久未刷优先、
+     * 每次最多刷全量的 1/rehab-spread-days。限频 60/30s，不占历史额度。
+     *
+     * <p>为什么限量：全量标的若在同一天刷过，7 天后会在同一次增量里一起到期（521 只多花约 300 秒），
+     * 2026-09-10 就因此让增量跑了 691 秒、挤掉了估值作业的时点。限量后集中到期会在几天内自己摊开，之后保持摊开。
+     */
     public String refreshRehab(boolean all, JobContext ctx) {
         java.util.Map<Long, InstrumentRow> targets = new java.util.LinkedHashMap<>();
         scope.poolAndHoldings().forEach(r -> targets.put(r.id(), r));
         List<InstrumentRow> universe = scope.universe();
+        String scopeNote;
         if (all) {
             universe.forEach(r -> targets.put(r.id(), r));
+            scopeNote = "（全量）";
         } else {
             java.util.Map<Long, InstrumentRow> byId = new java.util.HashMap<>();
             universe.forEach(r -> byId.put(r.id(), r));
-            for (Long id : states.rehabStale(byId.keySet(), java.time.Instant.now().minus(java.time.Duration.ofDays(7)))) {
-                targets.put(id, byId.get(id));
-            }
+            List<Long> stale = states.rehabStale(byId.keySet(), java.time.Instant.now().minus(java.time.Duration.ofDays(7)));
+            long staleOutside = stale.stream().filter(id -> !targets.containsKey(id)).count();
+            List<Long> due = dueToday(stale, targets.keySet(), universe.size(), props.refresh().rehabSpreadDays());
+            due.forEach(id -> targets.put(id, byId.get(id)));
+            scopeNote = "（池/持仓 + 到期 " + staleOutside + " 只中最久未刷的 " + due.size() + " 只"
+                    + (staleOutside > due.size() ? "，其余 " + (staleOutside - due.size()) + " 只顺延" : "") + "）";
         }
         int ok = 0;
         int failed = 0;
@@ -128,7 +148,7 @@ public class DeepBackfillService {
         if (failed > 0) {
             ctx.partial(failed + " 只复权因子失败");
         }
-        return "复权因子刷新 " + ok + "/" + targets.size() + " 只" + (all ? "（全量）" : "（池/持仓 + 到期）");
+        return "复权因子刷新 " + ok + "/" + targets.size() + " 只" + scopeNote;
     }
 
     /** 7 天内已经为它用过额度（重复请求不再计数），可以直接拉。 */

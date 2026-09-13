@@ -53,9 +53,17 @@ public class JobRunRepository {
      * 留一行 SKIPPED 才能让健康检查与巡检看见。
      */
     public long skipped(String job, String trigger, String reason) {
+        return record(job, trigger, "SKIPPED", reason);
+    }
+
+    /**
+     * 记一行已经结束的运行（开始即结束）。给不走作业线程、但运行本身需要留痕的检查用，
+     * 例如当天补偿检查：它停摆时如果库里没有痕迹，健康指标就无从知道。
+     */
+    public long record(String job, String trigger, String status, String summary) {
         return jdbc.queryForObject(
-                "INSERT INTO job_run (job, trigger, status, finished_at, summary) VALUES (?, ?, 'SKIPPED', now(), ?) RETURNING id",
-                Long.class, job, trigger, reason);
+                "INSERT INTO job_run (job, trigger, status, finished_at, summary) VALUES (?, ?, ?, now(), ?) RETURNING id",
+                Long.class, job, trigger, status, summary);
     }
 
     /** 每个作业最近一次的运行情况，健康检查用。 */

@@ -16,7 +16,7 @@ public final class TestProperties {
         return new MarketDataProperties(
                 null,
                 null,
-                new MarketDataProperties.Refresh(90, 65, true, 1000, 5),
+                new MarketDataProperties.Refresh(90, 65, true, 1000, 5, 5),
                 null,
                 null,
                 null,

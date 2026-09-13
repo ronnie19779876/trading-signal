@@ -101,7 +101,8 @@ storage → common ；ai → common
 
 ## 当前状态
 
-**第 2 期步骤 1~5 已交付并在生产运行**（1.1.0-SNAPSHOT）。每一期的设计决策、实测结论与已知边界都在
+**第 2 期步骤 1~5 已交付并在生产运行**（1.1.1）；开发中 1.2.0（观察期两处补齐），之后是第 3 期「账户与持仓」（2.0.0）。
+每一期的设计决策、实测结论与已知边界都在
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~15 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
 
 - 数据规模：521 只标的、58.8 万根日 K（池/持仓/基准 20 年深度）、3.7 万条复权因子、
@@ -109,5 +110,3 @@ storage → common ；ai → common
 - 跑批：每日增量、估值快照、成分股周同步、财报周刷新、当天补偿检查；碰撞重试 + SKIPPED 留痕 + `jobs` 健康指标。
 - 巡检：`./scripts/check-daily.sh` 一条命令覆盖日线审计、基本面审计、运行健康。
 - 本机 `config/secrets.yml` 已启用两家网关（隧道 + 开发 client-id）；入库的 `config/application.yml` 仍是 `enabled: false`。
-- 待办（不是故障）：复权因子集中到期导致增量周期性变长，建议摊到每天刷；补偿检查数据齐全时不写 `job_run`，
-  与设计承诺不符，导致它自身停摆无人察觉。
