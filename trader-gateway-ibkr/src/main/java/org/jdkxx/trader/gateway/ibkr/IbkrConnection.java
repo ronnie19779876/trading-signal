@@ -9,6 +9,7 @@ import org.jdkxx.trader.common.ratelimit.RateLimiter;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.gateway.GatewayException;
 import org.jdkxx.trader.gateway.NotConnectedException;
+import org.jdkxx.trader.gateway.ibkr.mapper.IbkrAccounts;
 import org.jdkxx.trader.gateway.support.Transport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -208,18 +209,63 @@ final class IbkrConnection implements Transport, IbkrWrapper.ConnectionEvents {
         int id = registry.nextId();
         CompletableFuture<List<ContractDetails>> f = registry.open(id, "合约查询 " + contract.symbol(),
                 new PendingRequest.Many<>(ContractDetails.class), null);
+        sendWithId(id, c -> c.reqContractDetails(id, contract));
+        return f;
+    }
+
+    /**
+     * 持仓（reqPositionsMulti）。它是订阅式请求：End 之后券商仍会推送变动，
+     * 所以 future 一结束（收齐、失败、超时都算）就取消。取消跟着 future 在 dispatch 线程上发，不占泵线程。
+     */
+    CompletableFuture<List<IbkrAccounts.PositionRow>> positions(String account) {
+        int id = registry.nextId();
+        CompletableFuture<List<IbkrAccounts.PositionRow>> f = registry.open(id, "持仓查询",
+                new PendingRequest.Many<>(IbkrAccounts.PositionRow.class), null);
+        f.whenComplete((rows, ex) -> cancelQuietly("持仓查询", c -> c.cancelPositionsMulti(id)));
+        sendWithId(id, c -> c.reqPositionsMulti(id, account, ""));
+        return f;
+    }
+
+    /**
+     * 账户汇总（reqAccountSummary，组 All，由调用方按账户筛）。同样是订阅式：结束即取消。
+     * 网关对账户汇总订阅有全局并发上限，并发合并在 {@link IbkrGateway} 里做。
+     */
+    CompletableFuture<List<IbkrAccounts.SummaryRow>> accountSummary(String tags) {
+        int id = registry.nextId();
+        CompletableFuture<List<IbkrAccounts.SummaryRow>> f = registry.open(id, "账户汇总",
+                new PendingRequest.Many<>(IbkrAccounts.SummaryRow.class), null);
+        f.whenComplete((rows, ex) -> cancelQuietly("账户汇总", c -> c.cancelAccountSummary(id)));
+        sendWithId(id, c -> c.reqAccountSummary(id, "All", tags));
+        return f;
+    }
+
+    /** 发送一个带 reqId 的请求；未连接或发送失败时让注册表里的请求失败。 */
+    private void sendWithId(int id, Consumer<EClientSocket> action) {
         Session s = session;
         if (!isConnected()) {
             registry.fail(id, new NotConnectedException(Broker.IBKR, "尚未连接"));
-            return f;
+            return;
         }
         try {
             limiter.acquire();
-            s.client.reqContractDetails(id, contract);
+            action.accept(s.client);
         } catch (RuntimeException e) {
             registry.fail(id, e);
         }
-        return f;
+    }
+
+    /** 取消订阅式请求。连接已断就不必取消（订阅随会话结束）；取消失败只记日志。 */
+    private void cancelQuietly(String what, Consumer<EClientSocket> action) {
+        Session s = session;
+        if (!isConnected()) {
+            return;
+        }
+        try {
+            limiter.acquire();
+            action.accept(s.client);
+        } catch (RuntimeException e) {
+            log.warn("取消{}失败：{}", what, e.toString());
+        }
     }
 
     /** 发送一个无 reqId 的请求；未连接或发送失败时让 future 异常完成并返回 false。 */

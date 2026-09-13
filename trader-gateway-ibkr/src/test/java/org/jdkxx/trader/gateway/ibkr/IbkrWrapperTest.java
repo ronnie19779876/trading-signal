@@ -1,7 +1,10 @@
 package org.jdkxx.trader.gateway.ibkr;
 
+import com.ib.client.Contract;
 import com.ib.client.ContractDetails;
+import com.ib.client.Decimal;
 import org.jdkxx.trader.gateway.RequestRejectedException;
+import org.jdkxx.trader.gateway.ibkr.mapper.IbkrAccounts;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -85,5 +88,27 @@ class IbkrWrapperTest {
             return c instanceof RequestRejectedException r && r.code() == 200 ? "200" : "?";
         }).join()).isEqualTo("200");
         assertThat(events).doesNotContain("sys=200");
+    }
+
+    @Test
+    void 持仓与账户汇总回调交给注册表_结束后的迟到推送被忽略() {
+        int id = registry.nextId();
+        CompletableFuture<List<IbkrAccounts.PositionRow>> f = registry.open(id, "t",
+                new PendingRequest.Many<>(IbkrAccounts.PositionRow.class), null);
+        wrapper.positionMulti(id, "ACCT-A", "", new Contract(), Decimal.get(1), 10.0);
+        wrapper.positionMultiEnd(id);
+        assertThat(f.join()).hasSize(1);
+
+        int id2 = registry.nextId();
+        CompletableFuture<List<IbkrAccounts.SummaryRow>> g = registry.open(id2, "t",
+                new PendingRequest.Many<>(IbkrAccounts.SummaryRow.class), null);
+        wrapper.accountSummary(id2, "ACCT-A", "NetLiquidation", "1", "USD");
+        wrapper.accountSummaryEnd(id2);
+        assertThat(g.join()).extracting(IbkrAccounts.SummaryRow::tag).containsExactly("NetLiquidation");
+
+        // 实测取消后券商还会再推一两条：请求已结束，不能抛到泵线程，也不算系统消息
+        wrapper.accountSummary(id2, "ACCT-A", "NetLiquidation", "1", "USD");
+        wrapper.positionMulti(id, "ACCT-A", "", new Contract(), Decimal.get(1), 10.0);
+        assertThat(events).isEmpty();
     }
 }

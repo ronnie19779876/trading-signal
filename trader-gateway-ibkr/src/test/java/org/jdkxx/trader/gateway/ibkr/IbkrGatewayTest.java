@@ -44,4 +44,22 @@ class IbkrGatewayTest {
             assertThat(gateway.status().facts()).containsEntry("accounts", "0");
         }
     }
+
+    @Test
+    void 未连接时账户查询异常完成_账户号为空直接拒绝() {
+        IbkrGateway disabled = new IbkrGateway(IbkrProperties.disabled());
+        assertThat(disabled.positions("ACCT-A")).isCompletedExceptionally();
+        assertThat(disabled.accountSummary("ACCT-A")).isCompletedExceptionally();
+        assertThatThrownBy(() -> disabled.positions(" ")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> disabled.accountSummary(null)).isInstanceOf(IllegalArgumentException.class);
+
+        try (IbkrGateway gateway = new IbkrGateway(props(true, "h", 1, 12))) {
+            assertThat(gateway.positions("ACCT-A")).failsWithin(Duration.ofSeconds(1))
+                    .withThrowableOfType(java.util.concurrent.ExecutionException.class)
+                    .withCauseInstanceOf(org.jdkxx.trader.gateway.NotConnectedException.class);
+            assertThat(gateway.accountSummary("ACCT-A")).failsWithin(Duration.ofSeconds(1))
+                    .withThrowableOfType(java.util.concurrent.ExecutionException.class)
+                    .withCauseInstanceOf(org.jdkxx.trader.gateway.NotConnectedException.class);
+        }
+    }
 }

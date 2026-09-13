@@ -97,13 +97,16 @@ storage → common ；ai → common
 | 富途给 SPY 在美股假日留了**脏 K 线**（实测 2011-07-04、2012-04-06、2012-05-28：成交额 0、最低价异常） | 反推日历要求当天≥2 只标的同时成交；真实交易日有 13 只以上，脏数据只有 1 只 |
 | 富途的 SPY 历史**缺 26 个交易日**（2009~2012），而且它自己的 `last_close` 与缺口自洽，所以**前收连续性检查查不出来** | 查历史缺口必须拿交易日历比对，别只信连续性检查 |
 | Spring 组件有**两个公开构造器**（一个给容器、一个给测试）时，容器选不出来就去找无参构造器并在启动时炸；只在生产装配的 bean（`@ConditionalOnProperty`）本地压根不创建，发现不了 | 只留一个公开构造器，测试要替换依赖就用可写字段；`SpringBeanConstructorTest` 会守住。注意别用 Spring 的类路径扫描写这种检查——它会评估 `@Conditional` 跳过这些类，测试会假通过 |
+| 盈透账户汇总的 `$LEDGER-AccountOrGroup` 值是**明文账户号**（2026-09-14 探针首跑就漏打过一次） | 映射时剔除（`IbkrAccounts`），日志、异常、返回都不带；临时探针脚本也要打码 |
+| 盈透 `reqAccountUpdates` 同一账户同时只允许一个客户端订阅；`reqPnL`/`reqPnLSingle` 休市时首条不完整、行情连上后改用盘外价重算 | 持仓用 `reqPositionsMulti`、资金用一次性 `reqAccountSummary`；盈亏不进快照 |
+| 盈透持仓的类别股代码带空格（`BRK B`），`primaryExch` 为 null | 映射以 conId 为主，首次按"空格→点"找标的 |
 | 新增 `@Scheduled` 用的配置项只写在 `MarketDataProperties` 的 `@DefaultValue` 上不够——**占位符解析不看记录默认值**。开发实例 `schedule-enabled=false` 不装配调度器，本地全绿、一上生产就起不来 | 新 cron 必须同时写进 jar 内 `application.yml`；`ScheduledPlaceholdersTest` 会守住这条 |
 
 ## 当前状态
 
-**第 2 期步骤 1~5 已交付并在生产运行**（1.1.1）；开发中 1.2.0（观察期两处补齐），之后是第 3 期「账户与持仓」（2.0.0）。
+**第 2 期已交付，生产跑 1.2.0**；开发中 2.0.0-SNAPSHOT：第 3 期「账户与持仓」（设计与实测见 ARCHITECTURE §16）。
 每一期的设计决策、实测结论与已知边界都在
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~15 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~16 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
 
 - 数据规模：521 只标的、58.8 万根日 K（池/持仓/基准 20 年深度）、3.7 万条复权因子、
   5052 天交易日历（2006 起）、2.5 万期财报、逐日估值快照。

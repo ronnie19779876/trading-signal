@@ -3,10 +3,13 @@ package org.jdkxx.trader.gateway.ibkr;
 import org.jdkxx.trader.common.ratelimit.TokenBucketRateLimiter;
 import org.jdkxx.trader.domain.AccountKind;
 import org.jdkxx.trader.domain.AccountRef;
+import org.jdkxx.trader.domain.AccountSummary;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.InstrumentInfo;
 import org.jdkxx.trader.domain.Market;
+import org.jdkxx.trader.domain.Position;
+import org.jdkxx.trader.gateway.AccountGateway;
 import org.jdkxx.trader.gateway.BrokerGateway;
 import org.jdkxx.trader.gateway.GatewayException;
 import org.jdkxx.trader.gateway.GatewayListener;
@@ -14,6 +17,7 @@ import org.jdkxx.trader.gateway.GatewayStatus;
 import org.jdkxx.trader.gateway.NotConnectedException;
 import org.jdkxx.trader.gateway.ReferenceDataGateway;
 import org.jdkxx.trader.gateway.RequestRejectedException;
+import org.jdkxx.trader.gateway.ibkr.mapper.IbkrAccounts;
 import org.jdkxx.trader.gateway.ibkr.mapper.IbkrContracts;
 import org.jdkxx.trader.gateway.ibkr.mapper.IbkrInstruments;
 import org.jdkxx.trader.gateway.support.ConnectionSupervisor;
@@ -21,10 +25,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -32,13 +38,15 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * 盈透网关适配器的对外入口：生命周期由 {@link ConnectionSupervisor} 驱动，会话由 {@link IbkrConnection} 持有。
- * 本期能力：连接 / 重连 / 心跳、受管账户、合约查询。
+ * 能力：连接 / 重连 / 心跳、受管账户、合约查询；第 3 期起加持仓与账户汇总（只读）。
  */
-public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, AutoCloseable {
+public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, AccountGateway, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(IbkrGateway.class);
 
     private final IbkrProperties props;
+    /** 进行中的账户汇总请求，按账户合并并发调用。 */
+    private final ConcurrentHashMap<String, CompletableFuture<AccountSummary>> summaries = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler;
     private final ExecutorService dispatch;
     private final IbkrFacts facts = new IbkrFacts();
@@ -163,6 +171,49 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, AutoClo
                     }
                     throw c instanceof RuntimeException re ? re : new CompletionException(c);
                 });
+    }
+
+    @Override
+    public CompletableFuture<List<Position>> positions(String accountId) {
+        requireAccountId(accountId);
+        if (!isConnected()) {
+            return CompletableFuture.failedFuture(new NotConnectedException(Broker.IBKR, status().detail()));
+        }
+        return connection.positions(accountId).thenApply(rows -> IbkrAccounts.positions(accountId, rows));
+    }
+
+    /**
+     * 同一账户的并发调用合并成一次券商请求：网关对账户汇总订阅有全局并发上限（官方文档为 2），
+     * 反复请求-取消还会被警告。每个调用方拿到各自的 future 副本，互不影响。
+     */
+    @Override
+    public CompletableFuture<AccountSummary> accountSummary(String accountId) {
+        requireAccountId(accountId);
+        if (!isConnected()) {
+            return CompletableFuture.failedFuture(new NotConnectedException(Broker.IBKR, status().detail()));
+        }
+        CompletableFuture<AccountSummary> mine = new CompletableFuture<>();
+        CompletableFuture<AccountSummary> running = summaries.putIfAbsent(accountId, mine);
+        if (running != null) {
+            return running.copy();
+        }
+        connection.accountSummary(IbkrAccounts.SUMMARY_TAGS)
+                .thenApply(rows -> IbkrAccounts.summary(accountId, rows, Instant.now()))
+                .whenComplete((summary, ex) -> {
+                    summaries.remove(accountId, mine);
+                    if (ex == null) {
+                        mine.complete(summary);
+                    } else {
+                        mine.completeExceptionally(ex instanceof CompletionException && ex.getCause() != null ? ex.getCause() : ex);
+                    }
+                });
+        return mine.copy();
+    }
+
+    private static void requireAccountId(String accountId) {
+        if (accountId == null || accountId.isBlank()) {
+            throw new IllegalArgumentException("accountId 不能为空");
+        }
     }
 
     @Override

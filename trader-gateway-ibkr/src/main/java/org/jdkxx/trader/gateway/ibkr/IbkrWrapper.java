@@ -1,9 +1,12 @@
 package org.jdkxx.trader.gateway.ibkr;
 
+import com.ib.client.Contract;
 import com.ib.client.ContractDetails;
+import com.ib.client.Decimal;
 import com.ib.client.DefaultEWrapper;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.gateway.RequestRejectedException;
+import org.jdkxx.trader.gateway.ibkr.mapper.IbkrAccounts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -89,6 +92,27 @@ final class IbkrWrapper extends DefaultEWrapper {
 
     @Override
     public void contractDetailsEnd(int reqId) {
+        registry.complete(reqId);
+    }
+
+    @Override
+    public void positionMulti(int reqId, String account, String modelCode, Contract contract, Decimal pos, double avgCost) {
+        registry.item(reqId, new IbkrAccounts.PositionRow(account, contract, pos, avgCost));
+    }
+
+    @Override
+    public void positionMultiEnd(int reqId) {
+        registry.complete(reqId);
+    }
+
+    /** 取消后券商还会再推一两条（实测），此时请求已结束，注册表会忽略。 */
+    @Override
+    public void accountSummary(int reqId, String account, String tag, String value, String currency) {
+        registry.item(reqId, new IbkrAccounts.SummaryRow(account, tag, value, currency));
+    }
+
+    @Override
+    public void accountSummaryEnd(int reqId) {
         registry.complete(reqId);
     }
 }

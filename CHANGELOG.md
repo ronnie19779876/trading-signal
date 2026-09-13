@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 2.0.0（开发中）
+
+第 3 期「账户与持仓」，设计与实测见 ARCHITECTURE §16。
+
+- 步骤 1：新增 `AccountGateway` 端口（持仓、资金汇总，只读）与盈透实现。持仓走 `reqPositionsMulti`、资金走一次性
+  `reqAccountSummary`，都是收齐即取消；汇总剔除明文账户号（`$LEDGER-AccountOrGroup`）；同一账户并发的汇总请求合并成一次。
+  `IbkrAccountsTest` 9 例（账户号剔除与无效数量报错两处已反证），`IbkrGatewayIT` 新增只读账户用例并对真实网关跑通。
+
 ## 1.2.0（2026-09-14 发布）
 
 补齐第 2 期观察期发现的两处（都不是故障，机制兜住了，但留着会周期性变慢、会让一道防线失明）。
