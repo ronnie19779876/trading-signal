@@ -103,6 +103,7 @@ storage → common ；ai → common
 | 富途快照的 `updateTimestamp` 跟着盘后/夜盘走，`curPrice` 却冻结在常规时段收盘（实测美东周日 20:52：SPY 时间戳是周日，价格 764.29 = 周五 K 线收盘） | 判断快照价属于哪天不能看时间戳；账户快照只在下一个交易日 04:00（美东）前采用快照价 |
 | 开发实例跑全量增量时，轮转每批订阅 90 只，而生产实例的实时订阅占着同一账户的额度（2026-09-14 实测 21/100），批量订阅被拒，开发增量 521 只失败 450 | 生产在跑时，开发实例不要跑全量增量/轮转；要验证 K 线就对单只 `POST /api/bars/backfill/{symbol}` |
 | 开发实例运行中跑 `./mvnw ... verify`（包括带 `-Dtrader.integration=true` 的集成测试）会重打 `trader-app/target/trader-app.jar`，正在用它的 JVM 类加载失败；2026-09-14 实测关停时 `NoClassDefFoundError: logback ThrowableProxy`，关停线程死掉、进程卡住不退 | 跑 verify / 集成测试 / 打包前先停开发实例；只跑单测用 `test` 阶段（不打包）。已卡住的只能发信号结束 |
+| 池变动钩子触发的实时订阅对账**不看 `auto-subscribe`**：开发实例上加减池成员（手工或持仓同步）会让开发实例也订阅实时报价，与生产同时订（第 2 期遗留，未修） | 在开发实例上改池前先 `POST /api/quotes/subscriptions/pause` |
 | 新增 `@Scheduled` 用的配置项只写在 `MarketDataProperties` 的 `@DefaultValue` 上不够——**占位符解析不看记录默认值**。开发实例 `schedule-enabled=false` 不装配调度器，本地全绿、一上生产就起不来 | 新 cron 必须同时写进 jar 内 `application.yml`；`ScheduledPlaceholdersTest` 会守住这条 |
 
 ## 当前状态

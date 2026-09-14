@@ -131,7 +131,7 @@ GitHub 客户端默认只推提交，漏推会导致事后无法 checkout 到发
 
 systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `WorkingDirectory`、`PIDFile`、`ExecStart` 路径改成 `~/trading-signal`（软链）后 `sudo cp` 到 `/etc/systemd/system/`，`daemon-reload`、`enable --now`。之后只用 systemctl 管理。
 
-首轮数据装载（生产空库）：`POST /api/universe/sync` → `POST /api/bars/refresh/universe?count=1000` → `POST /api/bars/rehab/refresh?all=true` → 逐只 `POST /api/pool/{symbol}?role=HOLDING|POOL` → `POST /api/bars/backfill` → `GET /api/bars/audit`。
+首轮数据装载（生产空库）：`POST /api/universe/sync` → `POST /api/bars/refresh/universe?count=1000` → `POST /api/bars/rehab/refresh?all=true` → 逐只 `POST /api/pool/{symbol}?role=POOL|BENCHMARK`（HOLDING 由 `POST /api/account/holdings/sync?apply=true` 按盈透持仓生成） → `POST /api/bars/backfill` → `GET /api/bars/audit`。
 
 基本面首轮装载：`POST /api/fundamentals/valuation/refresh`（520 只，几秒）→ `POST /api/fundamentals/financials/refresh?all=true`（520 只四类报表，约 42 分钟）→ `GET /api/fundamentals/audit`。两者都不占订阅与历史 K 线额度，但会占住作业线程，别和轮转类作业排一起。
 

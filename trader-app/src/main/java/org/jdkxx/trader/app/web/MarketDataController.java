@@ -138,7 +138,11 @@ public class MarketDataController {
     @PostMapping("/api/pool/{symbol}")
     public PoolService.AddResult addToPool(@PathVariable String symbol, @RequestParam(defaultValue = "POOL") String role,
                                            @RequestParam(required = false) String note) {
-        return pool.add(symbol, parse(PoolRole.class, role), note);
+        PoolRole r = parse(PoolRole.class, role);
+        if (r == PoolRole.HOLDING) {
+            throw new IllegalStateException("HOLDING 由盈透持仓自动维护，不接受手工添加；要立刻按持仓同步用 POST /api/account/holdings/sync?apply=true");
+        }
+        return pool.add(symbol, r, note);
     }
 
     @DeleteMapping("/api/pool/{symbol}")

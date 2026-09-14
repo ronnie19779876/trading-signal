@@ -77,8 +77,14 @@ class AccountSnapshotServiceTest {
     private AccountSnapshotService service(String secret, Clock clock, String configuredAccount) {
         AccountProperties props = new AccountProperties(true, "0 0 18 * * MON-FRI", secret, List.of("CASHX"),
                 new BigDecimal("0.002"), BigDecimal.ONE);
+        return service(secret, clock, configuredAccount, null);
+    }
+
+    private AccountSnapshotService service(String secret, Clock clock, String configuredAccount, HoldingSyncService holdingSync) {
+        AccountProperties props = new AccountProperties(true, "0 0 18 * * MON-FRI", secret, List.of("CASHX"),
+                new BigDecimal("0.002"), BigDecimal.ONE);
         return new AccountSnapshotService(props, configuredAccount, broker, accounts, market, instruments, bars, pool, days,
-                snapshots, clock, ET);
+                snapshots, holdingSync, clock, ET);
     }
 
     private static Position pos(String symbol, String conId, String qty, String cost) {
@@ -205,6 +211,24 @@ class AccountSnapshotServiceTest {
         assertThat(header.getValue().asOfDate()).isEqualTo(fri);
         assertThat(rows.getValue()).extracting(PositionSnapshotRow::priceSource).containsExactly("SNAPSHOT");
         assertThat(header.getValue().reconStatus()).isEqualTo("OK");
+    }
+
+    @Test
+    void 快照里先按持仓同步HOLDING再对账_对账读到的是同步后的池() throws Exception {
+        HoldingSyncService sync = mock(HoldingSyncService.class);
+        when(sync.syncFromSnapshot(any())).thenReturn(new HoldingSyncService.Result(true,
+                new HoldingSyncService.Plan(List.of(), List.of(), null), List.of(), "无需变动"));
+        when(days.between(eq(Market.US), any(), any())).thenReturn(List.of(LocalDate.of(2026, 9, 11), MON));
+        when(accounts.positions(ACCT)).thenReturn(completedFuture(List.of()));
+        when(accounts.accountSummary(ACCT)).thenReturn(completedFuture(summary("50", "50", "0", "0")));
+
+        String result = service(SECRET, AT_18_ET, null, sync).run(ctx, false);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(sync, pool, snapshots);
+        order.verify(sync).syncFromSnapshot(any());
+        order.verify(pool).findAll();
+        order.verify(snapshots).save(any(), any(), any(), any());
+        assertThat(result).contains("持仓同步：无需变动");
     }
 
     @Test

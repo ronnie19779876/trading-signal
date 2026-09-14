@@ -1,10 +1,14 @@
 package org.jdkxx.trader.core.account;
 
 import org.jdkxx.trader.core.gateway.GatewayRegistry;
+import org.jdkxx.trader.core.marketdata.MarketDataFacade;
 import org.jdkxx.trader.core.marketdata.MarketDataProperties;
+import org.jdkxx.trader.core.marketdata.PoolService;
 import org.jdkxx.trader.core.marketdata.jobs.JobService;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.gateway.AccountGateway;
+import org.jdkxx.trader.gateway.BrokerGateway;
+import org.jdkxx.trader.gateway.GatewayState;
 import org.jdkxx.trader.gateway.MarketDataGateway;
 import org.jdkxx.trader.storage.account.AccountSnapshotRepository;
 import org.jdkxx.trader.storage.marketdata.DailyBarRepository;
@@ -25,19 +29,29 @@ import java.time.ZoneId;
 /**
  * 账户与持仓（第 3 期）的装配。整块只在存储启用时存在。
  * 选哪个盈透账户沿用 {@code trader.ibkr.account}（没配且只有一个受管账户就用它）。
+ * 自动触发的部分（定时快照、盈透连上后同步持仓）只在开了跑批的实例装配：开发实例默认关。
  */
 @Configuration
 @ConditionalOnProperty(name = "trader.storage.enabled", havingValue = "true")
 @EnableConfigurationProperties(AccountProperties.class)
 public class AccountConfiguration {
 
+    @Bean(destroyMethod = "close")
+    public HoldingSyncService holdingSyncService(AccountProperties props, Environment env, GatewayRegistry gateways,
+                                                 AccountGateway accounts, InstrumentRepository instruments, PoolRepository pool,
+                                                 PoolService poolService, MarketDataFacade marketData, JobRunRepository jobRuns) {
+        return new HoldingSyncService(props, env.getProperty("trader.ibkr.account"), gateways.require(Broker.IBKR), accounts,
+                instruments, pool, poolService, marketData, jobRuns);
+    }
+
     @Bean
     public AccountSnapshotService accountSnapshotService(AccountProperties props, MarketDataProperties marketData, Environment env,
                                                          GatewayRegistry gateways, AccountGateway accounts, MarketDataGateway market,
                                                          InstrumentRepository instruments, DailyBarRepository bars, PoolRepository pool,
-                                                         TradingDayRepository days, AccountSnapshotRepository snapshots) {
+                                                         TradingDayRepository days, AccountSnapshotRepository snapshots,
+                                                         HoldingSyncService holdingSync) {
         return new AccountSnapshotService(props, env.getProperty("trader.ibkr.account"), gateways.require(Broker.IBKR), accounts,
-                market, instruments, bars, pool, days, snapshots, Clock.systemUTC(), ZoneId.of(marketData.zone()));
+                market, instruments, bars, pool, days, snapshots, holdingSync, Clock.systemUTC(), ZoneId.of(marketData.zone()));
     }
 
     @Bean
@@ -52,5 +66,18 @@ public class AccountConfiguration {
     public AccountScheduler accountScheduler(AccountFacade facade, AccountSnapshotRepository snapshots, TradingDayRepository days,
                                              JobRunRepository jobRuns, MarketDataProperties marketData) {
         return new AccountScheduler(facade, snapshots, days, jobRuns, Clock.systemUTC(), ZoneId.of(marketData.zone()));
+    }
+
+    /** 盈透连上后同步一次持仓。装配时网关若已连上（自动连接先于本 bean 完成），立刻补一次。 */
+    @Bean(destroyMethod = "close")
+    @ConditionalOnExpression("${trader.marketdata.schedule-enabled:false} and ${trader.account.enabled:true}")
+    public HoldingSyncOnConnect holdingSyncOnConnect(HoldingSyncService sync, GatewayRegistry gateways) {
+        HoldingSyncOnConnect listener = new HoldingSyncOnConnect(sync);
+        BrokerGateway ibkr = gateways.require(Broker.IBKR);
+        ibkr.addListener(listener);
+        if (ibkr.status().state() == GatewayState.CONNECTED) {
+            listener.onConnected(Broker.IBKR, false);
+        }
+        return listener;
     }
 }

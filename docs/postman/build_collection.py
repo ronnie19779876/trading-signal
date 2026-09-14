@@ -188,7 +188,7 @@ ENDPOINTS = [
             {"name": "单个标的", "method": "GET", "path": "/api/universe/{{symbol}}", "desc": "含所属指数、行业、池角色、K 线覆盖。",
              "tests": ['pm.test("200 或 404", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));']},
             {"name": "加入标的池（触发深度回补）", "method": "POST", "path": "/api/pool/{{symbol}}", "query": [{"key": "role", "value": "POOL"}],
-             "desc": "role=POOL|HOLDING。加入后自动排深度回补作业（20 年，占 1 个历史额度）；池满或作业冲突 → 409。",
+             "desc": "role=POOL|BENCHMARK。HOLDING 由盈透持仓自动维护，手工传 role=HOLDING → 409。加入后自动排深度回补作业（20 年，占 1 个历史额度）；池满或作业冲突 → 409。",
              "tests": ['pm.test("200 / 404 / 409", () => pm.expect(pm.response.code).to.be.oneOf([200, 404, 409]));']},
             {"name": "标的池", "method": "GET", "path": "/api/pool", "desc": "POOL + HOLDING 及各自的 K 线覆盖。",
              "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
@@ -277,6 +277,9 @@ ENDPOINTS = [
             {"name": "拍账户快照（异步作业，会写库）", "method": "POST", "path": "/api/account/snapshot", "query": [{"key": "force", "value": "false"}],
              "desc": "只能在快照窗口内拍（交易日美东 16:15 至次日 04:00），窗口外 409；force=true 只在开发环境可用。会写库，不要对生产批量跑。",
              "tests": ['pm.test("HTTP 200（已提交）或 409（窗口外 / 有作业在跑）", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));']},
+            {"name": "持仓同步 HOLDING（默认只看计划）", "method": "POST", "path": "/api/account/holdings/sync", "query": [{"key": "apply", "value": "false"}],
+             "desc": "按盈透持仓维护池里的 HOLDING。apply=false 只返回计划（ADD / PROMOTE / RETURN_TO_POOL / REMOVE）；apply=true 才改池。盈透未连接 → 503。",
+             "tests": ['pm.test("HTTP 200 或 503（盈透未连接）", () => pm.expect(pm.response.code).to.be.oneOf([200, 503]));']},
         ],
     },
     {

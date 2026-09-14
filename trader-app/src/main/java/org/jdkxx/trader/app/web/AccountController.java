@@ -1,6 +1,7 @@
 package org.jdkxx.trader.app.web;
 
 import org.jdkxx.trader.core.account.AccountFacade;
+import org.jdkxx.trader.core.account.HoldingSyncService;
 import org.jdkxx.trader.storage.account.AccountSnapshotRow;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -15,16 +16,18 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 
 /**
- * 账户与持仓（第 3 期）：快照作业与查询。账户号只以脱敏形式出现。只在存储启用时装配。
+ * 账户与持仓（第 3 期）：快照作业、快照查询、持仓同步。账户号只以脱敏形式出现。只在存储启用时装配。
  */
 @RestController
 @ConditionalOnProperty(name = "trader.storage.enabled", havingValue = "true")
 public class AccountController {
 
     private final AccountFacade facade;
+    private final HoldingSyncService holdingSync;
 
-    public AccountController(AccountFacade facade) {
+    public AccountController(AccountFacade facade, HoldingSyncService holdingSync) {
         this.facade = facade;
+        this.holdingSync = holdingSync;
     }
 
     /** 账户快照作业。只能在快照窗口内拍（窗口外 409）；force=true 只在开发环境可用。 */
@@ -48,5 +51,11 @@ public class AccountController {
             throw new IllegalArgumentException("from 不能晚于 to");
         }
         return facade.between(start, end);
+    }
+
+    /** 按盈透持仓维护池里的 HOLDING。默认只返回计划；apply=true 才改池。 */
+    @PostMapping("/api/account/holdings/sync")
+    public HoldingSyncService.Result syncHoldings(@RequestParam(defaultValue = "false") boolean apply) throws Exception {
+        return holdingSync.syncNow(apply, "MANUAL");
     }
 }

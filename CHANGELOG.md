@@ -14,6 +14,11 @@
   接口 `POST /api/account/snapshot`、`GET /api/account/snapshots/latest`、`GET /api/account/snapshots`；`jobs` 健康指标纳入账户快照（逾期 120 小时）。
   碰撞重试抽成 `ScheduledSubmitter`，行情与账户调度共用；`ScheduledPlaceholdersTest` 覆盖账户调度。
   开发实例实测：8 条持仓零缺价，恒等式差 0.00，市值对账差 0.0028%。
+- 步骤 3：持仓自动维护池里的 HOLDING（`HoldingSyncService`）。持有而池里没有的加入（来源 IBKR）、POOL 升 HOLDING 并记下原角色、
+  清仓后原为 POOL 的回 POOL、其余移出池（数据保留）；BENCHMARK 不动；现金管理工具与非美股不算；返回空持仓而池里有 HOLDING 时不执行。
+  触发：快照作业里先同步再对账、生产实例盈透连上 60 秒后、`POST /api/account/holdings/sync?apply=false|true`。
+  手工 `POST /api/pool/{symbol}?role=HOLDING` 改为 409，前端下拉禁用 HOLDING；新增或升级的标的自动排深度回补。
+  对账的持仓集合项把持有的基准算作一致。开发实例实测：加入 IBKR 并回补到 20 年，快照对账四项全 OK，再同步无需变动。
 
 ## 1.2.0（2026-09-14 发布）
 

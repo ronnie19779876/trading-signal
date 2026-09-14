@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -17,7 +18,7 @@ import java.util.stream.Collectors;
  * <ol>
  *   <li>{@code identity} 资金恒等式：现金 + 股票市值 + 应计股息 = 净值（盈透实测精确到分；只适用于纯股票账户）；</li>
  *   <li>{@code marketValue} 市值：Σ 数量 × 本系统收盘价 对比盈透股票市值（实测差十万分之一量级）；</li>
- *   <li>{@code holdings} 持仓集合：持有的股票与池里的 HOLDING 角色一致（现金管理工具不参与）；</li>
+ *   <li>{@code holdings} 持仓集合：持有的股票与池里的 HOLDING 角色一致（基准与现金管理工具不参与）；</li>
  *   <li>{@code otherAssets} 非股票持仓：不参与估值，有就提示。</li>
  * </ol>
  */
@@ -51,10 +52,11 @@ public final class AccountReconciler {
     }
 
     /**
-     * @param holdings 池里 HOLDING 角色的标的：id → 代码
+     * @param holdings   池里 HOLDING 角色的标的：id → 代码
+     * @param benchmarks 池里 BENCHMARK 角色的标的 id：持有它们不要求标 HOLDING
      */
     public static Result reconcile(AccountSummary summary, List<ValuedPosition> positions, Map<Long, String> holdings,
-                                   BigDecimal valueTolerance, BigDecimal identityTolerance) {
+                                   Set<Long> benchmarks, BigDecimal valueTolerance, BigDecimal identityTolerance) {
         List<ValuedPosition> stocks = positions.stream().filter(ValuedPosition::stock).toList();
         List<ValuedPosition> others = positions.stream().filter(p -> !p.stock()).toList();
         BigDecimal ours = stocks.stream().map(ValuedPosition::marketValue).filter(Objects::nonNull)
@@ -63,7 +65,7 @@ public final class AccountReconciler {
         List<Check> checks = new ArrayList<>();
         checks.add(identity(summary, identityTolerance));
         checks.add(marketValue(summary, stocks, ours, valueTolerance));
-        checks.add(holdings(stocks, holdings));
+        checks.add(holdings(stocks, holdings, benchmarks));
         checks.add(otherAssets(others));
         Status worst = checks.stream().map(Check::status).reduce(Status.OK, Status::worse);
         return new Result(worst, ours.setScale(4, RoundingMode.HALF_UP), List.copyOf(checks));
@@ -100,15 +102,18 @@ public final class AccountReconciler {
         return new Check("marketValue", ratio.compareTo(tolerance.multiply(BigDecimal.valueOf(5))) <= 0 ? Status.WARN : Status.FAIL, detail);
     }
 
-    static Check holdings(List<ValuedPosition> stocks, Map<Long, String> holdings) {
+    static Check holdings(List<ValuedPosition> stocks, Map<Long, String> holdings, Set<Long> benchmarks) {
         Map<Long, String> held = new LinkedHashMap<>();
         List<String> unmapped = new ArrayList<>();
         long cash = 0;
+        long heldBenchmarks = 0;
         for (ValuedPosition p : stocks) {
             if (p.cashEquivalent()) {
                 cash++;
             } else if (p.instrumentId() == null) {
                 unmapped.add(p.symbol());
+            } else if (benchmarks.contains(p.instrumentId())) {
+                heldBenchmarks++;
             } else {
                 held.put(p.instrumentId(), p.symbol());
             }
@@ -117,7 +122,8 @@ public final class AccountReconciler {
                 .map(Map.Entry::getValue).sorted().toList();
         List<String> stale = holdings.entrySet().stream().filter(e -> !held.containsKey(e.getKey()))
                 .map(Map.Entry::getValue).sorted().toList();
-        String cashNote = cash > 0 ? "（现金管理工具 " + cash + " 条不参与）" : "";
+        String cashNote = (cash > 0 ? "（现金管理工具 " + cash + " 条不参与）" : "")
+                + (heldBenchmarks > 0 ? "（持有的基准 " + heldBenchmarks + " 只保留基准角色）" : "");
         if (notMarked.isEmpty() && stale.isEmpty() && unmapped.isEmpty()) {
             return new Check("holdings", Status.OK, "持有的 " + held.size() + " 只股票与池里的 HOLDING 一致" + cashNote);
         }

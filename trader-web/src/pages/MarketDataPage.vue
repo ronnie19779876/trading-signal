@@ -267,11 +267,11 @@ function num(v: number | null | undefined, digits = 2): string {
       </el-table>
     </el-card>
 
-    <el-card shadow="never" header="标的池（POOL 候选，上限 50；HOLDING 持仓；BENCHMARK 基准，只采集不选股）">
+    <el-card shadow="never" header="标的池（POOL 候选，上限 50；HOLDING 持仓，由盈透持仓自动维护；BENCHMARK 基准，只采集不选股）">
       <div class="actions">
         <el-input v-model="newSymbol" size="small" placeholder="代码，如 AAPL" style="width: 160px" @keyup.enter="add" />
-        <el-select v-model="newRole" size="small" style="width: 120px">
-          <el-option label="POOL" value="POOL" /><el-option label="HOLDING" value="HOLDING" /><el-option label="BENCHMARK" value="BENCHMARK" />
+        <el-select v-model="newRole" size="small" style="width: 200px">
+          <el-option label="POOL" value="POOL" /><el-option label="HOLDING（盈透自动维护）" value="HOLDING" disabled /><el-option label="BENCHMARK" value="BENCHMARK" />
         </el-select>
         <el-button size="small" type="primary" @click="add">加入（自动深度回补）</el-button>
       </div>

@@ -979,7 +979,7 @@
                 }
               ]
             },
-            "description": "role=POOL|HOLDING。加入后自动排深度回补作业（20 年，占 1 个历史额度）；池满或作业冲突 → 409。"
+            "description": "role=POOL|BENCHMARK。HOLDING 由盈透持仓自动维护，手工传 role=HOLDING → 409。加入后自动排深度回补作业（20 年，占 1 个历史额度）；池满或作业冲突 → 409。"
           },
           "event": [
             {
@@ -2094,6 +2094,49 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"HTTP 200（已提交）或 409（窗口外 / 有作业在跑）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "持仓同步 HOLDING（默认只看计划）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/account/holdings/sync?apply=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "account",
+                "holdings",
+                "sync"
+              ],
+              "query": [
+                {
+                  "key": "apply",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "按盈透持仓维护池里的 HOLDING。apply=false 只返回计划（ADD / PROMOTE / RETURN_TO_POOL / REMOVE）；apply=true 才改池。盈透未连接 → 503。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200 或 503（盈透未连接）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 503]));"
                 ]
               }
             }

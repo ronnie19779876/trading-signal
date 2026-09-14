@@ -13,6 +13,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -52,7 +53,7 @@ class AccountReconcilerTest {
     void 全部一致时为OK_现金管理工具计入市值但不参与持仓核对() {
         Result r = AccountReconciler.reconcile(summary("1150", "50", "1100", "0"),
                 List.of(stock("AAA", 1L, "10", "100"), cash("CASHX", "100", "1")),
-                Map.of(1L, "AAA"), TOL, ONE_USD);
+                Map.of(1L, "AAA"), Set.of(), TOL, ONE_USD);
 
         assertThat(r.status()).isEqualTo(Status.OK);
         assertThat(r.positionValue()).isEqualByComparingTo("1100");
@@ -83,7 +84,7 @@ class AccountReconcilerTest {
     void 有持仓缺价时市值对账WARN并列出代码() {
         Result r = AccountReconciler.reconcile(summary("1550", "50", "1500", "0"),
                 List.of(stock("AAA", 1L, "10", "100"), stock("BBB", 2L, "5", null)),
-                Map.of(1L, "AAA", 2L, "BBB"), TOL, ONE_USD);
+                Map.of(1L, "AAA", 2L, "BBB"), Set.of(), TOL, ONE_USD);
 
         assertThat(check(r, "marketValue").status()).isEqualTo(Status.WARN);
         assertThat(check(r, "marketValue").detail()).contains("BBB").contains("估值不完整");
@@ -96,7 +97,7 @@ class AccountReconcilerTest {
                 stock("AAA", 1L, "1", "1"),
                 stock("BBB", 2L, "1", "1"),
                 stock("CCC", null, "1", "1"),
-                cash("CASHX", "1", "1")), Map.of(1L, "AAA", 3L, "DDD"));
+                cash("CASHX", "1", "1")), Map.of(1L, "AAA", 3L, "DDD"), Set.of());
 
         assertThat(c.status()).isEqualTo(Status.WARN);
         assertThat(c.detail()).contains("持有但池里没标 HOLDING [BBB]")
@@ -106,10 +107,20 @@ class AccountReconcilerTest {
     }
 
     @Test
+    void 持有的基准不要求标HOLDING() {
+        // 标普基准用的就是持仓里的 SPY 这类标的：角色是 BENCHMARK，持有它不算"没标 HOLDING"
+        Check c = AccountReconciler.holdings(List.of(stock("AAA", 1L, "1", "1"), stock("IDX", 7L, "1", "1")),
+                Map.of(1L, "AAA"), Set.of(7L));
+
+        assertThat(c.status()).isEqualTo(Status.OK);
+        assertThat(c.detail()).contains("持有的基准 1 只保留基准角色");
+    }
+
+    @Test
     void 非股票持仓WARN且不计入本系统市值() {
         ValuedPosition option = new ValuedPosition(pos("AAA 261218C00100000", "OPT", "1"), null, new BigDecimal("5"), PriceSource.BAR, false);
         Result r = AccountReconciler.reconcile(summary("1050", "50", "1000", "0"),
-                List.of(stock("AAA", 1L, "10", "100"), option), Map.of(1L, "AAA"), TOL, ONE_USD);
+                List.of(stock("AAA", 1L, "10", "100"), option), Map.of(1L, "AAA"), Set.of(), TOL, ONE_USD);
 
         assertThat(check(r, "otherAssets").status()).isEqualTo(Status.WARN);
         assertThat(r.positionValue()).isEqualByComparingTo("1000");
@@ -119,7 +130,7 @@ class AccountReconcilerTest {
     @Test
     void 总状态取最差() {
         Result r = AccountReconciler.reconcile(summary("9999", "50", "1000", "0"),
-                List.of(stock("AAA", 1L, "10", "100")), Map.of(1L, "AAA"), TOL, ONE_USD);
+                List.of(stock("AAA", 1L, "10", "100")), Map.of(1L, "AAA"), Set.of(), TOL, ONE_USD);
 
         assertThat(check(r, "identity").status()).isEqualTo(Status.FAIL);
         assertThat(r.status()).isEqualTo(Status.FAIL);

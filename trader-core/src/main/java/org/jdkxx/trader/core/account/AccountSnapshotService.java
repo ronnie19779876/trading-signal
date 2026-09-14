@@ -3,7 +3,6 @@ package org.jdkxx.trader.core.account;
 import org.jdkxx.trader.core.account.ValuedPosition.PriceSource;
 import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
 import org.jdkxx.trader.core.marketdata.jobs.JobContext;
-import org.jdkxx.trader.domain.AccountRef;
 import org.jdkxx.trader.domain.AccountSummary;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.domain.Instrument;
@@ -19,7 +18,6 @@ import org.jdkxx.trader.storage.account.AccountSnapshotRow;
 import org.jdkxx.trader.storage.account.PositionSnapshotRow;
 import org.jdkxx.trader.storage.marketdata.DailyBarRepository;
 import org.jdkxx.trader.storage.marketdata.InstrumentRepository;
-import org.jdkxx.trader.storage.marketdata.InstrumentRow;
 import org.jdkxx.trader.storage.marketdata.PoolRepository;
 import org.jdkxx.trader.storage.marketdata.PoolRow;
 import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
@@ -37,15 +35,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
- * 账户快照作业体：盈透持仓与资金汇总 → 映射到本系统标的 → 按收盘价估值 → 对账 → 落库（同一天重拍覆盖）。
+ * 账户快照作业体：盈透持仓与资金汇总 → 映射到本系统标的 → 按收盘价估值 → 按持仓同步池里的 HOLDING → 对账 → 落库（同一天重拍覆盖）。
  *
  * <p>价格按优先级取：当日 K 线收盘（BAR）→ 富途快照价（SNAPSHOT，给库里没有当日 K 线的持仓，
  * 比如只进快照不进池的现金管理工具）→ 缺价（NONE，对账记 WARN）。
@@ -57,35 +51,35 @@ import java.util.stream.Collectors;
 public class AccountSnapshotService {
 
     private static final Logger log = LoggerFactory.getLogger(AccountSnapshotService.class);
-    static final long TIMEOUT_SECONDS = 30;
 
     private final AccountProperties props;
-    private final String configuredAccount;
-    private final BrokerGateway broker;
-    private final AccountGateway accounts;
+    private final AccountPositions source;
     private final MarketDataGateway market;
     private final InstrumentRepository instruments;
     private final DailyBarRepository bars;
     private final PoolRepository pool;
     private final TradingDayRepository days;
     private final AccountSnapshotRepository snapshots;
+    private final HoldingSyncService holdingSync;
     private final Clock clock;
     private final ZoneId zone;
 
+    /**
+     * @param holdingSync 为 null 时不同步池里的 HOLDING（只拍快照、对账）
+     */
     public AccountSnapshotService(AccountProperties props, String configuredAccount, BrokerGateway broker, AccountGateway accounts,
                                   MarketDataGateway market, InstrumentRepository instruments, DailyBarRepository bars,
                                   PoolRepository pool, TradingDayRepository days, AccountSnapshotRepository snapshots,
-                                  Clock clock, ZoneId zone) {
+                                  HoldingSyncService holdingSync, Clock clock, ZoneId zone) {
         this.props = props;
-        this.configuredAccount = configuredAccount;
-        this.broker = broker;
-        this.accounts = accounts;
+        this.source = new AccountPositions(configuredAccount, broker, accounts, instruments);
         this.market = market;
         this.instruments = instruments;
         this.bars = bars;
         this.pool = pool;
         this.days = days;
         this.snapshots = snapshots;
+        this.holdingSync = holdingSync;
         this.clock = clock;
         this.zone = zone;
     }
@@ -99,17 +93,40 @@ public class AccountSnapshotService {
                 : SnapshotWindow.asOfDate(now, d -> days.isTradingDay(Market.US, d))
                         .orElseThrow(() -> new IllegalStateException(SnapshotWindow.OUTSIDE));
         AccountKeys.requireSecret(props.keySecret());
-        String accountId = chooseAccount();
+        String accountId = source.chooseAccount();
         String mask = AccountKeys.mask(accountId);
 
         ctx.progress("取盈透持仓与资金汇总（" + mask + "）");
-        List<Position> all = await(accounts.positions(accountId));
-        AccountSummary summary = await(accounts.accountSummary(accountId));
+        List<Position> all = source.positions(accountId);
+        AccountSummary summary = source.summary(accountId);
         List<Position> held = all.stream().filter(p -> p.quantity().signum() != 0).toList();
 
         ctx.progress("按 " + asOf + " 收盘估值 " + held.size() + " 条持仓");
         List<ValuedPosition> valued = value(held, asOf, now);
-        AccountReconciler.Result r = AccountReconciler.reconcile(summary, valued, holdingSymbols(),
+
+        String syncNote = "";
+        if (holdingSync != null) {
+            ctx.progress("按持仓同步池里的 HOLDING");
+            try {
+                HoldingSyncService.Result s = holdingSync.syncFromSnapshot(valued);
+                syncNote = "；持仓同步：" + s.summary();
+                if (!s.errors().isEmpty() || s.plan().blocked() != null) {
+                    ctx.partial("持仓同步未完全执行");
+                }
+            } catch (RuntimeException e) {
+                log.warn("持仓同步失败：{}", e.toString());
+                syncNote = "；持仓同步失败：" + e.getMessage();
+                ctx.partial("持仓同步失败");
+            }
+        }
+
+        List<PoolRow> members = pool.findAll();
+        Map<Long, String> holdings = new LinkedHashMap<>();
+        instruments.findByIds(members.stream().filter(m -> m.role() == PoolRole.HOLDING).map(PoolRow::instrumentId).toList())
+                .forEach(r -> holdings.put(r.id(), r.symbol()));
+        Set<Long> benchmarks = members.stream().filter(m -> m.role() == PoolRole.BENCHMARK).map(PoolRow::instrumentId)
+                .collect(Collectors.toSet());
+        AccountReconciler.Result r = AccountReconciler.reconcile(summary, valued, holdings, benchmarks,
                 props.valueTolerance(), props.identityTolerance());
 
         AccountSnapshotRow header = new AccountSnapshotRow(0, Broker.IBKR.name(), AccountKeys.key(props.keySecret(), Broker.IBKR, accountId),
@@ -129,7 +146,7 @@ public class AccountSnapshotService {
             ctx.partial("对账 " + r.status());
         }
         return "账户快照 " + asOf + "（" + mask + "）：持仓 " + held.size() + " 条，价格 " + sources(valued)
-                + "，对账 " + r.status() + "；" + r.brief();
+                + "，对账 " + r.status() + "；" + r.brief() + syncNote;
     }
 
     private LocalDate latestSettledTradingDay(ZonedDateTime now) {
@@ -141,37 +158,20 @@ public class AccountSnapshotService {
         return d;
     }
 
-    /** 选账户：配了 trader.ibkr.account 就用它（必须在受管列表里），没配且只有一个就用那一个。异常消息不带账户号。 */
-    String chooseAccount() throws Exception {
-        List<String> ids = await(broker.accounts()).stream().map(AccountRef::accountId).toList();
-        if (configuredAccount != null && !configuredAccount.isBlank()) {
-            String c = configuredAccount.trim();
-            if (!ids.contains(c)) {
-                throw new IllegalStateException("配置的 trader.ibkr.account 不在盈透受管账户列表里");
-            }
-            return c;
-        }
-        if (ids.size() == 1) {
-            return ids.get(0);
-        }
-        throw new IllegalStateException(ids.isEmpty() ? "盈透没有返回受管账户"
-                : "盈透有 " + ids.size() + " 个受管账户，请用 trader.ibkr.account 指定快照哪一个");
-    }
-
     List<ValuedPosition> value(List<Position> held, LocalDate asOf, ZonedDateTime now) {
-        Set<String> cash = props.cashEquivalents().stream().map(AccountSnapshotService::normalize).collect(Collectors.toSet());
+        Set<String> cash = props.cashEquivalents().stream().map(AccountPositions::normalize).collect(Collectors.toSet());
         boolean snapshotIsClose = snapshotPriceIsClose(now, asOf);
         List<Long> ids = new ArrayList<>(held.size());
         for (Position p : held) {
-            ids.add(instrumentId(p));
+            ids.add(source.instrumentId(p));
         }
         Map<Long, BigDecimal> closes = bars.closesOn(asOf, ids.stream().filter(Objects::nonNull).distinct().toList());
 
         List<String> needSnapshot = new ArrayList<>();
         for (int i = 0; i < held.size(); i++) {
             Long id = ids.get(i);
-            if (stockUsd(held.get(i)) && (id == null || !closes.containsKey(id))) {
-                needSnapshot.add(normalize(held.get(i).symbol()));
+            if (AccountPositions.stockUsd(held.get(i)) && (id == null || !closes.containsKey(id))) {
+                needSnapshot.add(AccountPositions.normalize(held.get(i).symbol()));
             }
         }
         Map<String, ValuationSnapshot> snaps = snapshotPrices(needSnapshot);
@@ -180,13 +180,13 @@ public class AccountSnapshotService {
         for (int i = 0; i < held.size(); i++) {
             Position p = held.get(i);
             Long id = ids.get(i);
-            String symbol = normalize(p.symbol());
+            String symbol = AccountPositions.normalize(p.symbol());
             boolean isCash = cash.contains(symbol);
             if (id != null && closes.containsKey(id)) {
                 out.add(new ValuedPosition(p, id, closes.get(id), PriceSource.BAR, isCash));
                 continue;
             }
-            ValuationSnapshot s = stockUsd(p) ? snaps.get(symbol) : null;
+            ValuationSnapshot s = AccountPositions.stockUsd(p) ? snaps.get(symbol) : null;
             if (s != null && s.lastPrice() != null && s.lastPrice().signum() > 0 && snapshotIsClose) {
                 out.add(new ValuedPosition(p, id, s.lastPrice(), PriceSource.SNAPSHOT, isCash));
             } else {
@@ -204,40 +204,12 @@ public class AccountSnapshotService {
         return now.isBefore(next.atTime(SnapshotWindow.CLOSES).atZone(zone));
     }
 
-    /** 盈透持仓 → 本系统标的：先按 conId；没绑过的美股按代码（空格→点）找，找到就记下 conId。 */
-    Long instrumentId(Position p) {
-        Long conId = parseLong(p.brokerRef());
-        if (conId != null) {
-            Optional<Long> bound = instruments.findIdByIbkrConId(conId);
-            if (bound.isPresent()) {
-                return bound.get();
-            }
-        }
-        if (!stockUsd(p) || p.symbol() == null) {
-            return null;
-        }
-        Optional<InstrumentRow> row = instruments.find(Instrument.us(normalize(p.symbol())));
-        if (row.isEmpty()) {
-            return null;
-        }
-        if (conId != null) {
-            try {
-                if (!instruments.bindIbkrConId(row.get().id(), conId)) {
-                    log.warn("{} 在库里已绑定了别的盈透 conId，本次按代码匹配，未改绑", row.get().symbol());
-                }
-            } catch (RuntimeException e) {
-                log.warn("{} 记录盈透 conId 失败：{}", row.get().symbol(), e.toString());
-            }
-        }
-        return row.get().id();
-    }
-
     private Map<String, ValuationSnapshot> snapshotPrices(List<String> symbols) {
         if (symbols.isEmpty()) {
             return Map.of();
         }
         try {
-            List<ValuationSnapshot> got = await(market.snapshots(symbols.stream().distinct().map(Instrument::us).toList()));
+            List<ValuationSnapshot> got = AccountPositions.await(market.snapshots(symbols.stream().distinct().map(Instrument::us).toList()));
             Map<String, ValuationSnapshot> m = new LinkedHashMap<>();
             got.forEach(v -> m.putIfAbsent(v.instrument().symbol(), v));
             return m;
@@ -247,41 +219,10 @@ public class AccountSnapshotService {
         }
     }
 
-    private Map<Long, String> holdingSymbols() {
-        List<Long> ids = pool.findAll().stream().filter(r -> r.role() == PoolRole.HOLDING).map(PoolRow::instrumentId).toList();
-        Map<Long, String> m = new LinkedHashMap<>();
-        instruments.findByIds(ids).forEach(r -> m.put(r.id(), r.symbol()));
-        return m;
-    }
-
     private static String sources(List<ValuedPosition> valued) {
         Map<PriceSource, Long> n = new EnumMap<>(PriceSource.class);
         valued.forEach(v -> n.merge(v.priceSource(), 1L, Long::sum));
         return "K线 " + n.getOrDefault(PriceSource.BAR, 0L) + " / 快照 " + n.getOrDefault(PriceSource.SNAPSHOT, 0L)
                 + " / 缺价 " + n.getOrDefault(PriceSource.NONE, 0L);
-    }
-
-    static String normalize(String symbol) {
-        return symbol == null ? null : symbol.trim().replace(' ', '.');
-    }
-
-    private static boolean stockUsd(Position p) {
-        return "STK".equals(p.securityType()) && "USD".equals(p.currency());
-    }
-
-    private static Long parseLong(String s) {
-        try {
-            return s == null ? null : Long.parseLong(s.trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private static <T> T await(CompletableFuture<T> f) throws Exception {
-        try {
-            return f.get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (ExecutionException e) {
-            throw e.getCause() instanceof Exception c ? c : e;
-        }
     }
 }

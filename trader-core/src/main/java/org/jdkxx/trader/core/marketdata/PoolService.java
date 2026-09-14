@@ -90,6 +90,11 @@ public class PoolService {
         return removed;
     }
 
+    /** 池被别处直接改动后调用（持仓同步），触发实时订阅对账。 */
+    public void notifyChanged() {
+        runHook();
+    }
+
     /** 库里没有的代码：向富途解析，认识（brokerId≠0）就建档。 */
     private InstrumentRow register(Instrument instrument) {
         InstrumentStatic s;
