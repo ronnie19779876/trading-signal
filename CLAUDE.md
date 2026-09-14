@@ -115,9 +115,9 @@ storage → common ；ai → common
 
 ## 当前状态
 
-**第 3 期「账户与持仓」已交付，生产跑 2.0.1**（设计与实测见 ARCHITECTURE §16）。
+**第 3 期「账户与持仓」已交付，生产跑 2.0.2**（第 3 期见 ARCHITECTURE §16，2.0.2 全量审查后的修复见 §17）。
 每一期的设计决策、实测结论与已知边界都在
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~16 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~17 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
 
 - 数据规模：521 只标的、58.8 万根日 K（池/持仓/基准 20 年深度）、3.7 万条复权因子、
   5052 天交易日历（2006 起）、2.5 万期财报、逐日估值快照。
