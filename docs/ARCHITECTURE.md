@@ -407,5 +407,6 @@ POOL 升 HOLDING 并记下原角色、清仓后原为 POOL 的回 POOL、其余�
 持仓同步要先看计划再二次确认执行。SPY 同日由 HOLDING 改为 BENCHMARK（§14.1）。
 开发实例实测：不暂停订阅改池，开发实例订阅仍为 0；快照对账四项 OK，持有的基准按基准保留；审计与巡检账户段通过。
 
-已知问题（早于第 3 期）：前端用 history 路由，但后端没有 SPA 回退，直接打开 `/marketdata`、`/fundamentals`、`/account`
-这类深链接会 404，从首页点进去正常。
+2.0.1 修掉的早期问题：前端用 history 路由，但后端原先没有 SPA 回退，直接打开或刷新 `/marketdata`、`/fundamentals`、`/account`
+这类深链接会 404（从首页点进去正常）。现在 `SpaForwardController` 把单段、不含点、不是 api / actuator / error 的路径
+转发给 index.html；测试逐个核对前端路由表，新增多段路由会失败提醒。

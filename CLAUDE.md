@@ -105,11 +105,12 @@ storage → common ；ai → common
 | 开发实例运行中跑 `./mvnw ... verify`（包括带 `-Dtrader.integration=true` 的集成测试）会重打 `trader-app/target/trader-app.jar`，正在用它的 JVM 类加载失败；2026-09-14 实测关停时 `NoClassDefFoundError: logback ThrowableProxy`，关停线程死掉、进程卡住不退 | 跑 verify / 集成测试 / 打包前先停开发实例；只跑单测用 `test` 阶段（不打包）。已卡住的只能发信号结束 |
 | 池变动钩子触发的实时订阅对账原先**不看 `auto-subscribe`**：开发实例上加减池成员（手工或持仓同步）会让开发实例也订阅实时报价，与生产同时订（第 2 期遗留，2.0.0 修掉） | 钩子改走 `QuoteSubscriptionService.onPoolChanged`：`auto-subscribe=false` 且没有订阅时不对账；新加池变动钩子时别再直接挂 `reconcile` |
 | 深度回补会把券商的脏 K 线**重新拉回来**：2026-09-14 把 SPY 改成 BENCHMARK，`POST /api/pool` 自动重新回补 20 年，1.1.0 已订正的 3 根假日脏 K 线又回来了 | 改池角色或加池都会触发深度回补；之后看巡检的 `phantomBars`，按提示 `POST /api/bars/cleanup/phantom` 先试跑再订正 |
+| 前端 history 路由在后端没有回退时，直接打开或刷新深链接是 404，但从首页点进去完全正常，页面自测发现不了（2.0.1 前一直如此） | `SpaForwardController` 转发单段路径；新增前端路由保持单段、不含点，`SpaForwardControllerTest` 会核对 |
 | 新增 `@Scheduled` 用的配置项只写在 `MarketDataProperties` 的 `@DefaultValue` 上不够——**占位符解析不看记录默认值**。开发实例 `schedule-enabled=false` 不装配调度器，本地全绿、一上生产就起不来 | 新 cron 必须同时写进 jar 内 `application.yml`；`ScheduledPlaceholdersTest` 会守住这条 |
 
 ## 当前状态
 
-**第 3 期「账户与持仓」已交付，生产跑 2.0.0**（设计与实测见 ARCHITECTURE §16）。
+**第 3 期「账户与持仓」已交付，生产跑 2.0.1**（设计与实测见 ARCHITECTURE §16）。
 每一期的设计决策、实测结论与已知边界都在
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~16 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
 

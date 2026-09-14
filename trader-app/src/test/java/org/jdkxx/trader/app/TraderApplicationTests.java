@@ -55,6 +55,20 @@ class TraderApplicationTests {
                 .andExpect(jsonPath("$", hasSize(0)));
     }
 
+    /** 在真实的处理器映射下核对：深链接转发给首页，actuator 与接口不被回退抢走。 */
+    @Test
+    void 前端深链接回退不抢接口与actuator() throws Exception {
+        mvc.perform(get("/account"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl("/index.html"));
+        mvc.perform(get("/actuator"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$._links").exists());
+        mvc.perform(get("/api/system/info"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.application").value("trading-signal"));
+    }
+
     @Test
     void 健康检查为UP且网关指标存在() throws Exception {
         mvc.perform(get("/actuator/health"))

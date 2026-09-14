@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2.0.1（2026-09-14 发布）
+
+- 修：前端深链接 404。前端用 history 路由，后端原先没有回退，直接打开或刷新 `/account`、`/marketdata`、`/fundamentals`
+  都是 404（从首页点进去正常，第 0 期起就有）。新增 `SpaForwardController`：单段、不含点、不是 api / actuator / error 的路径
+  转发给 index.html。`SpaForwardControllerTest` 核对前端路由表里的每个路径都能深链接打开。
+
 ## 2.0.0（2026-09-14 发布）
 
 第 3 期「账户与持仓」，设计与实测见 ARCHITECTURE §16。
