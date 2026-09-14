@@ -124,6 +124,28 @@ class JobsHealthIndicatorTest {
     }
 
     @Test
+    void 账户快照停摆时降级() {
+        JobRunRepository r = repo(List.of(
+                row(Jobs.DAILY_INCREMENT, "OK", NOW.minusSeconds(3600)),
+                row(Jobs.ACCOUNT_SNAPSHOT, "OK", NOW.minusSeconds(6 * 86400))), true);
+        when(r.succeededSince(eq(Jobs.ACCOUNT_SNAPSHOT), any())).thenReturn(false);
+
+        Health h = indicator(r).health();
+
+        assertThat(h.getStatus()).isEqualTo(GatewaysHealthIndicator.DEGRADED);
+        assertThat(h.getDetails()).containsKey("accountSnapshotOverdue");
+    }
+
+    @Test
+    void 账户快照从未跑过不算降级() {
+        Health h = indicator(repo(List.of(
+                row(Jobs.DAILY_INCREMENT, "OK", NOW.minusSeconds(3600))), true)).health();
+
+        assertThat(h.getStatus()).isEqualTo(Status.UP);
+        assertThat(h.getDetails().get(Jobs.ACCOUNT_SNAPSHOT)).isEqualTo("从未跑过");
+    }
+
+    @Test
     void 查库出错也不让健康端点报错() {
         JobRunRepository r = mock(JobRunRepository.class);
         when(r.latestPerJob()).thenThrow(new IllegalStateException("db down"));

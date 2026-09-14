@@ -13,6 +13,8 @@ public final class Jobs {
     public static final String FINANCIALS_REFRESH = "FINANCIALS_REFRESH";
     /** 当天补偿检查本身（不走作业线程，只写一行运行记录；补跑的作业仍记在各自的作业名下）。 */
     public static final String CATCHUP_CHECK = "CATCHUP_CHECK";
+    /** 账户与持仓的每日快照（第 3 期）。 */
+    public static final String ACCOUNT_SNAPSHOT = "ACCOUNT_SNAPSHOT";
 
     private Jobs() {
     }

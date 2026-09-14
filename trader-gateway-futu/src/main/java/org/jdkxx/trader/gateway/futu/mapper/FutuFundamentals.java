@@ -48,6 +48,7 @@ public final class FutuFundamentals {
                     ? Instant.ofEpochSecond((long) b.getUpdateTimestamp())
                     : Instant.now();
             BigDecimal turnoverRate = b.hasTurnoverRate() ? dec(b.getTurnoverRate()) : null;
+            BigDecimal lastPrice = b.getCurPrice() > 0 ? dec(b.getCurPrice()) : null;
 
             if (s.hasEquityExData()) {
                 QotGetSecuritySnapshot.EquitySnapshotExData e = s.getEquityExData();
@@ -65,7 +66,7 @@ public final class FutuFundamentals {
                         dec(e.getNetProfit()),
                         dec(e.getDividendTTM()),
                         dec(e.getDividendRatioTTM()),
-                        turnoverRate, null, null));
+                        turnoverRate, null, null, lastPrice));
             } else if (s.hasTrustExData()) {
                 QotGetSecuritySnapshot.TrustSnapshotExData t = s.getTrustExData();
                 boolean hasNav = t.getNetAssetValue() != 0;   // 富途对 REITs 不给净值，用 0 占位；真 ETF 才有
@@ -78,12 +79,13 @@ public final class FutuFundamentals {
                         dec(t.getDividendYield()),
                         turnoverRate,
                         hasNav ? dec(t.getNetAssetValue()) : null,
-                        hasNav ? dec(t.getPremium()) : null));
+                        hasNav ? dec(t.getPremium()) : null,
+                        lastPrice));
             } else {
                 // 指数、窝轮、期权等没有估值口径，只记标识与停牌，交由上层决定要不要落库
                 out.add(new ValuationSnapshot(instrument, asOf, b.getIsSuspend(),
                         null, null, null, null, null, null, null, null, null, null, null, null, null,
-                        turnoverRate, null, null));
+                        turnoverRate, null, null, lastPrice));
             }
         }
         return out;

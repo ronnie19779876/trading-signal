@@ -77,7 +77,8 @@ public class ValuationRepository {
                         rs.getBigDecimal("pe"), rs.getBigDecimal("pe_ttm"), rs.getBigDecimal("pb"), rs.getBigDecimal("eps"),
                         rs.getBigDecimal("net_asset_per_share"), rs.getBigDecimal("net_asset"), rs.getBigDecimal("net_profit"),
                         rs.getBigDecimal("dividend_ttm"), rs.getBigDecimal("dividend_yield_ttm"),
-                        rs.getBigDecimal("turnover_rate"), rs.getBigDecimal("nav_per_share"), rs.getBigDecimal("premium")),
+                        rs.getBigDecimal("turnover_rate"), rs.getBigDecimal("nav_per_share"), rs.getBigDecimal("premium"),
+                        null),
                 instrumentId, Date.valueOf(from), Date.valueOf(to));
     }
 

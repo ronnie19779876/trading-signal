@@ -120,6 +120,27 @@
 
 K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, turnoverRate(小数), changeRate(百分数), pe, blank`。
 
+## 账户与持仓（第 3 期）
+
+只读盈透。账户号只在服务端内存里，接口只给脱敏形式（`accountMask`），库里存的是带密钥的 HMAC（`accountKey`）。
+快照每个交易日美东 18:00 自动拍，21:00 补偿检查兜底；同一账户同一天重拍覆盖。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `POST /api/account/snapshot?force=false` | 账户快照作业：持仓 + 资金汇总 + 按收盘价估值 + 对账。**只能在快照窗口内拍**（交易日美东 16:15 至次日 04:00），窗口外 409——盈透只给当前持仓，过去的日子补不回来。`force=true` 只在开发环境可用，按最近一个已收盘交易日口径拍，用于验证 |
+| `GET /api/account/snapshots/latest` | 最新一份快照：`snapshot`（资金、本系统估值 `positionValue`、`reconStatus`、`recon` 各项明细）+ `positions`；还没有 → 404 |
+| `GET /api/account/snapshots?from&to` | 快照序列（默认最近 90 天），不含持仓明细 |
+
+持仓的 `priceSource`：`BAR` 当日 K 线收盘；`SNAPSHOT` 富途快照价（库里没有当日 K 线的持仓兜底；收盘后快照价冻结在当日收盘，只在下一个交易日 04:00 前采用）；`NONE` 缺价。
+`cashEquivalent=true` 是配置里的现金管理工具：计入市值，不进池、不参与持仓集合核对。
+
+对账四项，`reconStatus` 取最差：
+
+- `identity`：现金 + 股票市值 + 应计股息 = 净值，差 ≤ 1 美元 OK、≤ 净值 0.1% WARN、否则 FAIL（只适用于纯股票账户）；
+- `marketValue`：Σ 数量 × 收盘价 对比盈透股票市值，≤ 0.2% OK、≤ 1% WARN、否则 FAIL；有持仓缺价时 WARN；
+- `holdings`：持有的股票与池里的 HOLDING 角色一致，不一致或库里没有该标的时 WARN（步骤 3 起自动维护）；
+- `otherAssets`：非股票持仓不参与估值，有就 WARN。
+
 ## 实时报价（第 2 期·步骤 2，不落库）
 
 报价里有三个价格字段，别混用：`price` 是按时段取的有效价，`rthPrice` 是常规时段价（盘前盘后冻结在上个收盘），

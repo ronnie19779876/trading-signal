@@ -74,6 +74,17 @@ public class InstrumentRepository {
         jdbc.update("UPDATE instrument SET resolve_status = 'UNRESOLVED', updated_at = now() WHERE id = ?", id);
     }
 
+    /** 按盈透 conId 找标的 id。 */
+    public Optional<Long> findIdByIbkrConId(long conId) {
+        return jdbc.query("SELECT id FROM instrument WHERE ibkr_con_id = ?", (rs, i) -> rs.getLong(1), conId).stream().findFirst();
+    }
+
+    /** 记下标的的盈透 conId；该标的已绑定了别的 conId 时不覆盖，返回 false。 */
+    public boolean bindIbkrConId(long id, long conId) {
+        return jdbc.update("UPDATE instrument SET ibkr_con_id = ?, updated_at = now() WHERE id = ? AND (ibkr_con_id IS NULL OR ibkr_con_id = ?)",
+                conId, id, conId) == 1;
+    }
+
     public long count() {
         Long n = jdbc.queryForObject("SELECT count(*) FROM instrument", Long.class);
         return n == null ? 0 : n;

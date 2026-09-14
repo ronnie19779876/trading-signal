@@ -1,5 +1,6 @@
 package org.jdkxx.trader.app;
 
+import org.jdkxx.trader.core.account.AccountScheduler;
 import org.jdkxx.trader.core.marketdata.MarketDataScheduler;
 import org.junit.jupiter.api.Test;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -31,7 +32,7 @@ class ScheduledPlaceholdersTest {
     void 调度里用到的占位符在配置里都有值() throws Exception {
         Map<String, Object> flat = flatten(loadYaml());
         List<String> missing = new ArrayList<>();
-        for (Method m : MarketDataScheduler.class.getDeclaredMethods()) {
+        for (Method m : scheduledMethods()) {
             Scheduled s = m.getAnnotation(Scheduled.class);
             if (s == null) {
                 continue;
@@ -48,6 +49,15 @@ class ScheduledPlaceholdersTest {
             }
         }
         assertThat(missing).as("这些占位符在 application.yml 里没有值，生产（调度开启）会起不来").isEmpty();
+    }
+
+    /** 所有带 {@code @Scheduled} 的调度类。新增调度类必须加到这里，否则它的占位符不受检查。 */
+    private static List<Method> scheduledMethods() {
+        List<Method> all = new ArrayList<>();
+        for (Class<?> type : List.of(MarketDataScheduler.class, AccountScheduler.class)) {
+            all.addAll(List.of(type.getDeclaredMethods()));
+        }
+        return all;
     }
 
     private static Map<String, Object> loadYaml() throws Exception {

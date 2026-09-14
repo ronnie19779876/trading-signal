@@ -2,13 +2,17 @@ package org.jdkxx.trader.app.integration;
 
 import com.futu.openapi.pb.GetGlobalState;
 import org.jdkxx.trader.domain.AccountRef;
+import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.Market;
+import org.jdkxx.trader.domain.ValuationSnapshot;
 import org.jdkxx.trader.gateway.GatewayState;
 import org.jdkxx.trader.gateway.futu.FutuGateway;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import java.time.Duration;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -42,6 +46,32 @@ class FutuGatewayIT {
 
             gateway.disconnect();
             assertThat(gateway.status().state()).isEqualTo(GatewayState.DISCONNECTED);
+        }
+    }
+
+    /**
+     * 快照价与时间戳（账户快照给库里没有当日 K 线的持仓兜底估值时用）。只读，只打印不断言口径：
+     * 用来实测收盘后/休市时 lastPrice 是不是冻结在上个收盘、asOf 落在哪一天。
+     */
+    @Test
+    void 快照价与时间戳() throws Exception {
+        String host = IntegrationEnv.env("TRADER_FUTU_HOST");
+        int port = Integer.parseInt(IntegrationEnv.env("TRADER_FUTU_PORT"));
+        ZoneId et = ZoneId.of("America/New_York");
+
+        try (FutuGateway gateway = new FutuGateway(IntegrationEnv.futu(host, port, Duration.ofSeconds(2)))) {
+            gateway.connect().get(20, TimeUnit.SECONDS);
+            List<ValuationSnapshot> snaps = gateway.snapshots(
+                    List.of(Instrument.us("SPY"), Instrument.us("AAPL"), Instrument.us("BIL"))).get(20, TimeUnit.SECONDS);
+
+            assertThat(snaps).hasSize(3);
+            System.out.println("[IT] 此刻美东 " + ZonedDateTime.now(et));
+            for (ValuationSnapshot s : snaps) {
+                assertThat(s.lastPrice()).isNotNull().isPositive();
+                System.out.println("[IT] futu snapshot " + s.instrument().symbol() + " lastPrice=" + s.lastPrice()
+                        + " asOf=" + s.asOf() + " asOfET=" + s.asOf().atZone(et) + " suspended=" + s.suspended());
+            }
+            gateway.disconnect();
         }
     }
 }

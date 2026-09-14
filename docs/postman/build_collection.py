@@ -266,6 +266,20 @@ ENDPOINTS = [
         ],
     },
     {
+        "folder": "账户与持仓（第 3 期）",
+        "items": [
+            {"name": "最新账户快照", "method": "GET", "path": "/api/account/snapshots/latest",
+             "desc": "资金、本系统估值、对账明细与持仓（priceSource：BAR/SNAPSHOT/NONE）。账户号只给脱敏形式。还没有快照 → 404。",
+             "tests": ['pm.test("HTTP 200 或 404（还没有快照）", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));']},
+            {"name": "快照序列", "method": "GET", "path": "/api/account/snapshots", "query": [{"key": "from", "value": "2026-09-01"}, {"key": "to", "value": "2026-09-30"}],
+             "desc": "默认最近 90 天，不含持仓明细。",
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
+            {"name": "拍账户快照（异步作业，会写库）", "method": "POST", "path": "/api/account/snapshot", "query": [{"key": "force", "value": "false"}],
+             "desc": "只能在快照窗口内拍（交易日美东 16:15 至次日 04:00），窗口外 409；force=true 只在开发环境可用。会写库，不要对生产批量跑。",
+             "tests": ['pm.test("HTTP 200（已提交）或 409（窗口外 / 有作业在跑）", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));']},
+        ],
+    },
+    {
         "folder": "Actuator",
         "items": [
             {

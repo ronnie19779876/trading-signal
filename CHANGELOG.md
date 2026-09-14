@@ -7,6 +7,13 @@
 - 步骤 1：新增 `AccountGateway` 端口（持仓、资金汇总，只读）与盈透实现。持仓走 `reqPositionsMulti`、资金走一次性
   `reqAccountSummary`，都是收齐即取消；汇总剔除明文账户号（`$LEDGER-AccountOrGroup`）；同一账户并发的汇总请求合并成一次。
   `IbkrAccountsTest` 9 例（账户号剔除与无效数量报错两处已反证），`IbkrGatewayIT` 新增只读账户用例并对真实网关跑通。
+- 步骤 2：账户快照与对账。V9 新增 `account_snapshot`、`position_snapshot`、`instrument.ibkr_con_id` 与 `pool_member.source / return_role`。
+  作业 `ACCOUNT_SNAPSHOT` 美东 18:00 工作日、21:00 补拍；快照窗口交易日 16:15 至次日 04:00，窗口外手工拍 409，`force=true` 仅开发环境。
+  持仓按 conId（首次按代码，空格→点）映射；价格取当日 K 线，库里没有的用富途快照价兜底（`ValuationSnapshot` 新增 `lastPrice`）。
+  对账四项：资金恒等式、市值、持仓集合与 HOLDING、非股票持仓。账户号库里只存带密钥的 HMAC（`trader.account.key-secret`，外置配置）。
+  接口 `POST /api/account/snapshot`、`GET /api/account/snapshots/latest`、`GET /api/account/snapshots`；`jobs` 健康指标纳入账户快照（逾期 120 小时）。
+  碰撞重试抽成 `ScheduledSubmitter`，行情与账户调度共用；`ScheduledPlaceholdersTest` 覆盖账户调度。
+  开发实例实测：8 条持仓零缺价，恒等式差 0.00，市值对账差 0.0028%。
 
 ## 1.2.0（2026-09-14 发布）
 

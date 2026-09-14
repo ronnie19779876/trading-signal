@@ -25,7 +25,8 @@ import java.util.Map;
  * <ul>
  *   <li>任一作业最近一次是 FAILED 或 SKIPPED；</li>
  *   <li>每日增量逾期未跑——距上次成功超过 {@link #OVERDUE} 且期间有过交易日收盘；</li>
- *   <li>补偿检查停摆——跑过却超过 {@link #OVERDUE} 没成功（它每个工作日都写一行，含非交易日；刚上线从未跑过不算）。</li>
+ *   <li>补偿检查停摆——跑过却超过 {@link #OVERDUE} 没成功（它每个工作日都写一行，含非交易日；刚上线从未跑过不算）；</li>
+ *   <li>账户快照停摆——跑过却超过 {@link #ACCOUNT_OVERDUE} 没成功（只在交易日跑，长周末周五到周二正好 96 小时，所以放宽）。</li>
  * </ul>
  * 只在开了定时跑批的实例上装配：开发实例不跑批，报"逾期"没有意义。
  */
@@ -35,10 +36,13 @@ public class JobsHealthIndicator implements HealthIndicator {
 
     /** 每日增量超过这么久没成功就算逾期。跨过周末与假日仍安全（周五跑完到周一收盘不足 96 小时）。 */
     static final Duration OVERDUE = Duration.ofHours(96);
+    /** 账户快照的逾期阈值。 */
+    static final Duration ACCOUNT_OVERDUE = Duration.ofHours(120);
 
     /** 参与"最近一次是否失败"判断的作业。 */
     private static final List<String> WATCHED = List.of(
-            Jobs.DAILY_INCREMENT, Jobs.VALUATION_SNAPSHOT, Jobs.UNIVERSE_SYNC, Jobs.FINANCIALS_REFRESH, Jobs.CATCHUP_CHECK);
+            Jobs.DAILY_INCREMENT, Jobs.VALUATION_SNAPSHOT, Jobs.UNIVERSE_SYNC, Jobs.FINANCIALS_REFRESH, Jobs.CATCHUP_CHECK,
+            Jobs.ACCOUNT_SNAPSHOT);
 
     private final JobRunRepository jobs;
     /**
@@ -85,6 +89,11 @@ public class JobsHealthIndicator implements HealthIndicator {
             }
             if (latest.containsKey(Jobs.CATCHUP_CHECK) && !jobs.succeededSince(Jobs.CATCHUP_CHECK, since)) {
                 b.withDetail("catchupOverdue", "补偿检查超过 " + OVERDUE.toHours() + " 小时没有成功跑过");
+                degraded = true;
+            }
+            if (latest.containsKey(Jobs.ACCOUNT_SNAPSHOT)
+                    && !jobs.succeededSince(Jobs.ACCOUNT_SNAPSHOT, clock.instant().minus(ACCOUNT_OVERDUE))) {
+                b.withDetail("accountSnapshotOverdue", "账户快照超过 " + ACCOUNT_OVERDUE.toHours() + " 小时没有成功跑过");
                 degraded = true;
             }
         } catch (RuntimeException e) {

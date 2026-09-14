@@ -103,6 +103,13 @@ trader:
       pause-during-refresh: true
       stream-interval: 1s
       unsubscribe-min-age: 61s
+  # 账户与持仓（第 3 期）。key-secret（账户号 HMAC 密钥）与 cash-equivalents（现金管理工具代码）属于敏感配置，
+  # 只放 config/secrets.yml / trader.env（TRADER_ACCOUNT_KEY_SECRET、TRADER_ACCOUNT_CASH_EQUIVALENTS）
+  account:
+    enabled: true
+    snapshot-cron: "0 0 18 * * MON-FRI"    # 美东 18:00：排在增量 17:30、估值 17:40 之后；21:00 补偿检查兜底
+    value-tolerance: 0.002                  # 市值对账容差（比例），超过 5 倍记 FAIL
+    identity-tolerance: 1                   # 资金恒等式容差（美元）
   ai:
     api-key: ${OPENAI_API_KEY:}
     model: gpt-5.6-sol

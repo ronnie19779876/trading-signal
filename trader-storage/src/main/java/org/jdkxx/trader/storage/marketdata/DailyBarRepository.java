@@ -84,6 +84,17 @@ public class DailyBarRepository {
                         rs.getDate("mx") == null ? null : rs.getDate("mx").toLocalDate()));
     }
 
+    /** 指定交易日这些标的的收盘价（不复权）；没有当日 K 线的不在结果里。 */
+    public Map<Long, java.math.BigDecimal> closesOn(LocalDate date, Collection<Long> instrumentIds) {
+        Map<Long, java.math.BigDecimal> m = new HashMap<>();
+        if (instrumentIds.isEmpty()) {
+            return m;
+        }
+        jdbc.query("SELECT instrument_id, close FROM daily_bar WHERE trade_date = ? AND instrument_id = ANY (?)",
+                rs -> { m.put(rs.getLong(1), rs.getBigDecimal(2)); }, Date.valueOf(date), (Object) instrumentIds.toArray(Long[]::new));
+        return m;
+    }
+
     // ------------------------------------------------------------------ 审计查询
 
     /** 指定交易日有 K 线的标的 id。 */

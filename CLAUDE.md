@@ -100,6 +100,9 @@ storage → common ；ai → common
 | 盈透账户汇总的 `$LEDGER-AccountOrGroup` 值是**明文账户号**（2026-09-14 探针首跑就漏打过一次） | 映射时剔除（`IbkrAccounts`），日志、异常、返回都不带；临时探针脚本也要打码 |
 | 盈透 `reqAccountUpdates` 同一账户同时只允许一个客户端订阅；`reqPnL`/`reqPnLSingle` 休市时首条不完整、行情连上后改用盘外价重算 | 持仓用 `reqPositionsMulti`、资金用一次性 `reqAccountSummary`；盈亏不进快照 |
 | 盈透持仓的类别股代码带空格（`BRK B`），`primaryExch` 为 null | 映射以 conId 为主，首次按"空格→点"找标的 |
+| 富途快照的 `updateTimestamp` 跟着盘后/夜盘走，`curPrice` 却冻结在常规时段收盘（实测美东周日 20:52：SPY 时间戳是周日，价格 764.29 = 周五 K 线收盘） | 判断快照价属于哪天不能看时间戳；账户快照只在下一个交易日 04:00（美东）前采用快照价 |
+| 开发实例跑全量增量时，轮转每批订阅 90 只，而生产实例的实时订阅占着同一账户的额度（2026-09-14 实测 21/100），批量订阅被拒，开发增量 521 只失败 450 | 生产在跑时，开发实例不要跑全量增量/轮转；要验证 K 线就对单只 `POST /api/bars/backfill/{symbol}` |
+| 开发实例运行中跑 `./mvnw ... verify`（包括带 `-Dtrader.integration=true` 的集成测试）会重打 `trader-app/target/trader-app.jar`，正在用它的 JVM 类加载失败；2026-09-14 实测关停时 `NoClassDefFoundError: logback ThrowableProxy`，关停线程死掉、进程卡住不退 | 跑 verify / 集成测试 / 打包前先停开发实例；只跑单测用 `test` 阶段（不打包）。已卡住的只能发信号结束 |
 | 新增 `@Scheduled` 用的配置项只写在 `MarketDataProperties` 的 `@DefaultValue` 上不够——**占位符解析不看记录默认值**。开发实例 `schedule-enabled=false` 不装配调度器，本地全绿、一上生产就起不来 | 新 cron 必须同时写进 jar 内 `application.yml`；`ScheduledPlaceholdersTest` 会守住这条 |
 
 ## 当前状态
