@@ -15,10 +15,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.IntSupplier;
 
 /**
- * 序列号 → 待完成回复（每条连接一张表；序列号按连接独立递增）。
+ * 序列号 → 待完成回复（每条通道一张表）。
  *
  * <p>发送与登记的竞争：SDK 先返回 seq、我们再登记；极端情况下回复可能先于登记到达，
- * 所以先到的回复暂存在 early 表里，登记时先查它。
+ * 所以先到的回复暂存在 early 表里，登记时先查它。"查暂存 + 登记"与"查登记 + 暂存"各自在锁里做成一步，
+ * 否则回复落在两步之间会谁都拿不到、白白超时。
+ *
+ * <p><b>序列号按连接从 1 重新数</b>（javap 核实 FTAPI_Conn 的 nextPacketSN 每个实例从 1 起），
+ * 所以会话结束时要 {@link #reset}：暂存的旧回复作废，否则会配给新连接上同序列号的请求。
  * Future 的完成一律交给 dispatch 线程，SDK 回调线程不跑用户代码。
  */
 final class FutuReplyRegistry {
@@ -68,26 +72,36 @@ final class FutuReplyRegistry {
                     what + " 发送失败（" + channel + "通道返回 seq=" + seq + "，连接可能未就绪）", true));
             return future;
         }
-        Object earlyReply = early.remove(seq);
+        Object earlyReply;
+        synchronized (this) {
+            earlyReply = early.remove(seq);
+            if (earlyReply == null) {
+                pending.put(seq, entry);
+            }
+        }
         if (earlyReply != null) {
             finish(entry, earlyReply);
             return future;
         }
         entry.timeoutTask = scheduler.schedule(() -> {
-            if (pending.remove(seq) == entry) {
+            if (pending.remove(seq, entry)) {
                 dispatch.execute(() -> future.completeExceptionally(new RequestTimeoutException(Broker.FUTU, what)));
             }
         }, timeout.toMillis(), TimeUnit.MILLISECONDS);
-        pending.put(seq, entry);
         return future;
     }
 
     /** SDK 回调线程调用。 */
     void onReply(int seq, Object response) {
-        Entry<?> entry = pending.remove(seq);
+        Entry<?> entry;
+        synchronized (this) {
+            entry = pending.remove(seq);
+            if (entry == null) {
+                early.put(seq, response);
+            }
+        }
         if (entry == null) {
-            early.put(seq, response);
-            scheduler.schedule(() -> early.remove(seq), timeout.toMillis(), TimeUnit.MILLISECONDS);
+            scheduler.schedule(() -> early.remove(seq, response), timeout.toMillis(), TimeUnit.MILLISECONDS);
             return;
         }
         if (entry.timeoutTask != null) {
@@ -110,6 +124,14 @@ final class FutuReplyRegistry {
                 entry.future.completeExceptionally(e);
             }
         });
+    }
+
+    /** 会话结束：在途请求全部失败，暂存的回复作废（新连接的序列号从 1 重新数）。 */
+    void reset(Throwable error) {
+        synchronized (this) {
+            early.clear();
+        }
+        failAll(error);
     }
 
     void failAll(Throwable error) {

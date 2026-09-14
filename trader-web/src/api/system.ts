@@ -27,7 +27,7 @@ export interface SystemInfo {
 }
 
 export interface Health {
-  status: 'UP' | 'DOWN' | 'OUT_OF_SERVICE' | 'UNKNOWN'
+  status: 'UP' | 'DEGRADED' | 'DOWN' | 'OUT_OF_SERVICE' | 'UNKNOWN'
 }
 
 export async function getSystemInfo(): Promise<SystemInfo> {

@@ -1,6 +1,7 @@
 package org.jdkxx.trader.core.account;
 
 import org.jdkxx.trader.core.account.ValuedPosition.PriceSource;
+import org.jdkxx.trader.core.marketdata.SnapshotWindow;
 import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
 import org.jdkxx.trader.core.marketdata.jobs.JobContext;
 import org.jdkxx.trader.domain.AccountSummary;

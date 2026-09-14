@@ -2,6 +2,7 @@ package org.jdkxx.trader.core.marketdata.audit;
 
 import org.jdkxx.trader.core.marketdata.Jobs;
 import org.jdkxx.trader.core.marketdata.MarketDataProperties;
+import org.jdkxx.trader.core.marketdata.SnapshotWindow;
 import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
 import org.jdkxx.trader.domain.Broker;
@@ -190,7 +191,20 @@ public class BarAuditService {
                                 + "用 POST /api/bars/cleanup/phantom 先试跑再订正",
                 phantom.size(), head(phantomSamples, 20)));
 
-        // 10. 富途网关
+        // 10. 未落定的 K 线：收盘落定（16:15 ET）前写进来的当天那根，是盘中价。
+        // 2.0.2 起写库前按截止日过滤，不会再产生；之前留下的由下一次增量自动重拉覆盖，所以只提示。
+        ZoneId zone = ZoneId.of(props.zone());
+        List<DailyBarRepository.UnsettledBar> unsettled = bars.unsettledBars(zone, SnapshotWindow.OPENS, 1000);
+        List<String> unsettledSamples = unsettled.stream()
+                .map(u -> symbolOf(targets, u.instrumentId()) + " " + u.tradeDate()
+                        + "（写入于美东 " + u.fetchedAt().atZone(zone).toLocalDateTime().withNano(0) + "）").toList();
+        summary.put("unsettledBars", unsettled.size());
+        checks.add(new Check("unsettledBars", unsettled.isEmpty(), false,
+                unsettled.isEmpty() ? "没有收盘落定前写入的 K 线"
+                        : unsettled.size() + " 根 K 线在当天收盘落定（美东 16:15）前写入，可能是盘中价；下一次增量会自动重拉覆盖",
+                unsettled.size(), head(unsettledSamples, 20)));
+
+        // 11. 富途网关
         boolean futuUp = gateway instanceof BrokerGateway g && g.status().state() == GatewayState.CONNECTED;
         checks.add(new Check("gateway", futuUp, false, futuUp ? "富途网关已连接" : "富途网关未连接（" + Broker.FUTU + "）", 0, List.of()));
 

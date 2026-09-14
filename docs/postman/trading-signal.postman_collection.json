@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "trading-signal",
-    "description": "trading-signal REST 接口。先选环境（dev / prod），变量：baseUrl、broker（ibkr|futu）、symbol。所有请求只读或只影响网关连接状态，不涉及交易。集合由 docs/postman/build_collection.py 生成，勿手改。",
+    "description": "trading-signal REST 接口。先选环境（dev / prod），变量：baseUrl、broker（ibkr|futu）、symbol。各组里的 GET 只读；写操作集中在各组的「⚠ 写操作（改状态或触发跑批，别对生产整组跑）」子文件夹里（不涉及交易，但会改池、写库、触发跑批或断开网关）。所有请求都带 X-Trader-Client 头，服务端对缺这个头的写请求返回 403。集合由 docs/postman/build_collection.py 生成，勿手改。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -16,6 +16,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -61,6 +65,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -102,6 +110,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -140,6 +152,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -179,6 +195,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -223,6 +243,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -267,6 +291,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -304,83 +332,6 @@
           "response": []
         },
         {
-          "name": "手工断开",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/gateways/{{broker}}/disconnect",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "gateways",
-                "{{broker}}",
-                "disconnect"
-              ]
-            },
-            "description": "断开并停止重连。断开后看「网关状态列表」应为 DISCONNECTED，/actuator/health 为 DEGRADED（HTTP 仍 200）。"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"状态为 DISCONNECTED 或 DISABLED\", () => pm.expect(body.state).to.be.oneOf([\"DISCONNECTED\",\"DISABLED\"]));"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
-          "name": "手工连接",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/gateways/{{broker}}/connect",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "gateways",
-                "{{broker}}",
-                "connect"
-              ]
-            },
-            "description": "发起连接（异步）。几秒后看「网关状态列表」应回到 CONNECTED；未启用的网关返回 400。"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"200 或 400（未启用）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 400]));",
-                  "if (pm.response.code === 200) { pm.test(\"状态为 CONNECTING/RECONNECTING/CONNECTED\", () => pm.expect(pm.response.json().state).to.be.oneOf([\"CONNECTING\",\"RECONNECTING\",\"CONNECTED\"])); }"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
           "name": "最近连接事件",
           "request": {
             "method": "GET",
@@ -388,6 +339,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -433,6 +388,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -461,6 +420,96 @@
             }
           ],
           "response": []
+        },
+        {
+          "name": "⚠ 写操作（改状态或触发跑批，别对生产整组跑）",
+          "item": [
+            {
+              "name": "手工断开",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/gateways/{{broker}}/disconnect",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "gateways",
+                    "{{broker}}",
+                    "disconnect"
+                  ]
+                },
+                "description": "断开并停止重连。断开后看「网关状态列表」应为 DISCONNECTED，/actuator/health 为 DEGRADED（HTTP 仍 200）。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                      "const body = pm.response.json();",
+                      "pm.test(\"状态为 DISCONNECTED 或 DISABLED\", () => pm.expect(body.state).to.be.oneOf([\"DISCONNECTED\",\"DISABLED\"]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "手工连接",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/gateways/{{broker}}/connect",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "gateways",
+                    "{{broker}}",
+                    "connect"
+                  ]
+                },
+                "description": "发起连接（异步）。几秒后看「网关状态列表」应回到 CONNECTED；未启用的网关返回 400。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"200 或 400（未启用）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 400]));",
+                      "if (pm.response.code === 200) { pm.test(\"状态为 CONNECTING/RECONNECTING/CONNECTED\", () => pm.expect(pm.response.json().state).to.be.oneOf([\"CONNECTING\",\"RECONNECTING\",\"CONNECTED\"])); }"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
         }
       ]
     },
@@ -475,6 +524,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -513,6 +566,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -544,90 +601,6 @@
           "response": []
         },
         {
-          "name": "幽灵 K 线订正（先试跑）",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/bars/cleanup/phantom?apply=false",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "bars",
-                "cleanup",
-                "phantom"
-              ],
-              "query": [
-                {
-                  "key": "apply",
-                  "value": "false"
-                }
-              ]
-            },
-            "description": "列出落在交易日历之外的 K 线（券商在美股假日给过脏数据：成交额 0、价格离谱）。apply=false 只试跑，确认清单无误后再改 true 真删。"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"试跑不应删除\", () => { pm.expect(body.applied).to.eql(false); pm.expect(body.deleted).to.eql(0); });"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
-          "name": "交易日历回补（异步作业）",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/bars/calendar/backfill",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "bars",
-                "calendar",
-                "backfill"
-              ]
-            },
-            "description": "券商只能给到约 2016-09（实测请求 21 年与 27 年返回相同），更早的从池/持仓/基准的日 K 线反推。幂等。"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"有 jobId\", () => pm.expect(body.jobId).to.be.a(\"number\"));"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
           "name": "交易日历",
           "request": {
             "method": "GET",
@@ -635,6 +608,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -683,6 +660,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -727,6 +708,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -758,43 +743,6 @@
           "response": []
         },
         {
-          "name": "同步成分股（异步作业）",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/universe/sync",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "universe",
-                "sync"
-              ]
-            },
-            "description": "Wikipedia 标普 500 + 纳指 100 → instrument / index_constituent，SPY 交叉核对，富途静态信息解析。返回 jobId；已有作业在跑 → 409。"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"200 或 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));",
-                  "if (pm.response.code === 200) { pm.environment.set(\"jobId\", pm.response.json().jobId); }"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
           "name": "作业列表",
           "request": {
             "method": "GET",
@@ -802,6 +750,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -845,6 +797,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -881,6 +837,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -899,7 +859,7 @@
                 }
               ]
             },
-            "description": "index=SP500|NDX100，role=POOL|HOLDING 可筛选。"
+            "description": "index=SP500|NDX100，role=POOL|HOLDING|BENCHMARK 可筛选。"
           },
           "event": [
             {
@@ -924,6 +884,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -953,48 +917,6 @@
           "response": []
         },
         {
-          "name": "加入标的池（触发深度回补）",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/pool/{{symbol}}?role=POOL",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "pool",
-                "{{symbol}}"
-              ],
-              "query": [
-                {
-                  "key": "role",
-                  "value": "POOL"
-                }
-              ]
-            },
-            "description": "role=POOL|BENCHMARK。HOLDING 由盈透持仓自动维护，手工传 role=HOLDING → 409。加入后自动排深度回补作业（20 年，占 1 个历史额度）；池满或作业冲突 → 409。"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"200 / 404 / 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404, 409]));"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
           "name": "标的池",
           "request": {
             "method": "GET",
@@ -1002,6 +924,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -1014,7 +940,7 @@
                 "pool"
               ]
             },
-            "description": "POOL + HOLDING 及各自的 K 线覆盖。"
+            "description": "POOL + HOLDING + BENCHMARK 及各自的 K 线覆盖。"
           },
           "event": [
             {
@@ -1032,237 +958,6 @@
           "response": []
         },
         {
-          "name": "移出标的池",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/pool/{{symbol}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "pool",
-                "{{symbol}}"
-              ]
-            },
-            "description": "K 线保留，只移除池成员。"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"200 或 404\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
-          "name": "全量轮转拉 K 线（异步，约 8 分钟）",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/bars/refresh/universe?count=1000",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "bars",
-                "refresh",
-                "universe"
-              ],
-              "query": [
-                {
-                  "key": "count",
-                  "value": "1000"
-                }
-              ]
-            },
-            "description": "订阅 → getKL(count) → 反订阅，零历史额度。count=1000 首拉、10 增量。"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"200 或 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
-          "name": "深度回补一只（异步，占额度）",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/bars/backfill/{{symbol}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "bars",
-                "backfill",
-                "{{symbol}}"
-              ]
-            },
-            "description": "requestHistoryKL 2006 年起分页 + 复权因子。"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"200 / 404 / 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404, 409]));"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
-          "name": "深度回补所有待补的池/持仓（异步）",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/bars/backfill",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "bars",
-                "backfill"
-              ]
-            },
-            "description": "按额度依次回补，额度用尽即停并标 PARTIAL。"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"200 或 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
-          "name": "复权因子刷新（异步；all=true 全量约 5 分钟）",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/bars/rehab/refresh?all=false",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "bars",
-                "rehab",
-                "refresh"
-              ],
-              "query": [
-                {
-                  "key": "all",
-                  "value": "false"
-                }
-              ]
-            },
-            "description": "all=false：池/持仓 + 全量里 7 天以上未刷新的；all=true：全量 518 只。限频 60/30s，不占历史额度。"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"200 或 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
-          "name": "每日增量（异步）",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/bars/increment",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "bars",
-                "increment"
-              ]
-            },
-            "description": "刷新交易日历 → 补缺口 → 刷新复权因子。"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"200 或 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
           "name": "K 线查询（不复权）",
           "request": {
             "method": "GET",
@@ -1270,6 +965,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -1321,6 +1020,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -1371,6 +1074,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -1401,40 +1108,531 @@
           "response": []
         },
         {
-          "name": "取消当前作业",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/jobs/cancel",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "jobs",
-                "cancel"
-              ]
-            },
-            "description": "只是置取消标志，作业在下一批边界停下。"
-          },
-          "event": [
+          "name": "⚠ 写操作（改状态或触发跑批，别对生产整组跑）",
+          "item": [
             {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
-                ]
-              }
+              "name": "幽灵 K 线订正（先试跑）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/bars/cleanup/phantom?apply=false",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "bars",
+                    "cleanup",
+                    "phantom"
+                  ],
+                  "query": [
+                    {
+                      "key": "apply",
+                      "value": "false"
+                    }
+                  ]
+                },
+                "description": "列出落在交易日历之外的 K 线（券商在美股假日给过脏数据：成交额 0、价格离谱）。apply=false 只试跑，确认清单无误后再改 true 真删。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                      "const body = pm.response.json();",
+                      "pm.test(\"试跑不应删除\", () => { pm.expect(body.applied).to.eql(false); pm.expect(body.deleted).to.eql(0); });"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "交易日历回补（异步作业）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/bars/calendar/backfill",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "bars",
+                    "calendar",
+                    "backfill"
+                  ]
+                },
+                "description": "券商只能给到约 2016-09（实测请求 21 年与 27 年返回相同），更早的从池/持仓/基准的日 K 线反推。幂等。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                      "const body = pm.response.json();",
+                      "pm.test(\"有 jobId\", () => pm.expect(body.jobId).to.be.a(\"number\"));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "同步成分股（异步作业）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/universe/sync",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "universe",
+                    "sync"
+                  ]
+                },
+                "description": "Wikipedia 标普 500 + 纳指 100 → instrument / index_constituent，SPY 交叉核对，富途静态信息解析。返回 jobId；已有作业在跑 → 409。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"200 或 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));",
+                      "if (pm.response.code === 200) { pm.environment.set(\"jobId\", pm.response.json().jobId); }"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "CSV 导入成分股（兜底，同步执行）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "text/plain"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/universe/import",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "universe",
+                    "import"
+                  ]
+                },
+                "description": "text/plain，每行 index_code,symbol[,name]，只在 Wikipedia 同步失败时用。⚠ 按指数整体替换：清单里没有的现任成分股会被记为退出，所以要给该指数的完整清单。示例请求体故意留空（解析不出任何行，什么都不改）。",
+                "body": {
+                  "mode": "raw",
+                  "raw": ""
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"200 或 400\", () => pm.expect(pm.response.code).to.be.oneOf([200, 400]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "加入标的池（触发深度回补）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/pool/{{symbol}}?role=POOL",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "pool",
+                    "{{symbol}}"
+                  ],
+                  "query": [
+                    {
+                      "key": "role",
+                      "value": "POOL"
+                    }
+                  ]
+                },
+                "description": "role=POOL|BENCHMARK。HOLDING 由盈透持仓自动维护，手工传 role=HOLDING → 409。加入后自动排深度回补作业（20 年，占 1 个历史额度）；池满或作业冲突 → 409。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"200 / 404 / 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404, 409]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "移出标的池",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/pool/{{symbol}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "pool",
+                    "{{symbol}}"
+                  ]
+                },
+                "description": "K 线保留，只移除池成员。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"200 或 404\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "全量轮转拉 K 线（异步，约 8 分钟）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/bars/refresh/universe?count=1000",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "bars",
+                    "refresh",
+                    "universe"
+                  ],
+                  "query": [
+                    {
+                      "key": "count",
+                      "value": "1000"
+                    }
+                  ]
+                },
+                "description": "订阅 → getKL(count) → 反订阅，零历史额度。count=1000 首拉、10 增量。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"200 或 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "深度回补一只（异步，占额度）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/bars/backfill/{{symbol}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "bars",
+                    "backfill",
+                    "{{symbol}}"
+                  ]
+                },
+                "description": "requestHistoryKL 2006 年起分页 + 复权因子。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"200 / 404 / 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404, 409]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "深度回补所有待补的池/持仓（异步）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/bars/backfill",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "bars",
+                    "backfill"
+                  ]
+                },
+                "description": "按额度依次回补，额度用尽即停并标 PARTIAL。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"200 或 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "复权因子刷新（异步；all=true 全量约 5 分钟）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/bars/rehab/refresh?all=false",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "bars",
+                    "rehab",
+                    "refresh"
+                  ],
+                  "query": [
+                    {
+                      "key": "all",
+                      "value": "false"
+                    }
+                  ]
+                },
+                "description": "all=false：池/持仓 + 全量里 7 天以上未刷新的；all=true：全量 518 只。限频 60/30s，不占历史额度。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"200 或 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "每日增量（异步）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/bars/increment",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "bars",
+                    "increment"
+                  ]
+                },
+                "description": "刷新交易日历 → 补缺口 → 刷新复权因子。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"200 或 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "取消当前作业",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/jobs/cancel",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "jobs",
+                    "cancel"
+                  ]
+                },
+                "description": "只是置取消标志，作业在下一批边界停下。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
             }
-          ],
-          "response": []
+          ]
         }
       ]
     },
@@ -1449,6 +1647,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -1480,28 +1682,31 @@
           "response": []
         },
         {
-          "name": "订阅对账（订池与持仓）",
+          "name": "订阅集合（轻量）",
           "request": {
-            "method": "POST",
+            "method": "GET",
             "header": [
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/quotes/subscriptions/reconcile",
+              "raw": "{{baseUrl}}/api/quotes/subscriptions",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
                 "quotes",
-                "subscriptions",
-                "reconcile"
+                "subscriptions"
               ]
             },
-            "description": "期望 = 池 ∪ 持仓；新增订阅、多余反订阅（未满 1 分钟延后）。网关未连接时 error 字段给出原因。"
+            "description": "desired / subscribed / paused；额度与推送统计看「订阅状态」。"
           },
           "event": [
             {
@@ -1511,7 +1716,7 @@
                 "exec": [
                   "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test(\"有 desired/subscribed\", () => { pm.expect(body.desired).to.be.a(\"number\"); pm.expect(body.subscribed).to.be.a(\"number\"); });"
+                  "pm.test(\"有 desired/subscribed/paused\", () => { pm.expect(body.desired).to.be.a(\"number\"); pm.expect(body.subscribed).to.be.a(\"number\"); pm.expect(body.paused).to.be.a(\"boolean\"); });"
                 ]
               }
             }
@@ -1526,6 +1731,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -1565,6 +1774,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -1594,78 +1807,134 @@
           "response": []
         },
         {
-          "name": "暂停订阅（释放额度）",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/quotes/subscriptions/pause",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "quotes",
-                "subscriptions",
-                "pause"
-              ]
-            },
-            "description": "反订阅全部并清空缓存。"
-          },
-          "event": [
+          "name": "⚠ 写操作（改状态或触发跑批，别对生产整组跑）",
+          "item": [
             {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
-          "name": "恢复订阅",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/quotes/subscriptions/resume",
-              "host": [
-                "{{baseUrl}}"
+              "name": "订阅对账（订池与持仓）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/quotes/subscriptions/reconcile",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "quotes",
+                    "subscriptions",
+                    "reconcile"
+                  ]
+                },
+                "description": "期望 = 池 ∪ 持仓；新增订阅、多余反订阅（未满 1 分钟延后）。网关未连接时 error 字段给出原因。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                      "const body = pm.response.json();",
+                      "pm.test(\"有 desired/subscribed\", () => { pm.expect(body.desired).to.be.a(\"number\"); pm.expect(body.subscribed).to.be.a(\"number\"); });"
+                    ]
+                  }
+                }
               ],
-              "path": [
-                "api",
-                "quotes",
-                "subscriptions",
-                "resume"
-              ]
+              "response": []
             },
-            "description": "重新对账。"
-          },
-          "event": [
             {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
-                ]
-              }
+              "name": "暂停订阅（释放额度）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/quotes/subscriptions/pause",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "quotes",
+                    "subscriptions",
+                    "pause"
+                  ]
+                },
+                "description": "反订阅全部并清空缓存。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "恢复订阅",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/quotes/subscriptions/resume",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "quotes",
+                    "subscriptions",
+                    "resume"
+                  ]
+                },
+                "description": "重新对账。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
             }
-          ],
-          "response": []
+          ]
         }
       ]
     },
@@ -1680,6 +1949,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -1718,6 +1991,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -1756,6 +2033,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -1794,6 +2075,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -1843,6 +2128,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -1885,88 +2174,101 @@
           "response": []
         },
         {
-          "name": "估值快照刷新（异步作业）",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/fundamentals/valuation/refresh",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "fundamentals",
-                "valuation",
-                "refresh"
-              ]
-            },
-            "description": "全量 ∪ 池 ∪ 持仓，一次 400 只，不占订阅与历史额度。返回 jobId；已有作业在跑 → 409。"
-          },
-          "event": [
+          "name": "⚠ 写操作（改状态或触发跑批，别对生产整组跑）",
+          "item": [
             {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"有 jobId\", () => pm.expect(body.jobId).to.be.a(\"number\"));"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
-          "name": "财报刷新（异步作业）",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/fundamentals/financials/refresh?all=false",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "fundamentals",
-                "financials",
-                "refresh"
-              ],
-              "query": [
+              "name": "估值快照刷新（异步作业）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fundamentals/valuation/refresh",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "fundamentals",
+                    "valuation",
+                    "refresh"
+                  ]
+                },
+                "description": "全量 ∪ 池 ∪ 持仓，一次 400 只，不占订阅与历史额度。返回 jobId；已有作业在跑 → 409。"
+              },
+              "event": [
                 {
-                  "key": "all",
-                  "value": "false"
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                      "const body = pm.response.json();",
+                      "pm.test(\"有 jobId\", () => pm.expect(body.jobId).to.be.a(\"number\"));"
+                    ]
+                  }
                 }
-              ]
+              ],
+              "response": []
             },
-            "description": "all=false 只做池与持仓（约 80 秒，带公司简介）；all=true 做全量成分股（518 只约 41 分钟，不取简介）。返回 jobId。"
-          },
-          "event": [
             {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"有 jobId\", () => pm.expect(body.jobId).to.be.a(\"number\"));"
-                ]
-              }
+              "name": "财报刷新（异步作业）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fundamentals/financials/refresh?all=false",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "fundamentals",
+                    "financials",
+                    "refresh"
+                  ],
+                  "query": [
+                    {
+                      "key": "all",
+                      "value": "false"
+                    }
+                  ]
+                },
+                "description": "all=false 只做池与持仓（约 80 秒，带公司简介）；all=true 做全量成分股（518 只约 41 分钟，不取简介）。返回 jobId。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                      "const body = pm.response.json();",
+                      "pm.test(\"有 jobId\", () => pm.expect(body.jobId).to.be.a(\"number\"));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
             }
-          ],
-          "response": []
+          ]
         }
       ]
     },
@@ -1981,6 +2283,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -2019,6 +2325,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -2056,6 +2366,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -2097,89 +2411,102 @@
           "response": []
         },
         {
-          "name": "拍账户快照（异步作业，会写库）",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/account/snapshot?force=false",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "account",
-                "snapshot"
-              ],
-              "query": [
-                {
-                  "key": "force",
-                  "value": "false"
-                }
-              ]
-            },
-            "description": "只能在快照窗口内拍（交易日美东 16:15 至次日 04:00），窗口外 409；force=true 只在开发环境可用。会写库，不要对生产批量跑。"
-          },
-          "event": [
+          "name": "⚠ 写操作（改状态或触发跑批，别对生产整组跑）",
+          "item": [
             {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"HTTP 200（已提交）或 409（窗口外 / 有作业在跑）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
-          "name": "持仓同步 HOLDING（默认只看计划）",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Accept",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/account/holdings/sync?apply=false",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "account",
-                "holdings",
-                "sync"
-              ],
-              "query": [
+              "name": "拍账户快照（异步作业，会写库）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/account/snapshot?force=false",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "account",
+                    "snapshot"
+                  ],
+                  "query": [
+                    {
+                      "key": "force",
+                      "value": "false"
+                    }
+                  ]
+                },
+                "description": "只能在快照窗口内拍（交易日美东 16:15 至次日 04:00），窗口外 409；force=true 只在开发环境可用。会写库，不要对生产批量跑。"
+              },
+              "event": [
                 {
-                  "key": "apply",
-                  "value": "false"
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200（已提交）或 409（窗口外 / 有作业在跑）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+                    ]
+                  }
                 }
-              ]
+              ],
+              "response": []
             },
-            "description": "按盈透持仓维护池里的 HOLDING。apply=false 只返回计划（ADD / PROMOTE / RETURN_TO_POOL / REMOVE）；apply=true 才改池。盈透未连接 → 503。"
-          },
-          "event": [
             {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"HTTP 200 或 503（盈透未连接）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 503]));"
-                ]
-              }
+              "name": "持仓同步 HOLDING（默认只看计划）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/account/holdings/sync?apply=false",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "account",
+                    "holdings",
+                    "sync"
+                  ],
+                  "query": [
+                    {
+                      "key": "apply",
+                      "value": "false"
+                    }
+                  ]
+                },
+                "description": "按盈透持仓维护池里的 HOLDING。apply=false 只返回计划（ADD / PROMOTE / RETURN_TO_POOL / REMOVE）；apply=true 才改池。盈透未连接 → 503。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200 或 503（盈透未连接）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 503]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
             }
-          ],
-          "response": []
+          ]
         }
       ]
     },
@@ -2194,6 +2521,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {
@@ -2232,6 +2563,10 @@
               {
                 "key": "Accept",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
               }
             ],
             "url": {

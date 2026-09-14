@@ -49,6 +49,10 @@ public class QuoteSubscriptionService implements GatewayListener, RotationRefres
     private final Sleeper sleeper;
     private final Map<Instrument, Instant> subscribed = new LinkedHashMap<>();
     private volatile boolean paused;
+    /** 当前的暂停是轮转发起的（手工暂停的不归轮转恢复）。 */
+    private boolean pausedByRefresh;
+    /** 轮转结束后是否重新订阅：自动订阅的实例，或轮转前本来就有订阅的。 */
+    private boolean resubscribeAfterRefresh;
     private volatile Instant lastReconcileAt;
     private volatile String lastError;
     private volatile SubscriptionInfo lastQuota;
@@ -272,7 +276,16 @@ public class QuoteSubscriptionService implements GatewayListener, RotationRefres
             return 0;
         }
         if (props.pauseDuringRefresh()) {
-            Result r = pause(true);
+            Result r;
+            synchronized (this) {
+                if (paused) {
+                    log.info("全量轮转开始；实时订阅已处于暂停，保持原状");
+                    return 0;
+                }
+                resubscribeAfterRefresh = props.autoSubscribe() || !subscribed.isEmpty();
+                pausedByRefresh = true;
+                r = pause(true);
+            }
             log.info("全量轮转开始，暂停实时订阅：{}", r);
             return 0;
         }
@@ -280,12 +293,29 @@ public class QuoteSubscriptionService implements GatewayListener, RotationRefres
         return q == null ? 0 : Math.max(1, q.remainQuota() - props.reserveQuota());
     }
 
+    /**
+     * 只恢复轮转自己发起的暂停。不自动订阅、轮转前也没有订阅的实例（开发实例）只解除暂停、不对账：
+     * 2.0.2 前这里无条件对账，开发实例每跑一次轮转就订阅一次实时报价，与生产同占一个账户的额度。
+     */
     @Override
     public void afterRefresh() {
-        if (props.enabled() && props.pauseDuringRefresh() && paused) {
-            Result r = resume();
-            log.info("全量轮转结束，恢复实时订阅：{}", r);
+        boolean resubscribe;
+        synchronized (this) {
+            if (!pausedByRefresh) {
+                return;
+            }
+            pausedByRefresh = false;
+            resubscribe = resubscribeAfterRefresh;
+            if (!resubscribe) {
+                paused = false;
+            }
         }
+        if (!resubscribe) {
+            log.info("全量轮转结束，解除暂停；auto-subscribe=false 且轮转前没有订阅，不对账");
+            return;
+        }
+        Result r = resume();
+        log.info("全量轮转结束，恢复实时订阅：{}", r);
     }
 
     private static List<List<Instrument>> chunks(List<Instrument> list) {

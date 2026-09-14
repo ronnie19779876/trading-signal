@@ -2,6 +2,8 @@
 #
 # 打发布包：前端 build → 打进 jar → dist/trading-signal-<版本>-<时间戳>.tar.gz
 # 解压后的布局：bin/trader.sh  config/application.yml  config/trader.env.example  lib/trader-app.jar  systemd/  logs/
+#   ./scripts/package.sh                   只接受正式版（部署到生产的必须是正式版）
+#   ./scripts/package.sh --allow-snapshot  本机试打包
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/lib/jdk.sh
@@ -9,6 +11,10 @@ require_jdk21
 MVN="$(mvn_cmd)"
 
 VERSION="$(grep -oE '<revision>[^<]+' pom.xml | sed 's/.*>//')"
+if [[ "$VERSION" == *-SNAPSHOT && "${1:-}" != "--allow-snapshot" ]]; then
+    echo "❌ 版本是 $VERSION：部署到生产的必须是正式版（发布流程见 README「版本规则」）；本机试打包加 --allow-snapshot" >&2
+    exit 1
+fi
 STAMP="$(date +%Y%m%d-%H%M)"
 NAME="trading-signal-$VERSION"
 OUT="dist/$NAME"

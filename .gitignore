@@ -27,6 +27,9 @@ config/*.env
 deploy/config/trader.env
 *.env
 !*.env.example
+# 私钥文件（富途 RSA 等）
+*.pem
+*.key
 
 # ---- 前端：依赖与构建产物不入库，产物由 scripts/package.sh 生成并打进 jar ----
 trader-web/node_modules/

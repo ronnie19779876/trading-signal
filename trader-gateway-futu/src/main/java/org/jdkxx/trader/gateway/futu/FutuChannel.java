@@ -50,6 +50,9 @@ final class FutuChannel implements Transport {
 
     private static final Logger log = LoggerFactory.getLogger(FutuChannel.class);
 
+    /** 回复完成与报价推送所在的线程名（{@link FutuGateway} 按它命名）。 */
+    static final String DISPATCH_THREAD = "futu-dispatch";
+
     enum Kind {
         QOT("行情"), TRD("交易");
 
@@ -104,7 +107,7 @@ final class FutuChannel implements Transport {
     private final FTSPI_Qot qotSpi = new FTSPI_Qot() {
         @Override
         public void onReply_GetGlobalState(FTAPI_Conn client, int nSerialNo, GetGlobalState.Response rsp) {
-            registry.onReply(nSerialNo, rsp);
+            reply(client, nSerialNo, rsp);
         }
 
         @Override
@@ -114,57 +117,57 @@ final class FutuChannel implements Transport {
 
         @Override
         public void onReply_Sub(FTAPI_Conn client, int nSerialNo, QotSub.Response rsp) {
-            registry.onReply(nSerialNo, rsp);
+            reply(client, nSerialNo, rsp);
         }
 
         @Override
         public void onReply_GetKL(FTAPI_Conn client, int nSerialNo, QotGetKL.Response rsp) {
-            registry.onReply(nSerialNo, rsp);
+            reply(client, nSerialNo, rsp);
         }
 
         @Override
         public void onReply_RequestHistoryKL(FTAPI_Conn client, int nSerialNo, QotRequestHistoryKL.Response rsp) {
-            registry.onReply(nSerialNo, rsp);
+            reply(client, nSerialNo, rsp);
         }
 
         @Override
         public void onReply_RequestHistoryKLQuota(FTAPI_Conn client, int nSerialNo, QotRequestHistoryKLQuota.Response rsp) {
-            registry.onReply(nSerialNo, rsp);
+            reply(client, nSerialNo, rsp);
         }
 
         @Override
         public void onReply_RequestRehab(FTAPI_Conn client, int nSerialNo, QotRequestRehab.Response rsp) {
-            registry.onReply(nSerialNo, rsp);
+            reply(client, nSerialNo, rsp);
         }
 
         @Override
         public void onReply_RequestTradeDate(FTAPI_Conn client, int nSerialNo, QotRequestTradeDate.Response rsp) {
-            registry.onReply(nSerialNo, rsp);
+            reply(client, nSerialNo, rsp);
         }
 
         @Override
         public void onReply_GetStaticInfo(FTAPI_Conn client, int nSerialNo, QotGetStaticInfo.Response rsp) {
-            registry.onReply(nSerialNo, rsp);
+            reply(client, nSerialNo, rsp);
         }
 
         @Override
         public void onReply_GetSecuritySnapshot(FTAPI_Conn client, int nSerialNo, QotGetSecuritySnapshot.Response rsp) {
-            registry.onReply(nSerialNo, rsp);
+            reply(client, nSerialNo, rsp);
         }
 
         @Override
         public void onReply_GetFinancialsStatements(FTAPI_Conn client, int nSerialNo, QotGetFinancialsStatements.Response rsp) {
-            registry.onReply(nSerialNo, rsp);
+            reply(client, nSerialNo, rsp);
         }
 
         @Override
         public void onReply_GetCompanyProfile(FTAPI_Conn client, int nSerialNo, QotGetCompanyProfile.Response rsp) {
-            registry.onReply(nSerialNo, rsp);
+            reply(client, nSerialNo, rsp);
         }
 
         @Override
         public void onReply_GetSubInfo(FTAPI_Conn client, int nSerialNo, QotGetSubInfo.Response rsp) {
-            registry.onReply(nSerialNo, rsp);
+            reply(client, nSerialNo, rsp);
         }
 
         /** 基础报价推送：SDK 线程上只做转交。 */
@@ -177,9 +180,19 @@ final class FutuChannel implements Transport {
     private final FTSPI_Trd trdSpi = new FTSPI_Trd() {
         @Override
         public void onReply_GetAccList(FTAPI_Conn client, int nSerialNo, TrdGetAccList.Response rsp) {
-            registry.onReply(nSerialNo, rsp);
+            reply(client, nSerialNo, rsp);
         }
     };
+
+    /** SDK 回调线程：只接当前连接的回复。旧连接迟到的回复，序列号可能与新连接上的请求重合。 */
+    private void reply(FTAPI_Conn client, int serialNo, Object rsp) {
+        Session s = session;
+        if (s == null || client != s.conn || s.closed.get()) {
+            log.debug("丢弃非当前{}连接的回复 seq={}", kind.label, serialNo);
+            return;
+        }
+        registry.onReply(serialNo, rsp);
+    }
 
     FutuChannel(Kind kind, FutuProperties props, FutuReplyRegistry registry, Function<String, RateLimiter> limits) {
         this.kind = kind;
@@ -229,7 +242,10 @@ final class FutuChannel implements Transport {
                         kind.label + "通道发起连接失败（OpenD 未运行、端口或隧道不对）", true));
             }
         } catch (IOException e) {
-            s.ready.completeExceptionally(new GatewayException(Broker.FUTU, 0, "读取 RSA 私钥失败：" + e.getMessage(), false, e));
+            // 不带异常原文与 cause：NoSuchFileException 的消息就是私钥路径，而路径属于敏感配置。
+            // 不可重试：状态机据此进入 ERROR，不再每分钟重试一次
+            s.ready.completeExceptionally(new GatewayException(Broker.FUTU, 0, "读取 RSA 私钥失败（" + e.getClass().getSimpleName()
+                    + "），检查 trader.futu.rsa-private-key-file 指向的文件与读权限", false));
         } catch (RuntimeException e) {
             s.ready.completeExceptionally(new GatewayException(Broker.FUTU, 0, kind.label + "通道建连异常：" + e, true, e));
         }
@@ -255,7 +271,7 @@ final class FutuChannel implements Transport {
         if (!s.closed.compareAndSet(false, true)) {
             return;
         }
-        registry.failAll(new NotConnectedException(Broker.FUTU, reason));
+        registry.reset(new NotConnectedException(Broker.FUTU, reason));
         if (!s.ready.isDone()) {
             s.ready.completeExceptionally(new GatewayException(Broker.FUTU, 0, reason, true));
         }
@@ -269,6 +285,11 @@ final class FutuChannel implements Transport {
         return kind == Kind.QOT
                 ? globalState().thenApply(s -> true)
                 : accList().thenApply(r -> true);
+    }
+
+    @Override
+    public boolean isOpen() {
+        return isConnected();
     }
 
     // ------------------------------------------------------------------ 请求
@@ -322,6 +343,11 @@ final class FutuChannel implements Transport {
      * @param limitName 限频名（见 FutuProperties.DEFAULT_LIMITS）
      */
     <R> CompletableFuture<R> qotCall(String limitName, String what, Class<R> type, ToIntFunction<FTAPI_Conn_Qot> send) {
+        if (Thread.currentThread().getName().startsWith(DISPATCH_THREAD)) {
+            // 发送前要过限流器，可能睡几十秒；这条线程同时完成所有回复、超时与报价推送，睡在这里心跳会超时断线
+            return CompletableFuture.failedFuture(new IllegalStateException(what + "：不得在 " + DISPATCH_THREAD
+                    + " 线程上发请求，接续请求请用 thenComposeAsync 换线程"));
+        }
         if (kind != Kind.QOT) {
             return CompletableFuture.failedFuture(new IllegalStateException(what + " 只在行情通道上可用"));
         }

@@ -137,8 +137,10 @@ export const cleanupPhantomBars = async (apply = false) =>
 export const getJobs = async (limit = 15) => (await http.get<{ running: RunningJob | Record<string, never>; recent: JobRun[] }>('/api/jobs', { params: { limit } })).data
 export const getPool = async () => (await http.get<InstrumentView[]>('/api/pool')).data
 export const getUniverse = async (index?: string) => (await http.get<InstrumentView[]>('/api/universe', { params: index ? { index } : {} })).data
-export const addToPool = async (symbol: string, role: 'POOL' | 'HOLDING' | 'BENCHMARK') => (await http.post(`/api/pool/${symbol}`, null, { params: { role } })).data
-export const removeFromPool = async (symbol: string) => (await http.delete(`/api/pool/${symbol}`)).data
+/** HOLDING 由盈透持仓自动维护，手工加入后端返回 409，所以这里不接受。 */
+export const addToPool = async (symbol: string, role: 'POOL' | 'BENCHMARK') =>
+  (await http.post(`/api/pool/${encodeURIComponent(symbol)}`, null, { params: { role } })).data
+export const removeFromPool = async (symbol: string) => (await http.delete(`/api/pool/${encodeURIComponent(symbol)}`)).data
 export const syncUniverse = async () => (await http.post<{ jobId: number }>('/api/universe/sync')).data
 export const refreshUniverse = async (count: number) => (await http.post<{ jobId: number }>('/api/bars/refresh/universe', null, { params: { count } })).data
 export const backfillPending = async () => (await http.post<{ jobId: number }>('/api/bars/backfill')).data
@@ -146,4 +148,4 @@ export const refreshRehab = async (all: boolean) => (await http.post<{ jobId: nu
 export const runIncrement = async () => (await http.post<{ jobId: number }>('/api/bars/increment')).data
 export const cancelJob = async () => (await http.post('/api/jobs/cancel')).data
 export const getBars = async (symbol: string, from: string, to: string, adjust: Adjust) =>
-  (await http.get<DailyBar[]>(`/api/bars/${symbol}`, { params: { from, to, adjust } })).data
+  (await http.get<DailyBar[]>(`/api/bars/${encodeURIComponent(symbol)}`, { params: { from, to, adjust } })).data

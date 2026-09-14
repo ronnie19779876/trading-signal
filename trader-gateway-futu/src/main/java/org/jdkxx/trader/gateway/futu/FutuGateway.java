@@ -62,6 +62,8 @@ public class FutuGateway implements BrokerGateway, MarketDataGateway, AutoClosea
     private final FutuProperties props;
     private final ScheduledExecutorService scheduler;
     private final ExecutorService dispatch;
+    /** 历史 K 线翻页续发：不能在 dispatch 上发（见 {@link FutuChannel#qotCall}）。 */
+    private final ExecutorService pager;
     private final FutuChannel qot;
     private final FutuChannel trd;
     private final ConnectionSupervisor qotSupervisor;
@@ -71,8 +73,10 @@ public class FutuGateway implements BrokerGateway, MarketDataGateway, AutoClosea
     private final List<GatewayListener> listeners = new CopyOnWriteArrayList<>();
     private final List<QuoteListener> quoteListeners = new CopyOnWriteArrayList<>();
     private volatile Map<String, String> stateFacts = Map.of();
-    private volatile boolean up;
-    private volatile boolean everUp;
+    /** 两条通道的监听器可能同时跑在两个调度线程上，网关级连上/断开的判断与置位要在一把锁里做完。 */
+    private final Object upLock = new Object();
+    private boolean up;
+    private boolean everUp;
 
     public FutuGateway(FutuProperties props) {
         props.validate();
@@ -80,6 +84,7 @@ public class FutuGateway implements BrokerGateway, MarketDataGateway, AutoClosea
         if (!props.enabled()) {
             scheduler = null;
             dispatch = null;
+            pager = null;
             qot = null;
             trd = null;
             qotSupervisor = null;
@@ -88,14 +93,15 @@ public class FutuGateway implements BrokerGateway, MarketDataGateway, AutoClosea
             return;
         }
         scheduler = Executors.newScheduledThreadPool(2, named("futu-scheduler"));
-        dispatch = Executors.newSingleThreadExecutor(named("futu-dispatch"));
+        dispatch = Executors.newSingleThreadExecutor(named(FutuChannel.DISPATCH_THREAD));
+        pager = Executors.newSingleThreadExecutor(named("futu-pager"));
         qot = new FutuChannel(FutuChannel.Kind.QOT, props,
                 new FutuReplyRegistry("行情", scheduler, dispatch, props.replyTimeout()), this::limiter);
         trd = new FutuChannel(FutuChannel.Kind.TRD, props,
                 new FutuReplyRegistry("交易", scheduler, dispatch, props.replyTimeout()), this::limiter);
         qotSupervisor = new ConnectionSupervisor(Broker.FUTU, "富途行情通道", qot, props.supervisorSettings(), scheduler);
         trdSupervisor = new ConnectionSupervisor(Broker.FUTU, "富途交易通道", trd, props.supervisorSettings(), scheduler);
-        marketData = new FutuMarketData(qot::qotCall);
+        marketData = new FutuMarketData(qot::qotCall, pager);
         qot.onClosed(qotSupervisor::onTransportClosed);
         trd.onClosed(trdSupervisor::onTransportClosed);
         qot.onGlobalState(s -> stateFacts = FutuStates.facts(s));
@@ -126,18 +132,30 @@ public class FutuGateway implements BrokerGateway, MarketDataGateway, AutoClosea
                     // 连上就取一次全局状态，让 facts 立刻可用，不必等第一次心跳
                     qot.globalState().exceptionally(ex -> null);
                 }
-                if (qotSupervisor.isConnected() && trdSupervisor.isConnected() && !up) {
-                    up = true;
-                    boolean re = everUp;
-                    everUp = true;
-                    notifyListeners(l -> l.onConnected(Broker.FUTU, re));
+                boolean fire = false;
+                boolean re = false;
+                synchronized (upLock) {
+                    if (qotSupervisor.isConnected() && trdSupervisor.isConnected() && !up) {
+                        up = true;
+                        re = everUp;
+                        everUp = true;
+                        fire = true;
+                    }
+                }
+                if (fire) {
+                    boolean reconnectedGateway = re;
+                    notifyListeners(l -> l.onConnected(Broker.FUTU, reconnectedGateway));
                 }
             }
 
             @Override
             public void onDisconnected(Broker broker, String reason) {
-                if (up) {
+                boolean fire;
+                synchronized (upLock) {
+                    fire = up;
                     up = false;
+                }
+                if (fire) {
                     notifyListeners(l -> l.onDisconnected(Broker.FUTU, reason));
                 }
             }
@@ -386,6 +404,7 @@ public class FutuGateway implements BrokerGateway, MarketDataGateway, AutoClosea
         } catch (RuntimeException e) {
             log.warn("断开富途网关时出错：{}", e.toString());
         }
+        pager.shutdownNow();
         dispatch.shutdown();
         scheduler.shutdown();
         try {

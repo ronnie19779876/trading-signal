@@ -16,7 +16,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -33,8 +35,12 @@ import java.util.function.Consumer;
  * </pre>
  *
  * <p>线程模型：状态在 {@code lock} 内变更；Transport 返回的 Future 一律用 {@code whenCompleteAsync(scheduler)}
- * 接回调度线程，SDK 的回调线程永远不会执行状态机或监听器；监听器通知也在调度线程上、锁外进行。
+ * 接回调度线程；传输层主动报来的事件（{@link #onTransportClosed}、{@link #notifyDataLost}）也先转到调度线程，
+ * SDK 的回调线程永远不会执行状态机或监听器；监听器通知在调度线程上、锁外进行。
  * {@code generation} 用来丢弃过期的异步结果（例如 disconnect 后才完成的旧连接）。
+ *
+ * <p>锁内会调用 {@link Transport#open()} 与 {@link Transport#close()}，所以这两个方法不得等待 SDK 的锁
+ * （盈透 EClientSocket 的方法都是 synchronized，握手卡住时一直占着）。
  */
 public final class ConnectionSupervisor {
 
@@ -94,8 +100,10 @@ public final class ConnectionSupervisor {
             if (ready == null || ready.isDone()) {
                 ready = new CompletableFuture<>();
             }
-            if (state == GatewayState.CONNECTING || (state == GatewayState.RECONNECTING && reconnectTask != null)) {
-                return ready;   // 已在进行中
+            // 进行中（含"重连尝试正在握手"）直接等。2.0.2 前 RECONNECTING 且尝试进行中时会再发起一次建连：
+            // 同一个 client-id 连两次互踢，旧尝试的 socket 也没人关
+            if (state == GatewayState.CONNECTING || state == GatewayState.RECONNECTING) {
+                return ready;
             }
             attempts = 0;
             startAttempt();
@@ -126,10 +134,12 @@ public final class ConnectionSupervisor {
     /** 不可重试的错误（配置非法、账户不在受管列表）：停止一切并进入 ERROR。 */
     public void reportFatal(GatewayException error) {
         CompletableFuture<Void> pending;
+        boolean wasConnected;
         synchronized (lock) {
             wantConnected = false;
             generation++;
             cancelTasks();
+            wasConnected = state == GatewayState.CONNECTED;
             safeClose();
             setState(GatewayState.ERROR, error.getMessage());
             pending = ready;
@@ -137,40 +147,31 @@ public final class ConnectionSupervisor {
         if (pending != null && !pending.isDone()) {
             pending.completeExceptionally(error);
         }
+        if (wasConnected) {
+            notifyDisconnected(error.getMessage());   // 上层据此停订阅、清缓存；2.0.2 前只发 onError
+        }
         dispatch(l -> l.onError(broker, error));
     }
 
-    /** 传输层报告连接已断（对端关闭、读线程退出）。 */
+    /**
+     * 传输层报告连接已断（对端关闭、读线程退出）。调用方通常是 SDK 的回调线程，这里只转交给调度线程：
+     * SDK 回调时往往拿着它自己的锁，在那条线程上抢状态机的锁，会与"状态机持锁调 SDK"形成相反的加锁顺序而死锁。
+     */
     public void onTransportClosed(String reason) {
-        synchronized (lock) {
-            if (state != GatewayState.CONNECTED && state != GatewayState.CONNECTING) {
-                return;
-            }
-            generation++;
-            cancelTasks();
-            safeClose();
-            if (!wantConnected) {
-                setState(GatewayState.DISCONNECTED, reason);
-            }
-        }
-        notifyDisconnected(reason);
-        synchronized (lock) {
-            if (wantConnected) {
-                attempts = 0;
-                scheduleReconnect(reason);
-            }
-        }
+        submit(() -> handleTransportClosed(reason));
     }
 
-    /** 连接仍在但券商侧数据丢失（盈透 1101）：等价于一次重连，让上层重订阅。 */
+    /** 连接仍在但券商侧数据丢失（盈透 1101）：等价于一次重连，让上层重订阅。同样转到调度线程。 */
     public void notifyDataLost(String reason) {
-        synchronized (lock) {
-            if (state != GatewayState.CONNECTED) {
-                return;
+        submit(() -> {
+            synchronized (lock) {
+                if (state != GatewayState.CONNECTED) {
+                    return;
+                }
+                detail = "已连接（" + reason + "）";
             }
-            detail = "已连接（" + reason + "）";
-        }
-        dispatch(l -> l.onConnected(broker, true));
+            dispatch(l -> l.onConnected(broker, true));
+        });
     }
 
     // ------------------------------------------------------------------ 查询
@@ -193,6 +194,29 @@ public final class ConnectionSupervisor {
 
     public String name() {
         return name;
+    }
+
+    // ------------------------------------------------------------------ 内部：断线
+
+    private void handleTransportClosed(String reason) {
+        synchronized (lock) {
+            if (state != GatewayState.CONNECTED && state != GatewayState.CONNECTING) {
+                return;
+            }
+            generation++;
+            cancelTasks();
+            safeClose();
+            if (!wantConnected) {
+                setState(GatewayState.DISCONNECTED, reason);
+            }
+        }
+        notifyDisconnected(reason);
+        synchronized (lock) {
+            if (wantConnected) {
+                attempts = 0;
+                scheduleReconnect(reason);
+            }
+        }
     }
 
     // ------------------------------------------------------------------ 内部：连接尝试
@@ -218,7 +242,13 @@ public final class ConnectionSupervisor {
     }
 
     private void onOpenResult(int gen, Throwable ex) {
-        boolean reconnected;
+        // "就绪"到这里之间连接可能已经断了（刚握手完就被网关断开）。在锁外问传输层：它可能要碰 SDK 的锁
+        Throwable failure = ex;
+        if (failure == null && !transport.isOpen()) {
+            failure = new GatewayException(broker, 0, name + " 连接刚就绪即断开", true);
+        }
+        boolean reconnected = false;
+        GatewayException fatal = null;
         CompletableFuture<Void> pending;
         synchronized (lock) {
             if (gen != generation) {
@@ -228,25 +258,46 @@ public final class ConnectionSupervisor {
                 safeClose();
                 return;
             }
-            if (ex != null) {
-                safeClose();
-                scheduleReconnect(describe(ex));
-                return;
-            }
-            reconnected = everConnected;
-            everConnected = true;
-            attempts = 0;
-            heartbeatFailures = 0;
-            connectedSince = clock.instant();
-            lastHeartbeatAt = connectedSince;
-            setState(GatewayState.CONNECTED, reconnected ? "已重连" : "已连接");
-            scheduleHeartbeat();
             pending = ready;
+            if (failure != null) {
+                safeClose();
+                fatal = nonRetryable(failure);
+                if (fatal == null) {
+                    scheduleReconnect(describe(failure));
+                    return;
+                }
+                // 配置类错误（例如私钥文件读不到）重试也不会好，停下来等人处理
+                wantConnected = false;
+                setState(GatewayState.ERROR, fatal.getMessage());
+            } else {
+                reconnected = everConnected;
+                everConnected = true;
+                attempts = 0;
+                heartbeatFailures = 0;
+                connectedSince = clock.instant();
+                lastHeartbeatAt = connectedSince;
+                setState(GatewayState.CONNECTED, reconnected ? "已重连" : "已连接");
+                scheduleHeartbeat();
+            }
+        }
+        if (fatal != null) {
+            if (pending != null && !pending.isDone()) {
+                pending.completeExceptionally(fatal);
+            }
+            GatewayException error = fatal;
+            dispatch(l -> l.onError(broker, error));
+            return;
         }
         if (pending != null) {
             pending.complete(null);
         }
-        dispatch(l -> l.onConnected(broker, reconnected));
+        boolean re = reconnected;
+        dispatch(l -> l.onConnected(broker, re));
+    }
+
+    private static GatewayException nonRetryable(Throwable t) {
+        Throwable c = t instanceof CompletionException && t.getCause() != null ? t.getCause() : t;
+        return c instanceof GatewayException g && !g.retryable() ? g : null;
     }
 
     private void scheduleReconnect(String reason) {
@@ -321,7 +372,7 @@ public final class ConnectionSupervisor {
             }
             reason = "心跳连续 " + heartbeatFailures + " 次失败";
         }
-        onTransportClosed(reason);
+        handleTransportClosed(reason);   // 已在调度线程上
     }
 
     // ------------------------------------------------------------------ 内部：杂项
@@ -356,6 +407,14 @@ public final class ConnectionSupervisor {
         }
     }
 
+    private void submit(Runnable task) {
+        try {
+            scheduler.execute(task);
+        } catch (RejectedExecutionException e) {
+            log.debug("{} 调度线程已关闭，忽略传输层事件", name);
+        }
+    }
+
     private void notifyDisconnected(String reason) {
         dispatch(l -> l.onDisconnected(broker, reason));
     }
@@ -373,7 +432,7 @@ public final class ConnectionSupervisor {
     }
 
     private static String describe(Throwable t) {
-        Throwable c = t instanceof java.util.concurrent.CompletionException && t.getCause() != null ? t.getCause() : t;
+        Throwable c = t instanceof CompletionException && t.getCause() != null ? t.getCause() : t;
         String msg = c.getMessage();
         return msg == null || msg.isBlank() ? c.getClass().getSimpleName() : msg;
     }

@@ -177,20 +177,24 @@ ENDPOINTS = [
              "desc": "Wikipedia 标普 500 + 纳指 100 → instrument / index_constituent，SPY 交叉核对，富途静态信息解析。返回 jobId；已有作业在跑 → 409。",
              "tests": ['pm.test("200 或 409", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));',
                        'if (pm.response.code === 200) { pm.environment.set("jobId", pm.response.json().jobId); }']},
+            {"name": "CSV 导入成分股（兜底，同步执行）", "method": "POST", "path": "/api/universe/import", "body": "",
+             "desc": "text/plain，每行 index_code,symbol[,name]，只在 Wikipedia 同步失败时用。⚠ 按指数整体替换：清单里没有的现任成分股会被记为退出，"
+                     "所以要给该指数的完整清单。示例请求体故意留空（解析不出任何行，什么都不改）。",
+             "tests": ['pm.test("200 或 400", () => pm.expect(pm.response.code).to.be.oneOf([200, 400]));']},
             {"name": "作业列表", "method": "GET", "path": "/api/jobs", "query": [{"key": "limit", "value": "10"}],
              "desc": "running = 当前作业与进度；recent = job_run 最近 N 条。",
              "tests": T_200 + T_JSON + ['pm.test("recent 是数组", () => pm.expect(body.recent).to.be.an("array"));']},
             {"name": "作业详情", "method": "GET", "path": "/api/jobs/{{jobId}}", "desc": "按 id 看状态与摘要。",
              "tests": ['pm.test("200 或 404", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));']},
             {"name": "全量标的列表", "method": "GET", "path": "/api/universe", "query": [{"key": "index", "value": "SP500"}],
-             "desc": "index=SP500|NDX100，role=POOL|HOLDING 可筛选。",
+             "desc": "index=SP500|NDX100，role=POOL|HOLDING|BENCHMARK 可筛选。",
              "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
             {"name": "单个标的", "method": "GET", "path": "/api/universe/{{symbol}}", "desc": "含所属指数、行业、池角色、K 线覆盖。",
              "tests": ['pm.test("200 或 404", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));']},
             {"name": "加入标的池（触发深度回补）", "method": "POST", "path": "/api/pool/{{symbol}}", "query": [{"key": "role", "value": "POOL"}],
              "desc": "role=POOL|BENCHMARK。HOLDING 由盈透持仓自动维护，手工传 role=HOLDING → 409。加入后自动排深度回补作业（20 年，占 1 个历史额度）；池满或作业冲突 → 409。",
              "tests": ['pm.test("200 / 404 / 409", () => pm.expect(pm.response.code).to.be.oneOf([200, 404, 409]));']},
-            {"name": "标的池", "method": "GET", "path": "/api/pool", "desc": "POOL + HOLDING 及各自的 K 线覆盖。",
+            {"name": "标的池", "method": "GET", "path": "/api/pool", "desc": "POOL + HOLDING + BENCHMARK 及各自的 K 线覆盖。",
              "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
             {"name": "移出标的池", "method": "DELETE", "path": "/api/pool/{{symbol}}", "desc": "K 线保留，只移除池成员。",
              "tests": ['pm.test("200 或 404", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));']},
@@ -228,6 +232,9 @@ ENDPOINTS = [
             {"name": "订阅状态", "method": "GET", "path": "/api/quotes/status",
              "desc": "期望/已订数量、额度、推送统计、SSE 客户端数。",
              "tests": T_200 + T_JSON + ['pm.test("有 subscribed 与 totalPushes", () => { pm.expect(body.subscribed).to.be.a("number"); pm.expect(body.totalPushes).to.be.a("number"); });']},
+            {"name": "订阅集合（轻量）", "method": "GET", "path": "/api/quotes/subscriptions",
+             "desc": "desired / subscribed / paused；额度与推送统计看「订阅状态」。",
+             "tests": T_200 + T_JSON + ['pm.test("有 desired/subscribed/paused", () => { pm.expect(body.desired).to.be.a("number"); pm.expect(body.subscribed).to.be.a("number"); pm.expect(body.paused).to.be.a("boolean"); });']},
             {"name": "订阅对账（订池与持仓）", "method": "POST", "path": "/api/quotes/subscriptions/reconcile",
              "desc": "期望 = 池 ∪ 持仓；新增订阅、多余反订阅（未满 1 分钟延后）。网关未连接时 error 字段给出原因。",
              "tests": T_200 + T_JSON + ['pm.test("有 desired/subscribed", () => { pm.expect(body.desired).to.be.a("number"); pm.expect(body.subscribed).to.be.a("number"); });']},
@@ -319,17 +326,31 @@ def request(item):
     }
     if item.get("query"):
         url["query"] = item["query"]
+    headers = [
+        {"key": "Accept", "value": "application/json"},
+        # 服务端对缺这个头的写请求返回 403（LocalRequestGuardFilter，挡本机浏览器的跨站 POST）
+        {"key": "X-Trader-Client", "value": "postman"},
+    ]
+    req = {"method": item["method"], "header": headers, "url": url, "description": item.get("desc", "")}
+    if "body" in item:
+        headers.append({"key": "Content-Type", "value": "text/plain"})
+        req["body"] = {"mode": "raw", "raw": item["body"]}
     return {
         "name": item["name"],
-        "request": {
-            "method": item["method"],
-            "header": [{"key": "Accept", "value": "application/json"}],
-            "url": url,
-            "description": item.get("desc", ""),
-        },
+        "request": req,
         "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": item.get("tests", [])}}],
         "response": [],
     }
+
+
+WRITE_FOLDER = "⚠ 写操作（改状态或触发跑批，别对生产整组跑）"
+
+
+def folder(f):
+    """GET 留在组里；其余方法收进组内的写操作子文件夹，免得对生产"整组运行"时误触。"""
+    reads = [request(i) for i in f["items"] if i["method"] in ("GET", "HEAD")]
+    writes = [request(i) for i in f["items"] if i["method"] not in ("GET", "HEAD")]
+    return {"name": f["folder"], "item": reads + ([{"name": WRITE_FOLDER, "item": writes}] if writes else [])}
 
 
 def build_collection():
@@ -337,21 +358,24 @@ def build_collection():
         "info": {
             "name": NAME,
             "description": "trading-signal REST 接口。先选环境（dev / prod），变量：baseUrl、broker（ibkr|futu）、symbol。"
-                           "所有请求只读或只影响网关连接状态，不涉及交易。集合由 docs/postman/build_collection.py 生成，勿手改。",
+                           "各组里的 GET 只读；写操作集中在各组的「" + WRITE_FOLDER + "」子文件夹里（不涉及交易，但会改池、写库、触发跑批或断开网关）。"
+                           "所有请求都带 X-Trader-Client 头，服务端对缺这个头的写请求返回 403。"
+                           "集合由 docs/postman/build_collection.py 生成，勿手改。",
             "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
         },
-        "item": [{"name": f["folder"], "item": [request(i) for i in f["items"]]} for f in ENDPOINTS],
+        "item": [folder(f) for f in ENDPOINTS],
         "variable": [],
     }
 
 
-def build_environment(name, base_url):
+def build_environment(name, base_url, symbol):
     return {
         "name": f"{NAME} {name}",
         "values": [
             {"key": "baseUrl", "value": base_url, "enabled": True},
             {"key": "broker", "value": "ibkr", "enabled": True},
-            {"key": "symbol", "value": "AAPL", "enabled": True},
+            # 生产环境不给默认代码：加池 / 移出池 / 回补都拿它当参数，默认值一点就改到真实池
+            {"key": "symbol", "value": symbol, "enabled": True},
             {"key": "jobId", "value": "1", "enabled": True},
         ],
         "_postman_variable_scope": "environment",
@@ -368,5 +392,5 @@ def write(name, data):
 
 if __name__ == "__main__":
     write(f"{NAME}.postman_collection.json", build_collection())
-    write(f"{NAME}.dev.postman_environment.json", build_environment("dev", "http://127.0.0.1:8083"))
-    write(f"{NAME}.prod.postman_environment.json", build_environment("prod", "http://127.0.0.1:8093"))
+    write(f"{NAME}.dev.postman_environment.json", build_environment("dev", "http://127.0.0.1:8083", "AAPL"))
+    write(f"{NAME}.prod.postman_environment.json", build_environment("prod", "http://127.0.0.1:8093", ""))

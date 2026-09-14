@@ -4,6 +4,12 @@
 
 所有接口同源提供，无鉴权（只监听回环地址，外部访问走 SSH 隧道）。时间一律 ISO-8601 UTC。
 
+回环地址挡不住本机浏览器（跨站 POST、DNS rebinding），所以另有两条防护（2.0.2 起）：
+
+- `Host` 的主机名必须是 `localhost` / `127.0.0.1` / `[::1]`（端口不限，隧道的本地端口可以与服务端口不同），否则 403 `REQUEST_REJECTED`；
+- 非 GET / HEAD / OPTIONS 的请求必须带请求头 `X-Trader-Client`（值任意：前端 `web`、脚本 `script`、Postman 集合 `postman`），否则 403。
+  手工调写接口：`curl -X POST -H 'X-Trader-Client: cli' http://127.0.0.1:8083/api/...`。
+
 ## GET /api/system/info
 
 系统信息：版本、环境、数据库、两家网关状态、AI 配置状态。不包含主机、端口、账户号、密钥。
@@ -29,7 +35,7 @@
 | `environment` | 外置配置声明的环境；未声明时为 `未声明` |
 | `database.enabled` | `trader.storage.enabled`；为 false 时其余字段为 null |
 | `database.marker` | 库内 `app_environment` 标记，应与 `environment` 一致 |
-| `gateways[].state` | `DISABLED / DISCONNECTED / CONNECTING / CONNECTED / ERROR` |
+| `gateways[].state` | `DISABLED / DISCONNECTED / CONNECTING / CONNECTED / RECONNECTING / ERROR` |
 | `gateways[].healthy` | `CONNECTED` 或 `DISABLED` 为 true |
 | `ai.configured` | 是否配置了 API key（不返回 key） |
 
@@ -68,7 +74,7 @@
 
 事件视图：`{ "id": 1, "broker": "IBKR", "event": "CONNECTED|RECONNECTED|DISCONNECTED|ERROR", "detail": "…", "occurredAt": "…" }`。
 
-错误响应统一为 `{ "code": "...", "message": "..." }`：`PARAM_INVALID` 400、`GATEWAY_NOT_CONNECTED` 503、`GATEWAY_TIMEOUT` 504、`GATEWAY_REJECTED` 502。
+错误响应统一为 `{ "code": "...", "message": "..." }`：`PARAM_INVALID` 400、`REQUEST_REJECTED` 403（本机请求防护，见开头）、`NOT_FOUND` 404、`STATE_CONFLICT` 409、`GATEWAY_REJECTED` 502、`GATEWAY_NOT_CONNECTED` 503、`GATEWAY_TIMEOUT` 504。
 
 ## 行情数据底座（第 2 期·步骤 1）
 
@@ -77,12 +83,12 @@
 | 接口 | 说明 |
 | --- | --- |
 | `POST /api/universe/sync` | 成分股同步作业：Wikipedia 标普 500 + 纳指 100 → instrument / index_constituent（since/until），SPY 交叉核对，富途静态信息解析 |
-| `POST /api/universe/import`（`text/plain`，每行 `index_code,symbol[,name]`） | CSV 导入兜底，同步返回各指数的新增/退出计数 |
-| `GET /api/universe?index=SP500|NDX100&role=POOL|HOLDING` | 标的列表（含所属指数、行业、池角色、K 线覆盖与深度、最近错误） |
+| `POST /api/universe/import`（`text/plain`，每行 `index_code,symbol[,name]`） | CSV 导入兜底，同步返回各指数的新增/退出计数。**按指数整体替换**：清单里没有的现任成分股记为退出，所以要给该指数的完整清单 |
+| `GET /api/universe?index=SP500|NDX100&role=POOL|HOLDING|BENCHMARK` | 标的列表（含所属指数、行业、池角色、K 线覆盖与深度、最近错误） |
 | `GET /api/universe/{symbol}` | 单个标的；不存在 → 404 |
 | `GET /api/pool` / `POST /api/pool/{symbol}?role=POOL|BENCHMARK&note=` / `DELETE /api/pool/{symbol}` | 标的池；库里没有的代码（ETF、非成分股 ADR）先向富途解析并建档，富途不认识 → 404；加入后自动排深度回补作业（无法自动时返回提示）；池满 → 409；`role=HOLDING` → 409（HOLDING 由盈透持仓自动维护，见"账户与持仓"） |
 | `POST /api/bars/refresh/universe?count=1000` | 全量轮转拉 K 线（零历史额度；1000 首拉 / 10 增量） |
-| `POST /api/bars/backfill/{symbol}` / `POST /api/bars/backfill` | 深度回补一只 / 所有待补的池与持仓（占历史额度，额度守卫） |
+| `POST /api/bars/backfill/{symbol}` / `POST /api/bars/backfill` | 深度回补一只 / 所有待补的池与持仓（占历史额度，额度守卫）。轮转与回补都只写到已收盘落定的交易日，盘中触发时当天那根不写 |
 | `POST /api/bars/increment` | 每日增量：交易日历 → 缺口补齐 → 复权因子刷新（池/持仓每日；全量 7 天到期的按最久未刷优先，每次最多全量的 1/`rehab-spread-days`） |
 | `POST /api/bars/rehab/refresh?all=false` | 复权因子刷新作业：all=true 全量（约 5 分钟）；否则池/持仓 + 到期的（同样限量，摘要里写明顺延几只） |
 | `GET /api/bars/{symbol}?from&to&adjust=none|forward|backward` | K 线（默认最近 90 天）；复权在读取层计算 |
@@ -91,7 +97,7 @@
 | `GET /api/bars/calendar?from&to` | 交易日列表（默认最近一年）。`source=FUTU` 券商给的，`DERIVED` 从日 K 线反推 |
 | `GET /api/bars/gaps?from&to&limit` | 对照交易日历深扫缺口（默认全历史）。**前收连续性检查查不出这类问题**：券商缺数时它自己的前收与缺口自洽 |
 | `POST /api/bars/cleanup/phantom?apply=false` | 幽灵 K 线订正：落在交易日历之外的 K 线（券商在美股假日给过脏数据）。默认只试跑列清单，`apply=true` 才真删 |
-| `GET /api/bars/audit?date=` | 日线数据审计（默认最近应有收盘 K 的交易日）：传入的日期若在日历里是休市日，只回一条 `calendar` 检查并判通过；completeness / sanity / continuity 为关键项，rehab / syncErrors / incrementJob / gateway 为提示项；`ok` = 关键项全过 |
+| `GET /api/bars/audit?date=` | 日线数据审计（默认最近应有收盘 K 的交易日）：传入的日期若在日历里是休市日，只回一条 `calendar` 检查并判通过；completeness / sanity / continuity 为关键项，rehab / syncErrors / incrementJob / calendarCoverage / historyGaps / phantomBars / unsettledBars / gateway 为提示项；`ok` = 关键项全过。`unsettledBars`：收盘落定（美东 16:15）前写入的当天 K 线，可能是盘中价，下一次增量自动重拉覆盖 |
 | `GET /api/bars/coverage` | 行数/标的数/最早最新、全量/池/持仓规模、已覆盖数、复权因子覆盖数、未解析数、错误数、历史额度、运行中的作业 |
 | `GET /api/bars/quota` | 历史额度（7 天滚动） |
 | `GET /api/jobs?limit=` / `GET /api/jobs/{id}` / `POST /api/jobs/cancel` | 作业记录与取消（在下一批边界停下） |
@@ -107,7 +113,7 @@
 | `GET /api/fundamentals/{symbol}/reports?statement&limit` | 财报期次与数据项；statement 取 `income`/`balance_sheet`/`cash_flow`/`main_index` |
 | `GET /api/fundamentals/coverage` | 覆盖：最新估值日期、当天有估值的只数、财报期数、池里有财报的只数 |
 | `GET /api/fundamentals/audit?date=` | 基本面审计；休市日直接判过 |
-| `POST /api/fundamentals/valuation/refresh` | 估值快照作业（全量 ∪ 池 ∪ 持仓，一次 400 只） |
+| `POST /api/fundamentals/valuation/refresh` | 估值快照作业（全量 ∪ 池 ∪ 持仓，一次 400 只）。只在收盘窗口（交易日美东 16:15 至次日 04:00）内可触发，窗口外 409：盘中取到的是实时价，会覆盖上一交易日按收盘算的估值 |
 | `POST /api/fundamentals/financials/refresh?all=false` | 财报作业。`all=false` 只做池与持仓（约 80 秒，带公司简介）；`all=true` 做全量成分股（518 只约 41 分钟，不取简介） |
 
 读这些数据前要知道的三件事：
@@ -159,6 +165,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | `GET /api/quotes/{symbol}` | 单个；未订阅或尚未收到推送 → 404 |
 | `GET /api/quotes/stream` | SSE：`event: quotes`（数组，只含上一帧后变过的）每秒最多一帧；`event: status` 每 15 秒；连接 30 分钟超时，客户端自动重连 |
 | `GET /api/quotes/status` | enabled / paused / desired / subscribed / deferredUnsubscribe / quota（usedQuota、remainQuota、byType）/ cached / totalPushes / pushesLastMinute / lastPushAt / streamClients / lastError |
+| `GET /api/quotes/subscriptions` | 轻量的订阅集合状态：desired / subscribed / paused（不含额度与推送统计，那些看 `/status`） |
 | `POST /api/quotes/subscriptions/reconcile` | 对账：期望 = 池 ∪ 持仓；返回 desired / subscribed / added / removed / deferred / error |
 | `POST /api/quotes/subscriptions/pause` / `resume` | 暂停（反订阅全部、清缓存）/ 恢复 |
 

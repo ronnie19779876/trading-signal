@@ -113,6 +113,16 @@ class HoldingSyncServiceTest {
     }
 
     @Test
+    void 只剩现金管理工具时照常清掉HOLDING() {
+        // 盈透确实返回了持仓（SGOV），过滤掉现金管理工具后才为空：
+        // 2.0.2 前被当成"数据不完整"拦下，HOLDING 永远清不掉，每天快照 PARTIAL，手工 apply=true 也被拦
+        Plan plan = HoldingSyncService.plan(List.of(), false, List.of(member(1, PoolRole.HOLDING, null)), Map.of(1L, "AAA"));
+
+        assertThat(plan.blocked()).isNull();
+        assertThat(plan.changes()).extracting(Change::action, Change::symbol).containsExactly(tuple(Action.REMOVE, "AAA"));
+    }
+
+    @Test
     void 已经一致或都为空时无需变动() {
         assertThat(HoldingSyncService.plan(List.of(new Held(1L, "AAA")), List.of(member(1, PoolRole.HOLDING, null)), Map.of())
                 .changes()).isEmpty();

@@ -1,6 +1,7 @@
 package org.jdkxx.trader.core.account;
 
 import org.jdkxx.trader.core.marketdata.Jobs;
+import org.jdkxx.trader.core.marketdata.SnapshotWindow;
 import org.jdkxx.trader.core.marketdata.jobs.JobService;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.storage.account.AccountSnapshotRepository;

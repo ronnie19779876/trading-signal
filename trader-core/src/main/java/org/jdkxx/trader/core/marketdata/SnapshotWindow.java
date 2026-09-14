@@ -1,4 +1,4 @@
-package org.jdkxx.trader.core.account;
+package org.jdkxx.trader.core.marketdata;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -7,15 +7,17 @@ import java.util.Optional;
 import java.util.function.Predicate;
 
 /**
- * 账户快照的时间窗口：交易日美东 16:15（收盘数据落定）到次日 04:00（盘前开始、快照价不再是当日收盘）。
+ * 收盘快照的时间窗口：交易日美东 16:15（收盘数据落定）到次日 04:00（盘前开始、快照价不再是当日收盘）。
+ * 账户快照与估值快照共用。
  *
- * <p>为什么要窗口：盈透只给"现在"的持仓与资金，不给历史。窗口外拍到的持仓不属于任何一个交易日的收盘，
- * 过去漏掉的日子也补不回来。
+ * <p>为什么要窗口：盈透只给"现在"的持仓与资金，不给历史，窗口外拍到的持仓不属于任何一个交易日的收盘；
+ * 富途快照在盘中给的是实时价，窗口外取的估值会覆盖上一交易日按收盘算的市值与市盈率。
  */
 public final class SnapshotWindow {
 
-    static final LocalTime OPENS = LocalTime.of(16, 15);
-    static final LocalTime CLOSES = LocalTime.of(4, 0);
+    /** 收盘数据落定的时刻；K 线写库截止日也以它为界。 */
+    public static final LocalTime OPENS = LocalTime.of(16, 15);
+    public static final LocalTime CLOSES = LocalTime.of(4, 0);
 
     public static final String OUTSIDE = "现在不在账户快照窗口（交易日美东 16:15 至次日 04:00）。盈透只给当前持仓，过去的日子补不回来";
 

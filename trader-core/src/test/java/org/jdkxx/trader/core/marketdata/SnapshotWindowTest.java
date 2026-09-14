@@ -1,4 +1,4 @@
-package org.jdkxx.trader.core.account;
+package org.jdkxx.trader.core.marketdata;
 
 import org.junit.jupiter.api.Test;
 

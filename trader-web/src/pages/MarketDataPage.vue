@@ -16,7 +16,7 @@ const error = ref<string | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
 
 const newSymbol = ref('')
-const newRole = ref<'POOL' | 'HOLDING' | 'BENCHMARK'>('POOL')
+const newRole = ref<'POOL' | 'BENCHMARK'>('POOL')
 
 const barSymbol = ref('AAPL')
 const barFrom = ref(new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10))

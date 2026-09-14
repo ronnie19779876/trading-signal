@@ -1,6 +1,7 @@
 package org.jdkxx.trader.core.marketdata.bars;
 
 import org.jdkxx.trader.core.marketdata.MarketDataProperties;
+import org.jdkxx.trader.core.marketdata.SnapshotWindow;
 import org.jdkxx.trader.core.marketdata.jobs.JobContext;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
 import org.jdkxx.trader.domain.Market;
@@ -29,7 +30,7 @@ public class DailyIncrementService {
 
     private static final Logger log = LoggerFactory.getLogger(DailyIncrementService.class);
     /** 美股收盘 16:00 ET；给券商落数据留 15 分钟，之前不把"今天"当成应有的收盘 K。 */
-    static final LocalTime CLOSE_SETTLED = LocalTime.of(16, 15);
+    static final LocalTime CLOSE_SETTLED = SnapshotWindow.OPENS;
 
     private final MarketDataProperties props;
     private final MarketDataGateway gateway;
@@ -65,7 +66,8 @@ public class DailyIncrementService {
             return "交易日历为空，未做增量";
         }
         List<LocalDate> calendar = tradingDays.between(Market.US, today.minusYears(5), expected);
-        Map<Long, LocalDate> latest = bars.latestDates();
+        // 只认收盘落定后写入的：盘中写进来的当天那根当作缺失，重叠补拉时覆盖掉
+        Map<Long, LocalDate> latest = bars.latestSettledDates(zone, CLOSE_SETTLED);
 
         List<InstrumentRow> targets = props.refresh().universeIncrement() ? union(scope.universe(), scope.poolAndHoldings()) : scope.poolAndHoldings();
         Map<Long, Integer> plan = new LinkedHashMap<>();
@@ -79,7 +81,7 @@ public class DailyIncrementService {
         ctx.progress("刷新复权因子（池/持仓每日，全量每周）");
         String rehab = deep.refreshRehab(false, ctx);
         return "增量到 " + expected + "：目标 " + targets.size() + " 只，需补 " + r.instruments() + " 只，成功 " + r.ok() + "，失败 " + r.failed()
-                + "，写入 K 线 " + r.bars() + "；" + rehab;
+                + "，写入 K 线 " + r.bars() + (r.unsettled() > 0 ? "（丢弃未收盘 " + r.unsettled() + " 根）" : "") + "；" + rehab;
     }
 
     /** 当前时刻应当已经有收盘 K 的最近交易日。 */

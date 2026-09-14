@@ -12,18 +12,32 @@ import java.util.Optional;
  * <p>为什么需要它：开发库与生产库的 JDBC URL 只差一个后缀，复制一次配置就可能把开发实例接到生产库上，
  * 而且<b>接错了数据看起来完全正常</b>。所以在库里刻一个标记，启动时比对，不一致就起不来。
  *
- * <p>自动盖章只发生在<b>全新的空库</b>上：判据是"本次启动前库里没有任何 Flyway 迁移记录"
- * （由 Flyway 的 MigrateResult.initialSchemaVersion 给出），而不是"标记为空"。
- * 否则第一个连上的实例可以认领任何库，一个装着数据的库会被悄悄改名。
+ * <p><b>判定必须在迁移之前</b>：2.0.2 前先迁移后校验，开发实例误连生产库时，还没发布的迁移会先在生产库上执行，
+ * 守卫才拒绝启动——拦住了启动，却没拦住表结构被改。
+ *
+ * <p>自动盖章只发生在<b>全新的空库</b>上：判据是"库里没有 Flyway 迁移记录表"，而不是"标记为空"。
+ * 否则第一个连上的实例可以认领任何库，一个装着数据的库会被悄悄改名。标记表由迁移建出，所以盖章在迁移之后。
  */
 public final class EnvironmentCheck {
 
     private static final Logger log = LoggerFactory.getLogger(EnvironmentCheck.class);
 
+    /** 迁移前判定的结果。不能放行的情形直接抛异常。 */
+    public enum Decision {
+        /** 标记与声明一致 */
+        MATCHED,
+        /** 全新空库：迁移建出标记表后盖章 */
+        STAMP_AFTER_MIGRATION
+    }
+
     /** 标记的读写。 */
     public interface MarkerStore {
 
+        /** 环境标记；标记表还不存在（空库）时为空。 */
         Optional<String> marker();
+
+        /** 库里是否已有 Flyway 迁移记录表。 */
+        boolean hasMigrationHistory();
 
         String currentDatabase();
 
@@ -33,14 +47,12 @@ public final class EnvironmentCheck {
     private EnvironmentCheck() {
     }
 
-    /**
-     * @param freshDatabase 本次启动前库里没有任何迁移记录（Flyway 刚在空库上建出了全部表）
-     */
-    public static void verify(MarkerStore store, AppEnvironment declared, boolean freshDatabase) {
+    /** 迁移<b>之前</b>调用：标记不一致、或有表结构却没有标记时抛异常，迁移一步都不做。 */
+    public static Decision verify(MarkerStore store, AppEnvironment declared) {
         Optional<String> actual = store.marker();
 
         if (actual.isEmpty()) {
-            if (!freshDatabase) {
+            if (store.hasMigrationHistory()) {
                 throw new IllegalStateException(("""
                         环境标记为空，但库「%s」在本次启动前已经存在表结构，拒绝自动盖章。
 
@@ -51,14 +63,12 @@ public final class EnvironmentCheck {
                             INSERT INTO app_environment (id, name, note) VALUES (1, '%s', '手工补标记');""")
                         .formatted(store.currentDatabase(), declared, declared));
             }
-            store.stamp(declared, "空库首次启动自动写入");
-            log.info("空库首次启动，已给库「{}」盖上环境标记 {}，此库从此只接受 {} 实例", store.currentDatabase(), declared, declared);
-            return;
+            return Decision.STAMP_AFTER_MIGRATION;
         }
 
         if (!actual.get().equals(declared.name())) {
             throw new IllegalStateException(("""
-                    环境不匹配，拒绝启动。
+                    环境不匹配，拒绝启动（未执行任何迁移）。
 
                       本实例声明:   %s   （trader.environment）
                       数据库标记为: %s   （app_environment 表）
@@ -72,5 +82,12 @@ public final class EnvironmentCheck {
         }
 
         log.info("环境校验通过：{} 实例连接库「{}」（标记一致）", declared, store.currentDatabase());
+        return Decision.MATCHED;
+    }
+
+    /** 全新空库迁移完成后盖章。 */
+    public static void stampFresh(MarkerStore store, AppEnvironment declared) {
+        store.stamp(declared, "空库首次启动自动写入");
+        log.info("空库首次启动，已给库「{}」盖上环境标记 {}，此库从此只接受 {} 实例", store.currentDatabase(), declared, declared);
     }
 }

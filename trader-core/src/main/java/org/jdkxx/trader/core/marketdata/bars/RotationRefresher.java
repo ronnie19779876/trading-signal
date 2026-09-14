@@ -29,7 +29,8 @@ public class RotationRefresher {
     private static final Logger log = LoggerFactory.getLogger(RotationRefresher.class);
     public static final String SOURCE = "FUTU_KL";
 
-    public record Result(int instruments, int ok, int failed, long bars) {
+    /** @param unsettled 晚于写库截止日、没有写入的 K 线根数（盘中触发时当天那根） */
+    public record Result(int instruments, int ok, int failed, long bars, long unsettled) {
     }
 
     /** 轮转前后的钩子：暂停/恢复实时订阅，并给出本轮可用的批次上限（≤0 表示用配置值）。 */
@@ -49,15 +50,17 @@ public class RotationRefresher {
     private final MarketDataGateway gateway;
     private final DailyBarRepository bars;
     private final BarSyncStateRepository states;
+    private final SettledCutoff cutoff;
     private final Sleeper sleeper;
     private volatile QuotaCoordinator coordinator = QuotaCoordinator.NONE;
 
     public RotationRefresher(MarketDataProperties.Refresh props, MarketDataGateway gateway, DailyBarRepository bars,
-                             BarSyncStateRepository states, Sleeper sleeper) {
+                             BarSyncStateRepository states, SettledCutoff cutoff, Sleeper sleeper) {
         this.props = props;
         this.gateway = gateway;
         this.bars = bars;
         this.states = states;
+        this.cutoff = cutoff;
         this.sleeper = sleeper;
     }
 
@@ -79,7 +82,7 @@ public class RotationRefresher {
     public Result refresh(List<InstrumentRow> targets, ToIntFunction<InstrumentRow> countFor, String label, JobContext ctx) {
         List<InstrumentRow> todo = targets.stream().filter(r -> countFor.applyAsInt(r) > 0).toList();
         if (todo.isEmpty()) {
-            return new Result(0, 0, 0, 0);
+            return new Result(0, 0, 0, 0, 0);
         }
         int limit = coordinator.beforeRefresh();
         int batchSize = Math.max(1, limit > 0 ? Math.min(props.batchSize(), limit) : props.batchSize());
@@ -94,6 +97,7 @@ public class RotationRefresher {
         int ok = 0;
         int failed = 0;
         long total = 0;
+        long unsettled = 0;
         int done = 0;
         for (List<InstrumentRow> batch : batches(todo, batchSize)) {
             if (ctx.cancelled()) {
@@ -111,10 +115,14 @@ public class RotationRefresher {
                 done += batch.size();
                 continue;
             }
+            // 每批取一次：轮转可能跨过 16:15，跨过之后当天那根就能写了
+            LocalDate cut = cutoff.current();
             for (InstrumentRow row : batch) {
                 int n = countFor.applyAsInt(row);
                 try {
-                    List<DailyBar> list = gateway.recentDailyBars(row.instrument(), n).get(30, TimeUnit.SECONDS);
+                    List<DailyBar> fetched = gateway.recentDailyBars(row.instrument(), n).get(30, TimeUnit.SECONDS);
+                    List<DailyBar> list = SettledCutoff.settled(fetched, cut);
+                    unsettled += fetched.size() - list.size();
                     int written = bars.upsertAll(row.id(), list, SOURCE);
                     total += written;
                     LocalDate earliest = list.isEmpty() ? null : list.get(0).tradeDate();
@@ -150,6 +158,9 @@ public class RotationRefresher {
         if (failed > 0) {
             ctx.partial(failed + " 只失败");
         }
-        return new Result(todo.size(), ok, failed, total);
+        if (unsettled > 0) {
+            log.info("{}：丢弃 {} 根晚于写库截止日的未收盘 K 线", label, unsettled);
+        }
+        return new Result(todo.size(), ok, failed, total, unsettled);
     }
 }

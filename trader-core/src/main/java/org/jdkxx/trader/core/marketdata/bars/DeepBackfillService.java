@@ -16,7 +16,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.LocalDate;
-import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -35,17 +34,18 @@ public class DeepBackfillService {
     private final RehabFactorRepository rehabs;
     private final BarSyncStateRepository states;
     private final UniverseScope scope;
-    private final ZoneId zone;
+    private final SettledCutoff cutoff;
 
     public DeepBackfillService(MarketDataProperties props, MarketDataGateway gateway, DailyBarRepository bars,
-                               RehabFactorRepository rehabs, BarSyncStateRepository states, UniverseScope scope) {
+                               RehabFactorRepository rehabs, BarSyncStateRepository states, UniverseScope scope,
+                               SettledCutoff cutoff) {
         this.props = props;
         this.gateway = gateway;
         this.bars = bars;
         this.rehabs = rehabs;
         this.states = states;
         this.scope = scope;
-        this.zone = ZoneId.of(props.zone());
+        this.cutoff = cutoff;
     }
 
     /** 额度剩余减去预留后可用于本轮的数量。 */
@@ -60,9 +60,14 @@ public class DeepBackfillService {
             states.error(row.id(), "待历史额度（7 天滚动窗口）");
             throw new QuotaExhaustedException(row.symbol());
         }
-        LocalDate today = LocalDate.now(zone);
-        ctx.progress("深度回补 " + row.symbol() + "：拉取 " + props.history().from() + " ～ " + today);
-        List<DailyBar> list = gateway.historyDailyBars(row.instrument(), props.history().from(), today).get(180, TimeUnit.SECONDS);
+        // 截到已收盘落定的交易日：盘中触发（盈透盘中重连后的持仓同步、手工加池）不能把当天没收完的那根存下来
+        LocalDate cut = cutoff.current();
+        ctx.progress("深度回补 " + row.symbol() + "：拉取 " + props.history().from() + " ～ " + cut);
+        List<DailyBar> fetched = gateway.historyDailyBars(row.instrument(), props.history().from(), cut).get(180, TimeUnit.SECONDS);
+        List<DailyBar> list = SettledCutoff.settled(fetched, cut);
+        if (list.size() < fetched.size()) {
+            log.info("{} 深度回补丢弃 {} 根晚于 {} 的未收盘 K 线", row.symbol(), fetched.size() - list.size(), cut);
+        }
         int written = bars.upsertAll(row.id(), list, SOURCE);
         refreshRehab(row);
         LocalDate earliest = list.isEmpty() ? null : list.get(0).tradeDate();

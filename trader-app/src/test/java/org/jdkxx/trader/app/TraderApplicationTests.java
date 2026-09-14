@@ -45,7 +45,7 @@ class TraderApplicationTests {
         mvc.perform(get("/api/gateways/ibkr"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("DISABLED"));
-        mvc.perform(post("/api/gateways/ibkr/connect"))
+        mvc.perform(post("/api/gateways/ibkr/connect").header("X-Trader-Client", "test"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("STATE_CONFLICT"));
         mvc.perform(get("/api/gateways/xyz"))
@@ -53,6 +53,16 @@ class TraderApplicationTests {
         mvc.perform(get("/api/gateways/events"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(0)));
+    }
+
+    /** 本机请求防护确实装配进了应用（不只是单测里手工挂上的过滤器）。 */
+    @Test
+    void 写请求缺自定义头被拒_非回环Host被拒() throws Exception {
+        mvc.perform(post("/api/gateways/ibkr/connect"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("REQUEST_REJECTED"));
+        mvc.perform(get("/api/system/info").header("Host", "evil.example:8093"))
+                .andExpect(status().isForbidden());
     }
 
     /** 在真实的处理器映射下核对：深链接转发给首页，actuator 与接口不被回退抢走。 */

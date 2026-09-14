@@ -176,6 +176,46 @@ class QuoteSubscriptionServiceTest {
     }
 
     @Test
+    void 开发实例轮转前后都不订阅() {
+        // 不自动订阅、也没手工对账过：2.0.2 前轮转结束无条件对账，开发实例每跑一次轮转就跟着订阅，与生产同占额度
+        QuoteSubscriptionService s = service(true, false);
+
+        s.beforeRefresh();
+        s.afterRefresh();
+
+        assertThat(subs).isEmpty();
+        assertThat(s.paused()).as("轮转自己的暂停要解除，免得之后手工对账被挡").isFalse();
+    }
+
+    @Test
+    void 不自动订阅但轮转前有订阅的_轮转后重新订阅() {
+        QuoteSubscriptionService s = service(true, false);
+        s.reconcile();
+        now.set(now.get().plusSeconds(120));
+
+        s.beforeRefresh();
+        assertThat(s.status().subscribed()).isZero();
+        s.afterRefresh();
+
+        assertThat(s.status().subscribed()).isEqualTo(2);
+    }
+
+    @Test
+    void 手工暂停的实例_轮转结束后保持暂停() {
+        QuoteSubscriptionService s = service(true, true);
+        s.reconcile();
+        now.set(now.get().plusSeconds(120));
+        s.pause();
+
+        s.beforeRefresh();
+        s.afterRefresh();
+
+        assertThat(s.paused()).isTrue();
+        assertThat(s.status().subscribed()).isZero();
+        assertThat(subs).hasSize(1);
+    }
+
+    @Test
     void 盈透的连接事件不影响() {
         QuoteSubscriptionService s = service(true);
         s.onConnected(Broker.IBKR, false);

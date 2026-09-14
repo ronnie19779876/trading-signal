@@ -58,6 +58,29 @@ class FutuReplyRegistryTest {
     }
 
     @Test
+    void 会话结束后暂存的旧回复作废_新连接同序列号拿不到() {
+        // 每个 FTAPI_Conn 的序列号从 1 起：旧连接超时后迟到的回复，不能配给新连接上同序列号的请求（2.0.2 前会）
+        FutuReplyRegistry r = new FutuReplyRegistry("t", scheduler, Runnable::run, Duration.ofMillis(100));
+        r.onReply(1, response(0, "旧连接迟到的回复"));
+
+        r.reset(new IllegalStateException("会话结束"));
+        CompletableFuture<GetGlobalState.Response> f = r.call("x", GetGlobalState.Response.class, () -> 1);
+
+        assertThatThrownBy(() -> f.get(2, TimeUnit.SECONDS)).hasCauseInstanceOf(RequestTimeoutException.class);
+    }
+
+    @Test
+    void 会话结束让在途请求失败() {
+        FutuReplyRegistry r = new FutuReplyRegistry("t", scheduler, Runnable::run, Duration.ofSeconds(5));
+        CompletableFuture<GetGlobalState.Response> f = r.call("x", GetGlobalState.Response.class, () -> 2);
+
+        r.reset(new IllegalStateException("会话结束"));
+
+        assertThat(f).isCompletedExceptionally();
+        assertThat(r.pendingCount()).isZero();
+    }
+
+    @Test
     void 发送失败与超时() {
         FutuReplyRegistry r = new FutuReplyRegistry("t", scheduler, Runnable::run, Duration.ofMillis(50));
         assertThat(r.call("x", GetGlobalState.Response.class, () -> 0)).isCompletedExceptionally();

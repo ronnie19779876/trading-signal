@@ -25,7 +25,14 @@ public class FundamentalsFacade {
         this.scope = scope;
     }
 
+    /**
+     * 手工触发在收盘窗口外直接拒绝（409），不留一条"未取快照"的作业记录；
+     * 定时与补跑照常提交，由作业体自己判断窗口并跳过。
+     */
     public long refreshValuation(String trigger) {
+        if ("MANUAL".equals(trigger) && valuation.asOfDate().isEmpty()) {
+            throw new IllegalStateException(ValuationSnapshotService.OUTSIDE);
+        }
         return jobs.submit(Jobs.VALUATION_SNAPSHOT, trigger, valuation::run);
     }
 

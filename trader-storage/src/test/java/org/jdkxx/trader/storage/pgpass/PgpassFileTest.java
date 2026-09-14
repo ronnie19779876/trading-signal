@@ -30,7 +30,7 @@ class PgpassFileTest {
         JdbcUrl prod = JdbcUrl.parse("jdbc:postgresql://localhost/db_trader").orElseThrow();
         assertThat(PgpassFile.lookup(file, prod, "trader")).contains("prod-secret");
 
-        JdbcUrl other = JdbcUrl.parse("jdbc:postgresql://10.0.0.9:6543/other?ssl=true").orElseThrow();
+        JdbcUrl other = JdbcUrl.parse("jdbc:postgresql://10.0.0.9:6543/other?ssl=true").orElseThrow(); // secrets-ok：测试编的私网地址
         assertThat(PgpassFile.lookup(file, other, "trader")).contains("wild-secret");
 
         assertThat(PgpassFile.lookup(file, dev, "someone")).isEmpty();

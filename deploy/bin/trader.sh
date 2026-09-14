@@ -57,7 +57,8 @@ stop() {
     if ! is_running; then echo "未在运行"; rm -f "$PID_FILE"; return 0; fi
     local pid; pid="$(cat "$PID_FILE")"
     echo "停止 trading-signal（pid $pid）—— 调用 /actuator/shutdown ..."
-    curl -s -X POST "http://127.0.0.1:$(app_port)/actuator/shutdown" >/dev/null || true
+    # X-Trader-Client：服务端对缺这个头的写请求返回 403（2.0.2 起）
+    curl -s -X POST -H 'X-Trader-Client: script' "http://127.0.0.1:$(app_port)/actuator/shutdown" >/dev/null || true
     for ((i = 0; i < STOP_TIMEOUT; i++)); do
         kill -0 "$pid" 2>/dev/null || { rm -f "$PID_FILE"; echo "已停止"; return 0; }
         sleep 1

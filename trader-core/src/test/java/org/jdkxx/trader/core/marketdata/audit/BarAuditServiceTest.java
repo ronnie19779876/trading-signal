@@ -124,6 +124,40 @@ class BarAuditServiceTest {
     }
 
     @Test
+    void 收盘落定前写入的K线只提示不判失败() {
+        TradingDayRepository days = mock(TradingDayRepository.class);
+        when(days.covers(eq(Market.US), any())).thenReturn(false);
+        when(days.coverage(Market.US)).thenReturn(
+                new TradingDayRepository.Coverage(LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 18), 5051, 2519, 2532));
+        DailyBarRepository bars = mock(DailyBarRepository.class);
+        when(bars.instrumentIdsWithBarOn(any())).thenReturn(Set.of(1L));
+        when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(1, 0, 0, 0, 0, 0));
+        when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
+        when(bars.coverageByInstrument()).thenReturn(List.of(
+                new DailyBarRepository.InstrumentCoverage(1L, 5000, LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 9))));
+        // 美东 11:00 写入的 09-09 那根：盘中深度回补留下的
+        when(bars.unsettledBars(any(), any(), anyInt())).thenReturn(List.of(
+                new DailyBarRepository.UnsettledBar(1L, LocalDate.of(2026, 9, 9), java.time.Instant.parse("2026-09-09T15:00:00Z"))));
+        UniverseScope scope = mock(UniverseScope.class);
+        when(scope.universe()).thenReturn(List.of(row(1, "AAPL")));
+        when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "AAPL")));
+        BarSyncStateRepository states = mock(BarSyncStateRepository.class);
+        when(states.findAll()).thenReturn(List.of());
+        JobRunRepository jobs = mock(JobRunRepository.class);
+        when(jobs.latestOf(any())).thenReturn(Optional.empty());
+
+        BarAuditService.Report r = new BarAuditService(props(), scope, bars, days, states, jobs, null, Clock.systemUTC())
+                .audit(LocalDate.of(2026, 9, 9));
+
+        BarAuditService.Check c = r.checks().stream().filter(x -> x.name().equals("unsettledBars")).findFirst().orElseThrow();
+        assertThat(c.ok()).isFalse();
+        assertThat(c.critical()).as("下一次增量会自动重拉覆盖").isFalse();
+        assertThat(c.samples()).singleElement().asString().contains("AAPL").contains("2026-09-09").contains("11:00");
+        assertThat(r.summary()).containsEntry("unsettledBars", 1);
+        assertThat(r.ok()).isTrue();
+    }
+
+    @Test
     void 日历没覆盖到最早K线时给出提示但不判失败() {
         TradingDayRepository days = mock(TradingDayRepository.class);
         when(days.covers(eq(Market.US), any())).thenReturn(false);

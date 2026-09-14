@@ -14,6 +14,12 @@ import org.jdkxx.trader.gateway.support.Transport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.net.ConnectException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -24,19 +30,25 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
  * 一条到 IB Gateway / TWS 的 socket 会话及其线程：
  * <ul>
- *   <li>{@code ibkr-connect}：跑同步握手的 eConnect（几秒内返回，由 supervisor 的 connect-timeout 兜底）</li>
+ *   <li>{@code ibkr-connect}：建 socket（带连接超时）并跑同步握手的 eConnect（握手期带读超时）</li>
  *   <li>{@code ibkr-reader}：SDK 的 EReader，把报文切进队列</li>
  *   <li>{@code ibkr-pump}：循环 {@code waitForSignal / processMsgs}，所有 EWrapper 回调在这条线程上</li>
  * </ul>
- * 每次 open() 新建一套（EClientSocket 不复用）；就绪信号是 nextValidId。
+ * 每次 open() 新建一套（EClientSocket 与 EWrapper 都不复用），回调只作用于产生它的会话；就绪信号是 nextValidId。
+ *
+ * <p>锁纪律：EClientSocket 的 eConnect / isConnected / eDisconnect 都是 synchronized（10.30.01 javap 核实），
+ * 握手卡住时 eConnect 一直占着这把锁。状态机会在自己的锁里调 open() / close()，所以这两个方法不碰 client 的锁：
+ * 先关底层 socket 把卡住的读顶出来，eDisconnect 放到 dispatch 线程上做。
+ * 2.0.2 前 close() 里直接调 isConnected()，握手无应答时状态机的调度线程被永久挂起。
  */
-final class IbkrConnection implements Transport, IbkrWrapper.ConnectionEvents {
+final class IbkrConnection implements Transport {
 
     private static final Logger log = LoggerFactory.getLogger(IbkrConnection.class);
 
@@ -45,7 +57,6 @@ final class IbkrConnection implements Transport, IbkrWrapper.ConnectionEvents {
     private final IbkrFacts facts;
     private final Executor dispatch;
     private final RateLimiter limiter;
-    private final IbkrWrapper wrapper;
     private final ExecutorService connectExecutor;
     private final RepeatSuppressor errorLog = new RepeatSuppressor(Duration.ofMinutes(10), Clock.systemUTC());
     private final ConcurrentLinkedQueue<CompletableFuture<Instant>> timeWaiters = new ConcurrentLinkedQueue<>();
@@ -60,6 +71,7 @@ final class IbkrConnection implements Transport, IbkrWrapper.ConnectionEvents {
         final CompletableFuture<Void> ready = new CompletableFuture<>();
         final AtomicBoolean closed = new AtomicBoolean();
         volatile EClientSocket client;
+        volatile Socket socket;
         volatile EReader reader;
         volatile Thread pump;
         volatile boolean intentional;
@@ -72,7 +84,6 @@ final class IbkrConnection implements Transport, IbkrWrapper.ConnectionEvents {
         this.facts = facts;
         this.dispatch = dispatch;
         this.limiter = limiter;
-        this.wrapper = new IbkrWrapper(this, registry);
         this.connectExecutor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "ibkr-connect");
             t.setDaemon(true);
@@ -92,33 +103,67 @@ final class IbkrConnection implements Transport, IbkrWrapper.ConnectionEvents {
 
     @Override
     public CompletableFuture<Void> open() {
+        Session old = session;
+        if (old != null) {
+            // 先结束旧会话：它的在途请求在新会话有请求之前就失败掉，旧 socket 也不会留着占 client-id
+            old.intentional = true;
+            closeSession(old, "被新的连接取代");
+        }
         Session s = new Session();
-        s.client = new EClientSocket(wrapper, s.signal);
+        s.client = new EClientSocket(new IbkrWrapper(new SessionEvents(s), registry), s.signal);
         session = s;
         facts.reset();
-        connectExecutor.execute(() -> {
-            try {
-                s.client.eConnect(props.host(), props.port(), props.clientId());
-                if (!s.client.isConnected()) {
-                    s.ready.completeExceptionally(new GatewayException(Broker.IBKR, 502,
-                            "连不上 IB Gateway / TWS：确认网关在运行、端口与隧道正确、API 设置里允许了本机连接", true));
-                    return;
-                }
-                facts.serverVersion(s.client.serverVersion());
-                facts.connectionTime(s.client.getTwsConnectionTime());
-                s.reader = new EReader(s.client, s.signal);
-                s.reader.setName("ibkr-reader");
-                s.reader.setDaemon(true);
-                s.reader.start();
-                s.pump = new Thread(() -> pump(s), "ibkr-pump");
-                s.pump.setDaemon(true);
-                s.pump.start();
-            } catch (Throwable t) {
-                s.ready.completeExceptionally(new GatewayException(Broker.IBKR, 0, "建连失败：" + t, true, t));
-                closeSession(s);
-            }
-        });
+        connectExecutor.execute(() -> handshake(s));
         return s.ready;
+    }
+
+    private void handshake(Session s) {
+        int timeoutMs = (int) Math.max(1, props.connectTimeout().toMillis());
+        Socket socket = new Socket();
+        s.socket = socket;
+        try {
+            if (s.closed.get()) {
+                closeQuietly(socket);
+                return;
+            }
+            socket.connect(new InetSocketAddress(props.host(), props.port()), timeoutMs);
+            // 握手期读超时：端口在监听、对端不应答时（隧道本地端口还在、链路已断），SDK 读服务器版本号不会无限阻塞
+            socket.setSoTimeout(timeoutMs);
+            s.client.eConnect(socket, props.clientId());
+            if (!s.client.isConnected()) {
+                s.ready.completeExceptionally(new GatewayException(Broker.IBKR, 502,
+                        "连不上 IB Gateway / TWS：确认网关在运行、端口与隧道正确、API 设置里允许了本机连接", true));
+                closeSession(s, "握手失败");
+                return;
+            }
+            socket.setSoTimeout(0);
+            facts.serverVersion(s.client.serverVersion());
+            facts.connectionTime(s.client.getTwsConnectionTime());
+            s.reader = new EReader(s.client, s.signal);
+            s.reader.setName("ibkr-reader");
+            s.reader.setDaemon(true);
+            s.reader.start();
+            s.pump = new Thread(() -> pump(s), "ibkr-pump");
+            s.pump.setDaemon(true);
+            s.pump.start();
+        } catch (Throwable t) {
+            s.ready.completeExceptionally(new GatewayException(Broker.IBKR, 502, "建连失败：" + describeIo(t), true, t));
+            closeSession(s, "建连失败");
+        }
+    }
+
+    /** 不带异常原文：UnknownHostException 的消息就是主机名，而主机属于敏感配置。 */
+    private static String describeIo(Throwable t) {
+        if (t instanceof SocketTimeoutException) {
+            return "连接或握手超时（端口可达但对端没有应答，检查网关状态与隧道）";
+        }
+        if (t instanceof ConnectException) {
+            return "连接被拒绝或不可达（确认网关在运行、端口与隧道正确）";
+        }
+        if (t instanceof UnknownHostException) {
+            return "主机名解析失败";
+        }
+        return t.getClass().getSimpleName();
     }
 
     private void pump(Session s) {
@@ -140,19 +185,37 @@ final class IbkrConnection implements Transport, IbkrWrapper.ConnectionEvents {
             return;
         }
         s.intentional = true;
-        closeSession(s);
+        closeSession(s, "主动断开");
     }
 
-    private void closeSession(Session s) {
-        try {
-            if (s.client != null && s.client.isConnected()) {
-                s.client.eDisconnect();
-            }
-        } catch (RuntimeException e) {
-            log.warn("eDisconnect 出错：{}", e.toString());
+    /** 不碰 client 的对象锁（见类注释）；可以在任何线程、任何锁里调用。 */
+    private void closeSession(Session s, String reason) {
+        Socket socket = s.socket;
+        if (socket != null) {
+            closeQuietly(socket);   // 卡在握手读上的 eConnect 立即返回，client 的锁随之释放
         }
         s.signal.issueSignal();
-        sessionEnded(s, s.intentional ? "主动断开" : "连接已关闭");
+        sessionEnded(s, reason);
+        Runnable disconnect = () -> {
+            try {
+                s.client.eDisconnect();
+            } catch (RuntimeException e) {
+                log.debug("eDisconnect 出错：{}", e.toString());
+            }
+        };
+        try {
+            dispatch.execute(disconnect);
+        } catch (RejectedExecutionException e) {
+            disconnect.run();   // 关停中：socket 已关，这里不会久等
+        }
+    }
+
+    private static void closeQuietly(Socket socket) {
+        try {
+            socket.close();
+        } catch (IOException e) {
+            // ignore
+        }
     }
 
     private void sessionEnded(Session s, String reason) {
@@ -172,7 +235,20 @@ final class IbkrConnection implements Transport, IbkrWrapper.ConnectionEvents {
 
     @Override
     public CompletableFuture<Boolean> probe() {
-        return currentTime().thenApply(t -> true);
+        CompletableFuture<Instant> waiter = currentTime();
+        CompletableFuture<Boolean> probe = waiter.thenApply(t -> true);
+        // 心跳超时由状态机让 probe 失败；原等待者必须出队，否则之后每个应答都配给上一个已作废的等待者，心跳一直失败
+        probe.whenComplete((ok, ex) -> {
+            if (ex != null) {
+                timeWaiters.remove(waiter);
+            }
+        });
+        return probe;
+    }
+
+    @Override
+    public boolean isOpen() {
+        return isConnected();
     }
 
     // ------------------------------------------------------------------ 请求
@@ -185,10 +261,10 @@ final class IbkrConnection implements Transport, IbkrWrapper.ConnectionEvents {
 
     CompletableFuture<Instant> currentTime() {
         CompletableFuture<Instant> f = new CompletableFuture<>();
+        timeWaiters.add(f);   // 先入队再发：应答可能先于入队到达
         if (!send(EClientSocket::reqCurrentTime, f)) {
-            return f;
+            timeWaiters.remove(f);
         }
-        timeWaiters.add(f);
         return f;
     }
 
@@ -198,10 +274,10 @@ final class IbkrConnection implements Transport, IbkrWrapper.ConnectionEvents {
             return CompletableFuture.completedFuture(known);
         }
         CompletableFuture<List<String>> f = new CompletableFuture<>();
-        if (!send(EClientSocket::reqManagedAccts, f)) {
-            return f;
-        }
         accountWaiters.add(f);
+        if (!send(EClientSocket::reqManagedAccts, f)) {
+            accountWaiters.remove(f);
+        }
         return f;
     }
 
@@ -302,55 +378,80 @@ final class IbkrConnection implements Transport, IbkrWrapper.ConnectionEvents {
         connectExecutor.shutdownNow();
     }
 
-    // ------------------------------------------------------------------ ConnectionEvents（泵线程）
+    // ------------------------------------------------------------------ 连接级回调（泵线程）
 
-    @Override
-    public void onConnectAck() {
-        log.debug("TWS connectAck");
-    }
+    /** 绑定到一个会话的回调：旧会话迟到的 nextValidId / 断线不会作用到新会话上。 */
+    private final class SessionEvents implements IbkrWrapper.ConnectionEvents {
 
-    @Override
-    public void onNextValidId(int orderId) {
-        facts.nextOrderId(orderId);
-        Session s = session;
-        if (s != null && !s.ready.isDone()) {
-            errorLog.reset();
-            s.ready.complete(null);
+        private final Session s;
+
+        SessionEvents(Session s) {
+            this.s = s;
         }
-    }
 
-    @Override
-    public void onManagedAccounts(String accounts) {
-        List<String> list = Arrays.stream(accounts.split(","))
-                .map(String::trim)
-                .filter(a -> !a.isEmpty())
-                .toList();
-        facts.managedAccounts(list);
-        CompletableFuture<List<String>> w;
-        while ((w = accountWaiters.poll()) != null) {
-            CompletableFuture<List<String>> f = w;
-            dispatch.execute(() -> f.complete(list));
+        private boolean current() {
+            return session == s && !s.closed.get();
         }
-    }
 
-    @Override
-    public void onCurrentTime(long epochSeconds) {
-        CompletableFuture<Instant> w = timeWaiters.poll();
-        if (w != null) {
-            dispatch.execute(() -> w.complete(Instant.ofEpochSecond(epochSeconds)));
+        @Override
+        public void onConnectAck() {
+            log.debug("TWS connectAck");
         }
-    }
 
-    @Override
-    public void onConnectionClosed() {
-        Session s = session;
-        if (s != null) {
+        @Override
+        public void onNextValidId(int orderId) {
+            if (!current()) {
+                return;
+            }
+            facts.nextOrderId(orderId);
+            if (!s.ready.isDone()) {
+                errorLog.reset();
+                s.ready.complete(null);
+            }
+        }
+
+        @Override
+        public void onManagedAccounts(String accounts) {
+            if (!current()) {
+                return;
+            }
+            List<String> list = Arrays.stream(accounts.split(","))
+                    .map(String::trim)
+                    .filter(a -> !a.isEmpty())
+                    .toList();
+            facts.managedAccounts(list);
+            CompletableFuture<List<String>> w;
+            while ((w = accountWaiters.poll()) != null) {
+                CompletableFuture<List<String>> f = w;
+                dispatch.execute(() -> f.complete(list));
+            }
+        }
+
+        @Override
+        public void onCurrentTime(long epochSeconds) {
+            if (!current()) {
+                return;
+            }
+            CompletableFuture<Instant> w = timeWaiters.poll();
+            if (w != null) {
+                dispatch.execute(() -> w.complete(Instant.ofEpochSecond(epochSeconds)));
+            }
+        }
+
+        @Override
+        public void onConnectionClosed() {
             sessionEnded(s, "网关关闭了连接（每日重启 / 对端退出 / client-id 冲突）");
         }
+
+        @Override
+        public void onSystemMessage(int code, String message) {
+            if (current()) {
+                systemMessage(code, message);
+            }
+        }
     }
 
-    @Override
-    public void onSystemMessage(int code, String message) {
+    private void systemMessage(int code, String message) {
         switch (code) {
             case 2104, 2106, 2158 -> farm(message, "OK");
             case 2103, 2105 -> farm(message, "BROKEN");

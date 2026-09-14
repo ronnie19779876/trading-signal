@@ -26,6 +26,12 @@ class ConnectionSupervisorTest {
         final List<CompletableFuture<Void>> opens = new ArrayList<>();
         final List<CompletableFuture<Boolean>> probes = new ArrayList<>();
         int closes;
+        boolean open = true;
+
+        @Override
+        public boolean isOpen() {
+            return open;
+        }
 
         @Override
         public CompletableFuture<Void> open() {
@@ -170,6 +176,75 @@ class ConnectionSupervisorTest {
         scheduler.tick(Duration.ofMinutes(5));
         assertThat(supervisor.state()).isEqualTo(GatewayState.DISCONNECTED);
         assertThat(transport.opens).hasSize(1);
+    }
+
+    @Test
+    void 重连尝试进行中再调connect不重复建连() {
+        // 2.0.2 前：RECONNECTING 且尝试正在握手（reconnectTask 已清空）时 connect() 会再发起一次，
+        // 同一个 client-id 连两次互踢，旧尝试的 socket 也没人关
+        supervisor.connect();
+        transport.opens.get(0).completeExceptionally(new RuntimeException("502"));
+        scheduler.runPending();
+        scheduler.tick(Duration.ofSeconds(5));
+        assertThat(transport.opens).hasSize(2);
+        assertThat(supervisor.state()).isEqualTo(GatewayState.RECONNECTING);
+
+        CompletableFuture<Void> ready = supervisor.connect();
+
+        assertThat(transport.opens).hasSize(2);
+        transport.opens.get(1).complete(null);
+        scheduler.runPending();
+        assertThat(ready).isCompleted();
+    }
+
+    @Test
+    void 传输层断线回调转到调度线程处理() {
+        // SDK 回调线程拿着它自己的锁调进来；在这条线程上抢状态机的锁，与"状态机持锁调 SDK"加锁顺序相反会死锁
+        supervisor.connect();
+        transport.opens.get(0).complete(null);
+        scheduler.runPending();
+
+        supervisor.onTransportClosed("对端关闭");
+        assertThat(supervisor.state()).as("调用线程上不改状态").isEqualTo(GatewayState.CONNECTED);
+
+        scheduler.runPending();
+        assertThat(supervisor.state()).isEqualTo(GatewayState.RECONNECTING);
+    }
+
+    @Test
+    void 就绪后传输层已断开的不进入CONNECTED() {
+        supervisor.connect();
+        transport.open = false;                           // 握手刚完成就被网关断开
+        transport.opens.get(0).complete(null);
+        scheduler.runPending();
+
+        assertThat(supervisor.state()).isEqualTo(GatewayState.RECONNECTING);
+        assertThat(events).isEmpty();
+    }
+
+    @Test
+    void 不可重试的建连错误进入ERROR不再重连() {
+        CompletableFuture<Void> ready = supervisor.connect();
+        transport.opens.get(0).completeExceptionally(new GatewayException(Broker.FUTU, 0, "读取 RSA 私钥失败", false));
+        scheduler.runPending();
+
+        assertThat(supervisor.state()).isEqualTo(GatewayState.ERROR);
+        assertThat(ready).isCompletedExceptionally();
+        assertThat(events).containsExactly("error");
+        scheduler.tick(Duration.ofMinutes(5));
+        assertThat(transport.opens).hasSize(1);
+    }
+
+    @Test
+    void 已连接时的致命错误补发断开通知() {
+        supervisor.connect();
+        transport.opens.get(0).complete(null);
+        scheduler.runPending();
+
+        supervisor.reportFatal(new GatewayException(Broker.IBKR, 0, "账户不在受管列表", false));
+        scheduler.runPending();
+
+        assertThat(events).containsExactly("connected", "disconnected", "error");
     }
 
     @Test

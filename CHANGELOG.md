@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## 2.0.2（未发布）
+
+全量代码审查后的修复，设计与实测见 ARCHITECTURE §17。
+
+**升级注意**：写接口从此必须带请求头 `X-Trader-Client`（`Host` 只认回环）。前端、`bin/trader.sh`、`scripts/run-local.sh`
+已带；Postman 集合要重新导入；手工 curl 加 `-H 'X-Trader-Client: cli'`。`bin/trader.sh` 必须随包一起更新。
+
+- 数据：盘中触发的回补 / 轮转不再写入当天未收盘的 K 线，已写入的由下一次增量自动重拉，日线审计加 `unsettledBars`；
+  估值快照只在收盘窗口内取，窗口外手工刷新 409；开发实例跑轮转后不再自动订阅实时报价；环境守卫改为先校验后迁移。
+- 盈透：握手无应答时状态机不再挂死（自建带超时的 socket，开关连接不碰 SDK 的锁）；会话各自绑定回调，重连中不重复建连；
+  心跳等待者超时出队；受管账户列表缺失时不再放行。
+- 富途：历史 K 线翻页不再占着回复线程等限流；回复注册表按会话隔离、只收当前连接的回复，K 线回复核对标的；
+  私钥报错不带路径且不再无限重试。状态机：SDK 回调转调度线程，不可重试错误进入 ERROR，刚就绪即断开不算连上。
+- 防护：新增 `LocalRequestGuardFilter`（挡本机浏览器的跨站 POST 与 DNS rebinding）；`check-secrets.sh` 修掉四处静默漏报
+  （IPv4 与明文口令两个模式此前从未生效）。
+- 其它：HOLDING 同步在只剩现金管理工具时照常执行；systemd 去掉 `ExecReload`；`package.sh` 拒绝 SNAPSHOT；
+  `.gitignore` 排除私钥文件；API 文档、Postman 集合、前端类型三处同步补齐，集合的写操作单独成组。
+
 ## 2.0.1（2026-09-14 发布）
 
 - 修：前端深链接 404。前端用 history 路由，后端原先没有回退，直接打开或刷新 `/account`、`/marketdata`、`/fundamentals`

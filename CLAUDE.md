@@ -107,6 +107,11 @@ storage → common ；ai → common
 | 深度回补会把券商的脏 K 线**重新拉回来**：2026-09-14 把 SPY 改成 BENCHMARK，`POST /api/pool` 自动重新回补 20 年，1.1.0 已订正的 3 根假日脏 K 线又回来了 | 改池角色或加池都会触发深度回补；之后看巡检的 `phantomBars`，按提示 `POST /api/bars/cleanup/phantom` 先试跑再订正 |
 | 前端 history 路由在后端没有回退时，直接打开或刷新深链接是 404，但从首页点进去完全正常，页面自测发现不了（2.0.1 前一直如此） | `SpaForwardController` 转发单段路径；新增前端路由保持单段、不含点，`SpaForwardControllerTest` 会核对 |
 | 新增 `@Scheduled` 用的配置项只写在 `MarketDataProperties` 的 `@DefaultValue` 上不够——**占位符解析不看记录默认值**。开发实例 `schedule-enabled=false` 不装配调度器，本地全绿、一上生产就起不来 | 新 cron 必须同时写进 jar 内 `application.yml`；`ScheduledPlaceholdersTest` 会守住这条 |
+| 盈透 `EClientSocket` 的 `eConnect / isConnected / eDisconnect` 都是 synchronized（javap 核实），SDK 自带的 `eConnect(host,port,id)` 建 socket 与读服务器版本都**没有超时**。端口在监听、对端不应答（隧道本地端口还在、链路已断）时握手一直占着 client 锁；2.0.2 前状态机在自己的锁里调 `close()→isConnected()`，调度线程挂起，状态查询、断开、关停全卡死，直到对端关 socket | 自建 Socket（连接与握手读都带超时）再 `eConnect(Socket, clientId)`；`close()` 先关底层 socket，`eDisconnect` 放 dispatch；`Transport.open/close` 不得等 SDK 的锁，SDK 回调进状态机先转调度线程。`IbkrHandshakeTimeoutTest`（本地黑洞端口）守住 |
+| 盘中触发的深度回补 / 轮转会把**当天没收完的 K 线**存下来，当晚增量看"最新日期已到"就不重拉，盘中价被当成收盘价，账户快照也按它估值（2.0.2 前） | 写库截止到已收盘落定的交易日（`SettledCutoff`）；增量的最新日期只认收盘落定后写入的行；巡检 `unsettledBars` 提示 |
+| 富途回复在 `futu-dispatch` 上完成；在它上面 `thenCompose` 续发请求，会睡在限流器上（最长 30 秒），心跳回复排不上、被判断线（2.0.2 前历史 K 线翻页如此） | 接续请求一律 `thenComposeAsync` 换线程；`FutuChannel.qotCall` 在 dispatch 线程上直接失败提醒 |
+| 2.0.2 起写接口必须带请求头 `X-Trader-Client`（值任意），`Host` 只认回环；手工 curl 不带头是 403 `REQUEST_REJECTED`，旧 Postman 集合的写请求同样被拒 | `curl -X POST -H 'X-Trader-Client: cli' …`；脚本、前端、Postman 集合都已带，升级后重新导入集合 |
+| `check-secrets.sh` 在 2.0.2 前**静默漏报**：`${entry%%\|*}` 切在第一个 `\|` 上，IPv4 与明文口令两个模式被切成非法正则（grep 报错被 `2>/dev/null` 吞掉）；带空格的文件名被 xargs 切碎；`--staged` 扫的是工作区 | NUL 分隔清单 + 系统 grep、按最后一个 `\|` 切、模式非法直接报错退出；改扫描规则后用探针文件反证。别换成 `git grep`：它的正则不认 `\b` |
 
 ## 当前状态
 

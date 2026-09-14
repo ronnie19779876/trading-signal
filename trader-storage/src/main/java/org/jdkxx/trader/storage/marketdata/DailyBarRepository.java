@@ -7,7 +7,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.sql.Date;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -70,11 +73,38 @@ public class DailyBarRepository {
         return Optional.ofNullable(d).map(Date::toLocalDate);
     }
 
-    public Map<Long, LocalDate> latestDates() {
+    /**
+     * 每只标的<b>已落定</b>的最新交易日。已落定 = 写入时这根 K 线已经收盘：交易日早于写入日（按 zone），
+     * 或写入发生在当天 settledAt 之后。
+     *
+     * <p>收盘落定前写入的当天那根不算：它是盘中价，不能当成"最新已经有了"而跳过重拉
+     * （2.0.2 前盘中深度回补会留下这种行，当晚增量看到最新日期已到就不再补）。
+     */
+    public Map<Long, LocalDate> latestSettledDates(ZoneId zone, LocalTime settledAt) {
         Map<Long, LocalDate> m = new HashMap<>();
-        jdbc.query("SELECT instrument_id, max(trade_date) AS d FROM daily_bar GROUP BY instrument_id",
-                rs -> { m.put(rs.getLong("instrument_id"), rs.getDate("d").toLocalDate()); });
+        jdbc.query("""
+                SELECT instrument_id, max(trade_date) AS d FROM daily_bar
+                WHERE trade_date < (fetched_at AT TIME ZONE CAST(? AS text))::date
+                   OR (fetched_at AT TIME ZONE CAST(? AS text))::time >= CAST(? AS time)
+                GROUP BY instrument_id""",
+                rs -> { m.put(rs.getLong("instrument_id"), rs.getDate("d").toLocalDate()); },
+                zone.getId(), zone.getId(), settledAt.toString());
         return m;
+    }
+
+    public record UnsettledBar(long instrumentId, LocalDate tradeDate, Instant fetchedAt) {
+    }
+
+    /** 收盘落定前写入的当天（或更晚日期）的 K 线；条件与 {@link #latestSettledDates} 互补。 */
+    public List<UnsettledBar> unsettledBars(ZoneId zone, LocalTime settledAt, int limit) {
+        return jdbc.query("""
+                SELECT instrument_id, trade_date, fetched_at FROM daily_bar
+                WHERE trade_date >= (fetched_at AT TIME ZONE CAST(? AS text))::date
+                  AND (fetched_at AT TIME ZONE CAST(? AS text))::time < CAST(? AS time)
+                ORDER BY trade_date DESC, instrument_id
+                LIMIT ?""",
+                (rs, i) -> new UnsettledBar(rs.getLong(1), rs.getDate(2).toLocalDate(), rs.getTimestamp(3).toInstant()),
+                zone.getId(), zone.getId(), settledAt.toString(), Math.max(1, Math.min(limit, 1000)));
     }
 
     public Coverage coverage() {

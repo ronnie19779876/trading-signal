@@ -17,7 +17,8 @@ PIDFile=/opt/trading-signal/logs/trading-signal.pid
 
 ExecStart=/opt/trading-signal/bin/trader.sh start
 ExecStop=/opt/trading-signal/bin/trader.sh stop
-ExecReload=/opt/trading-signal/bin/trader.sh restart
+# 不设 ExecReload：reload 里 restart 会先停掉主进程，Type=forking 下 unit 变成 inactive，
+# Restart=on-failure 不会拉起，reload 期间新起的进程也会被连带清理。重启一律 systemctl restart。
 
 TimeoutStartSec=120
 # ExecStop 走 /actuator/shutdown 不发信号；超过 TimeoutStopSec 后 systemd 依次 SIGTERM、SIGKILL 兜底

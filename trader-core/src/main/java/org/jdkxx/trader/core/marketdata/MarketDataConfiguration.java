@@ -12,6 +12,7 @@ import org.jdkxx.trader.core.marketdata.fundamentals.ValuationSnapshotService;
 import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
 import org.jdkxx.trader.core.marketdata.bars.DeepBackfillService;
 import org.jdkxx.trader.core.marketdata.bars.RotationRefresher;
+import org.jdkxx.trader.core.marketdata.bars.SettledCutoff;
 import org.jdkxx.trader.core.marketdata.jobs.CatchUpService;
 import org.jdkxx.trader.core.marketdata.jobs.JobService;
 import org.jdkxx.trader.core.marketdata.quotes.QuoteCache;
@@ -41,6 +42,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.time.Clock;
+import java.time.ZoneId;
 
 /**
  * 行情数据底座的装配。整块只在存储启用时存在（仓储都依赖数据库）。
@@ -83,15 +85,21 @@ public class MarketDataConfiguration {
     }
 
     @Bean
+    public SettledCutoff settledCutoff(MarketDataProperties props, TradingDayRepository days) {
+        return new SettledCutoff(days, ZoneId.of(props.zone()), Clock.systemUTC());
+    }
+
+    @Bean
     public RotationRefresher rotationRefresher(MarketDataProperties props, MarketDataGateway gateway, DailyBarRepository bars,
-                                               BarSyncStateRepository states) {
-        return new RotationRefresher(props.refresh(), gateway, bars, states, Sleeper.REAL);
+                                               BarSyncStateRepository states, SettledCutoff cutoff) {
+        return new RotationRefresher(props.refresh(), gateway, bars, states, cutoff, Sleeper.REAL);
     }
 
     @Bean
     public DeepBackfillService deepBackfillService(MarketDataProperties props, MarketDataGateway gateway, DailyBarRepository bars,
-                                                   RehabFactorRepository rehabs, BarSyncStateRepository states, UniverseScope scope) {
-        return new DeepBackfillService(props, gateway, bars, rehabs, states, scope);
+                                                   RehabFactorRepository rehabs, BarSyncStateRepository states, UniverseScope scope,
+                                                   SettledCutoff cutoff) {
+        return new DeepBackfillService(props, gateway, bars, rehabs, states, scope, cutoff);
     }
 
     @Bean

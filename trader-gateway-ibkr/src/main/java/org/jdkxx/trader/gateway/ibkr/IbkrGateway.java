@@ -88,16 +88,34 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
         };
     }
 
-    /** 配置了 trader.ibkr.account 时它必须在受管账户列表里，否则是不可重试的配置错误。 */
+    /**
+     * 配置了 trader.ibkr.account 时它必须在受管账户列表里，否则是不可重试的配置错误。
+     * 列表还没到就主动要一次：2.0.2 前列表为空时直接放行，之后也不补查。
+     */
     private void verifyConfiguredAccount() {
         if (props.account() == null || props.account().isBlank()) {
             return;
         }
-        List<String> accounts = facts.managedAccounts();
-        if (!accounts.isEmpty() && !accounts.contains(props.account().trim())) {
-            supervisor.reportFatal(new GatewayException(Broker.IBKR, 0,
-                    "配置的 trader.ibkr.account 不在网关的受管账户列表里，拒绝继续（请核对账户号）", false));
-        }
+        String wanted = props.account().trim();
+        connection.managedAccounts()
+                .orTimeout(props.requestTimeout().toMillis(), TimeUnit.MILLISECONDS)
+                .whenCompleteAsync((accounts, ex) -> {
+                    if (ex != null) {
+                        // 拿不到列表不能当作通过：断开重连，连上后再核对
+                        supervisor.onTransportClosed("核对受管账户列表失败：" + causeMessage(ex));
+                    } else if (accounts.isEmpty()) {
+                        supervisor.reportFatal(new GatewayException(Broker.IBKR, 0,
+                                "网关没有返回受管账户列表，无法核对 trader.ibkr.account，拒绝继续", false));
+                    } else if (!accounts.contains(wanted)) {
+                        supervisor.reportFatal(new GatewayException(Broker.IBKR, 0,
+                                "配置的 trader.ibkr.account 不在网关的受管账户列表里，拒绝继续（请核对账户号）", false));
+                    }
+                }, scheduler);
+    }
+
+    private static String causeMessage(Throwable t) {
+        Throwable c = t instanceof CompletionException && t.getCause() != null ? t.getCause() : t;
+        return c.getMessage() == null || c.getMessage().isBlank() ? c.getClass().getSimpleName() : c.getMessage();
     }
 
     @Override

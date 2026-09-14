@@ -31,12 +31,18 @@ start() {
 }
 
 stop() {
-    local port url
+    local port url code
     port="$(app_port)"
     [[ -n "$port" ]] || { echo "从 $CONFIG_YML 解析不出端口" >&2; exit 1; }
     url="http://127.0.0.1:$port/actuator/shutdown"
     echo "停止开发实例（:$port）—— 调用 $url ..."
-    if ! curl -s -X POST "$url" >/dev/null; then echo "没有实例在监听 :$port"; exit 0; fi
+    # X-Trader-Client：服务端对缺这个头的写请求返回 403（LocalRequestGuardFilter）
+    code="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'X-Trader-Client: script' "$url" || true)"
+    case "$code" in
+        000) echo "没有实例在监听 :$port"; exit 0 ;;
+        200) ;;
+        *) echo "关停请求没被接受（HTTP $code）：确认外置配置开了 shutdown 端点" >&2; exit 1 ;;
+    esac
     for ((i = 0; i < STOP_TIMEOUT; i++)); do
         curl -s "http://127.0.0.1:$port/actuator/health" >/dev/null 2>&1 || { echo "已停止"; exit 0; }
         sleep 1

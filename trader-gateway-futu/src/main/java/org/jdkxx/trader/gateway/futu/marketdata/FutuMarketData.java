@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 /**
  * 行情通道上的行情数据请求。所有 K 线一律不复权（RehabType_None），全字段。
@@ -56,9 +57,12 @@ public final class FutuMarketData {
     private static final ZoneId HK = ZoneId.of("Asia/Hong_Kong");
 
     private final QotCalls qot;
+    /** 翻页续发用的线程（见 historyPage）。 */
+    private final Executor pager;
 
-    public FutuMarketData(QotCalls qot) {
+    public FutuMarketData(QotCalls qot, Executor pager) {
         this.qot = qot;
+        this.pager = pager;
     }
 
     public CompletableFuture<List<InstrumentStatic>> staticInfo(List<Instrument> instruments) {
@@ -113,14 +117,27 @@ public final class FutuMarketData {
         QotRequestHistoryKL.Request req = QotRequestHistoryKL.Request.newBuilder().setC2S(c2s).build();
         return qot.call("request-history-kl", "requestHistoryKL " + instrument.symbol(), QotRequestHistoryKL.Response.class,
                         c -> c.requestHistoryKL(req))
-                .thenCompose(rsp -> {
+                // 回复在 futu-dispatch 上完成，续页要先过限流器（可能睡几十秒），必须换线程发（2.0.2 前在 dispatch 上睡，心跳超时断线）
+                .thenComposeAsync(rsp -> {
+                    requireSameSecurity(instrument, rsp.getS2C().hasSecurity(), rsp.getS2C().getSecurity(), "requestHistoryKL");
                     acc.addAll(FutuBars.toDailyBars(instrument, rsp.getS2C().getKlListList()));
                     if (rsp.getS2C().hasNextReqKey() && !rsp.getS2C().getNextReqKey().isEmpty()
                             && rsp.getS2C().getKlListCount() > 0) {
                         return historyPage(instrument, from, to, rehabType, rsp.getS2C().getNextReqKey(), acc);
                     }
                     return CompletableFuture.completedFuture(List.copyOf(acc));
-                });
+                }, pager);
+    }
+
+    /** 回复里的标的必须是请求的那只：序列号万一配错，宁可失败，也不能把别人的 K 线记到这只名下。 */
+    static void requireSameSecurity(Instrument instrument, boolean present, QotCommon.Security got, String what) {
+        if (!present) {
+            return;
+        }
+        QotCommon.Security want = FutuSecurities.of(instrument);
+        if (got.getMarket() != want.getMarket() || !got.getCode().equalsIgnoreCase(want.getCode())) {
+            throw new IllegalStateException(what + " 回复的标的与请求不一致（请求 " + instrument.symbol() + "，回复 " + got.getCode() + "）");
+        }
     }
 
     static final int SUB_BASIC = QotCommon.SubType.SubType_Basic_VALUE;
@@ -185,7 +202,10 @@ public final class FutuMarketData {
                 .setSecurity(FutuSecurities.of(instrument))
                 .setReqNum(Math.max(1, Math.min(count, 1000)))).build();
         return qot.call("get-kl", "getKL " + instrument.symbol(), QotGetKL.Response.class, c -> c.getKL(req))
-                .thenApply(rsp -> FutuBars.toDailyBars(instrument, rsp.getS2C().getKlListList()));
+                .thenApply(rsp -> {
+                    requireSameSecurity(instrument, rsp.getS2C().hasSecurity(), rsp.getS2C().getSecurity(), "getKL");
+                    return FutuBars.toDailyBars(instrument, rsp.getS2C().getKlListList());
+                });
     }
 
     public CompletableFuture<List<RehabFactor>> rehab(Instrument instrument) {

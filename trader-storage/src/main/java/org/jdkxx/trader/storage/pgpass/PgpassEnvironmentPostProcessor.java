@@ -35,7 +35,7 @@ public class PgpassEnvironmentPostProcessor implements EnvironmentPostProcessor,
         if (!environment.getProperty("trader.storage.pgpass.enabled", Boolean.class, true)) {
             return;
         }
-        String password = environment.getProperty("spring.datasource.password");
+        String password = environment.getProperty("spring.datasource.password"); // secrets-ok：读配置项，不是口令
         if (password != null && !password.isBlank()) {
             return;
         }
