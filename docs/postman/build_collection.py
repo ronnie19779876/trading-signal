@@ -268,6 +268,9 @@ ENDPOINTS = [
     {
         "folder": "账户与持仓（第 3 期）",
         "items": [
+            {"name": "账户审计（收盘后必查）", "method": "GET", "path": "/api/account/audit",
+             "desc": "当天快照是否存在（美东 18:30 前缺快照只提示）、对账状态（FAIL 为关键项，WARN 只提示）、缺价、最近一次快照作业。休市日直接判过。",
+             "tests": T_200 + T_JSON + ['pm.test("审计通过 ok=true（失败时看 checks）", () => pm.expect(body.ok, JSON.stringify(body.checks.filter(c => !c.ok))).to.eql(true));']},
             {"name": "最新账户快照", "method": "GET", "path": "/api/account/snapshots/latest",
              "desc": "资金、本系统估值、对账明细与持仓（priceSource：BAR/SNAPSHOT/NONE）。账户号只给脱敏形式。还没有快照 → 404。",
              "tests": ['pm.test("HTTP 200 或 404（还没有快照）", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));']},

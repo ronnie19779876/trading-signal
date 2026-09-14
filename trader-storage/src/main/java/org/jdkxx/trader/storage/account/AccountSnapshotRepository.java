@@ -106,6 +106,25 @@ public class AccountSnapshotRepository {
                 POSITION, snapshotId);
     }
 
+    public List<AccountSnapshotRow> on(LocalDate date) {
+        return jdbc.query("SELECT * FROM account_snapshot WHERE as_of_date = ? ORDER BY account_key", SNAPSHOT, Date.valueOf(date));
+    }
+
+    /** 同一账户在某日之前最近的一份快照（算日变化用）。 */
+    public Optional<AccountSnapshotRow> previous(String accountKey, LocalDate before) {
+        return jdbc.query("SELECT * FROM account_snapshot WHERE account_key = ? AND as_of_date < ? ORDER BY as_of_date DESC LIMIT 1",
+                SNAPSHOT, accountKey, Date.valueOf(before)).stream().findFirst();
+    }
+
+    /** 快照的对账项，按存入顺序。 */
+    public List<ReconCheck> reconChecks(long snapshotId) {
+        return jdbc.query("""
+                SELECT e.v ->> 'name' AS name, e.v ->> 'status' AS status, e.v ->> 'detail' AS detail
+                FROM account_snapshot s, jsonb_array_elements(s.recon) WITH ORDINALITY AS e(v, n)
+                WHERE s.id = ? ORDER BY e.n""",
+                (rs, i) -> new ReconCheck(rs.getString("name"), rs.getString("status"), rs.getString("detail")), snapshotId);
+    }
+
     public boolean existsOn(LocalDate date) {
         Boolean b = jdbc.queryForObject("SELECT EXISTS (SELECT 1 FROM account_snapshot WHERE as_of_date = ?)", Boolean.class,
                 Date.valueOf(date));

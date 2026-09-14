@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #
-# 收盘后巡检：日线审计 + 基本面审计 + 作业与网关健康。三段都只读，不触发任何跑批。
+# 收盘后巡检：日线审计 + 基本面审计 + 账户审计 + 作业与网关健康。四段都只读，不触发任何跑批。
 #   ./scripts/check-daily.sh [baseUrl] [date]
 #   默认 baseUrl=http://127.0.0.1:8093（生产端口；本机开发实例用 8083），date 默认最近应有收盘 K 的交易日。
+#   建议美东 18:30 之后跑（账户快照 18:00）；更早跑时当天缺账户快照只提示，不判失败。
 # 退出码：0 全部通过；1 有关键项失败或健康降级；2 接口不可达。
 #
-# 为什么三段一起跑：此前脚本只调日线审计，基本面审计写好了却没人跑——
+# 为什么几段一起跑：此前脚本只调日线审计，基本面审计写好了却没人跑——
 # 而估值被跳过这类问题恰好只有基本面审计能发现。
 set -uo pipefail
 BASE="${1:-http://127.0.0.1:8093}"
@@ -35,6 +36,7 @@ sys.exit(0 if r["ok"] else 1)
 
 audit "日线数据审计" "$BASE/api/bars/audit$SUFFIX"
 audit "基本面审计"   "$BASE/api/fundamentals/audit$SUFFIX"
+audit "账户审计"     "$BASE/api/account/audit$SUFFIX"
 
 # 健康：作业跑批与网关。DEGRADED 也算问题——作业失败或被跳过就落在这里。
 HEALTH="$(curl -sf --max-time 30 "$BASE/actuator/health")" || { echo "❌ 健康接口不可达"; exit 2; }

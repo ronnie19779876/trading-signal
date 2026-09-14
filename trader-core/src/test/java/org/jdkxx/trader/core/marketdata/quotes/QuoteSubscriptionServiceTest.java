@@ -59,6 +59,10 @@ class QuoteSubscriptionServiceTest {
     };
 
     private QuoteSubscriptionService service(boolean pauseDuringRefresh) {
+        return service(pauseDuringRefresh, true);
+    }
+
+    private QuoteSubscriptionService service(boolean pauseDuringRefresh, boolean autoSubscribe) {
         when(scope.poolAndHoldings()).thenAnswer(inv -> pool.get());
         when(gateway.subscribeQuotes(anyList())).thenAnswer(inv -> {
             subs.add(List.copyOf(inv.getArgument(0)));
@@ -69,7 +73,7 @@ class QuoteSubscriptionServiceTest {
             return CompletableFuture.completedFuture(null);
         });
         when(gateway.subscriptionInfo()).thenReturn(CompletableFuture.completedFuture(new SubscriptionInfo(2, 98, Map.of("Basic", 2), Instant.now())));
-        MarketDataProperties.Realtime props = new MarketDataProperties.Realtime(true, true, 10, pauseDuringRefresh, Duration.ofSeconds(1), Duration.ofSeconds(61));
+        MarketDataProperties.Realtime props = new MarketDataProperties.Realtime(true, autoSubscribe, 10, pauseDuringRefresh, Duration.ofSeconds(1), Duration.ofSeconds(61));
         return new QuoteSubscriptionService(props, gateway, scope, cache, clock, d -> {
             sleeps.add(d);
             now.set(now.get().plus(d));
@@ -137,6 +141,38 @@ class QuoteSubscriptionServiceTest {
         QuoteSubscriptionService s = service(false);
         assertThat(s.beforeRefresh()).isEqualTo(88);         // 98 − 预留 10
         assertThat(s.paused()).isFalse();
+    }
+
+    @Test
+    void 不自动订阅且没有订阅时_池变动不触发订阅() {
+        // 开发实例：此前池变动直接对账，开发实例跟着订阅，与生产同时订
+        QuoteSubscriptionService s = service(true, false);
+
+        QuoteSubscriptionService.Result r = s.onPoolChanged();
+
+        assertThat(subs).isEmpty();
+        assertThat(r.error()).contains("auto-subscribe=false");
+        assertThat(s.status().subscribed()).isZero();
+    }
+
+    @Test
+    void 不自动订阅但手工对账过的_池变动照常跟随() {
+        QuoteSubscriptionService s = service(true, false);
+        s.reconcile();
+        pool.set(List.of(row(1, "AAPL"), row(2, "MSFT"), row(3, "NVDA")));
+
+        s.onPoolChanged();
+
+        assertThat(s.status().subscribed()).isEqualTo(3);
+    }
+
+    @Test
+    void 自动订阅的实例池变动照常对账() {
+        QuoteSubscriptionService s = service(true, true);
+
+        s.onPoolChanged();
+
+        assertThat(s.status().subscribed()).isEqualTo(2);
     }
 
     @Test

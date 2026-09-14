@@ -6,5 +6,6 @@ export default createRouter({
     { path: '/', name: 'system', component: () => import('../pages/SystemInfoPage.vue') },
     { path: '/marketdata', name: 'marketdata', component: () => import('../pages/MarketDataPage.vue') },
     { path: '/fundamentals', name: 'fundamentals', component: () => import('../pages/FundamentalsPage.vue') },
+    { path: '/account', name: 'account', component: () => import('../pages/AccountPage.vue') },
   ],
 })

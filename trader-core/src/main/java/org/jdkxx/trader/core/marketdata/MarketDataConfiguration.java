@@ -205,7 +205,7 @@ public class MarketDataConfiguration {
             broker.addListener(service);
         }
         rotation.coordinator(service);
-        pool.afterChange(service::reconcile);
+        pool.afterChange(service::onPoolChanged);
         return service;
     }
 

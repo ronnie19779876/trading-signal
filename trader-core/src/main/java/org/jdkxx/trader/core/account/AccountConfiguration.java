@@ -55,6 +55,12 @@ public class AccountConfiguration {
     }
 
     @Bean
+    public AccountAuditService accountAuditService(AccountSnapshotRepository snapshots, TradingDayRepository days,
+                                                   JobRunRepository jobRuns, MarketDataProperties marketData) {
+        return new AccountAuditService(snapshots, days, jobRuns, Clock.systemUTC(), ZoneId.of(marketData.zone()));
+    }
+
+    @Bean
     public AccountFacade accountFacade(JobService jobs, AccountSnapshotService service, AccountSnapshotRepository snapshots,
                                        TradingDayRepository days, MarketDataProperties marketData, Environment env) {
         return new AccountFacade(jobs, service, snapshots, days, env.getProperty("trader.environment"), Clock.systemUTC(),

@@ -50,6 +50,40 @@ class AccountFacadeTest {
         assertThat(facade("PROD", AT_18_ET).snapshot("MANUAL", false)).isEqualTo(9L);
     }
 
+    private static org.jdkxx.trader.storage.account.AccountSnapshotRow snapshot(LocalDate date, String nav) {
+        return new org.jdkxx.trader.storage.account.AccountSnapshotRow(1, "IBKR", "k", "AC*****", date, Instant.EPOCH, "USD",
+                new java.math.BigDecimal(nav), null, null, null, null, null, null, null, null, null, null, 0, "OK", "[]", null);
+    }
+
+    private static org.jdkxx.trader.storage.account.PositionSnapshotRow position(String ref, String qty, String price) {
+        return new org.jdkxx.trader.storage.account.PositionSnapshotRow(ref, ref, 1L, "STK", "USD", "NYSE",
+                new java.math.BigDecimal(qty), null, price == null ? null : new java.math.BigDecimal(price),
+                price == null ? "NONE" : "BAR", null, null, null, false);
+    }
+
+    @Test
+    void 日变化_净值差与上一份数量乘价差_持仓不变时不标近似() {
+        AccountFacade.DailyChange c = AccountFacade.change(
+                snapshot(LocalDate.of(2026, 9, 11), "10000"), java.util.List.of(position("A", "10", "100"), position("B", "5", "20")),
+                snapshot(LocalDate.of(2026, 9, 14), "10060"), java.util.List.of(position("A", "10", "105"), position("B", "5", "22")));
+
+        assertThat(c.previousDate()).isEqualTo(LocalDate.of(2026, 9, 11));
+        assertThat(c.netLiquidationChange()).isEqualByComparingTo("60");
+        assertThat(c.positionPnl()).isEqualByComparingTo("60");   // 10×5 + 5×2
+        assertThat(c.positionsChanged()).isFalse();
+    }
+
+    @Test
+    void 日变化_当天有买卖或缺价时标近似且缺价不计() {
+        AccountFacade.DailyChange c = AccountFacade.change(
+                snapshot(LocalDate.of(2026, 9, 11), "10000"), java.util.List.of(position("A", "10", "100"), position("B", "5", "20")),
+                snapshot(LocalDate.of(2026, 9, 14), "9000"), java.util.List.of(position("A", "8", "105"), position("B", "5", null),
+                        position("C", "1", "50")));
+
+        assertThat(c.positionPnl()).isEqualByComparingTo("50");   // 只算 A：昨日 10 × 5
+        assertThat(c.positionsChanged()).isTrue();
+    }
+
     @Test
     void force只允许开发环境() {
         assertThatThrownBy(() -> facade("PROD", AT_18_ET).snapshot("MANUAL", true))

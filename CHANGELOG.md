@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## 2.0.0（开发中）
+## 2.0.0（2026-09-14 发布）
 
 第 3 期「账户与持仓」，设计与实测见 ARCHITECTURE §16。
 
@@ -19,6 +19,12 @@
   触发：快照作业里先同步再对账、生产实例盈透连上 60 秒后、`POST /api/account/holdings/sync?apply=false|true`。
   手工 `POST /api/pool/{symbol}?role=HOLDING` 改为 409，前端下拉禁用 HOLDING；新增或升级的标的自动排深度回补。
   对账的持仓集合项把持有的基准算作一致。开发实例实测：加入 IBKR 并回补到 20 年，快照对账四项全 OK，再同步无需变动。
+- 步骤 4：账户审计 `GET /api/account/audit`，进 `check-daily.sh` 第三段（美东 18:30 前、或刚启用还没有任何快照时，缺快照只提示；对账 FAIL 为关键项）；
+  最新快照附日变化 `change`（净值变化含出入金、上一份数量 × 价差，当天有买卖时标近似）；前端新增"账户"页
+  （净值、日变化、净值走势、对账、持仓与价格来源、持仓同步计划与执行、账户审计）。
+- 修（第 2 期步骤 2 遗留）：池变动钩子触发的实时订阅对账不看 `auto-subscribe`，开发实例上加减池成员会让开发实例也订阅、
+  与生产同时订。改为 `QuoteSubscriptionService.onPoolChanged`：`auto-subscribe=false` 且当前没有订阅时不对账。
+- 数据：SPY 由 HOLDING 改为 BENCHMARK（生产与开发库均已改），标普基准不再跟着买卖走。
 
 ## 1.2.0（2026-09-14 发布）
 

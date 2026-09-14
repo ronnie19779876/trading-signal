@@ -218,6 +218,25 @@ public class QuoteSubscriptionService implements GatewayListener, RotationRefres
         return lastQuota;
     }
 
+    /**
+     * 池变动后的对账（{@code PoolService.afterChange} 钩子）。
+     *
+     * <p>auto-subscribe=false 且当前没有任何订阅时不动：开发实例就是这种状态，此前池变动（手工加减池成员、持仓同步）
+     * 直接调 {@link #reconcile()}，让开发实例也订阅实时报价，与生产同时订、占同一账户的双份额度。
+     * 已经手工对账过（有订阅）的实例照常跟着池变，免得订阅集合与池不一致。
+     */
+    public Result onPoolChanged() {
+        boolean hasSubscriptions;
+        synchronized (this) {
+            hasSubscriptions = !subscribed.isEmpty();
+        }
+        if (!props.autoSubscribe() && !hasSubscriptions) {
+            log.info("标的池有变动；auto-subscribe=false 且当前没有订阅，不对账");
+            return new Result(0, 0, 0, 0, 0, "auto-subscribe=false 且当前没有订阅，未对账");
+        }
+        return reconcile();
+    }
+
     // ------------------------------------------------------------------ GatewayListener（富途）
 
     @Override

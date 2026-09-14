@@ -3,6 +3,7 @@ const links = [
   { to: '/', label: '系统' },
   { to: '/marketdata', label: '行情' },
   { to: '/fundamentals', label: '基本面' },
+  { to: '/account', label: '账户' },
 ]
 </script>
 

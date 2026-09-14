@@ -108,6 +108,10 @@ bin/trader.sh start && bin/trader.sh status
 
 升级：解压新版本到新的时间戳目录，把旧目录的 `config/trader.env` 拷过去，`bin/trader.sh stop`（旧）→ 改软链 → `bin/trader.sh start`（新）。不要混用 `bin/trader.sh` 与 systemd。
 
+**2.0.0 起 `trader.env` 新增两项敏感配置**（升级时补上；不补应用照样启动，但账户快照作业 FAILED、`jobs` 健康降级）：
+`TRADER_ACCOUNT_KEY_SECRET`（账户号 HMAC 密钥，至少 16 个字符，`openssl rand -hex 24` 生成，**启用后不要更换**，换了同一账户的快照会变成另一个键）
+与 `TRADER_ACCOUNT_CASH_EQUIVALENTS`（现金管理工具代码，逗号分隔：只进快照，不进池）。
+
 **发布到生产的必须是正式版**（`<revision>` 不带 `-SNAPSHOT`，见 README「版本规则」）。
 发布要打 tag `v<版本>` 标记生产跑的确切版本；**tag 需单独推送**（`git push origin v<版本>`），
 GitHub 客户端默认只推提交，漏推会导致事后无法 checkout 到发布点。
@@ -157,6 +161,17 @@ systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `Wor
 - 全量轮转期间实时订阅自动暂停、结束后恢复（`pause-during-refresh`）；手工 `pause` 后记得 `resume`。
 - 报价不落库；重启后缓存为空，首推后恢复。
 
+## 4c. 账户与持仓（第 3 期）
+
+- 快照：每个交易日美东 18:00 自动拍（`ACCOUNT_SNAPSHOT`），21:00 没有就补拍。快照窗口是交易日 16:15 至次日 04:00，窗口外手工拍 409；
+  **错过的日子补不回来**（盈透只给当前状态）。周日令牌过期不影响快照（周末不拍），但**周一美东 18:00 前必须重新登录盈透**。
+- 持仓同步：快照作业里先按持仓同步池里的 HOLDING；生产实例盈透连上 60 秒后也同步一次。要看会改什么先
+  `POST /api/account/holdings/sync`（默认只看计划），确认后加 `?apply=true`。HOLDING 不接受手工添加。
+- 基准：SPY、QQQ 是 BENCHMARK，买卖不会改它们的角色；新增基准用 `POST /api/pool/{symbol}?role=BENCHMARK`。
+- 对账不过时看 `GET /api/account/snapshots/latest` 的 `snapshot.recon`：市值偏差多半是缺价（看 `positions[].priceSource`），
+  恒等式不过多半是账户里有期权等非股票资产。
+- 开发实例验证快照用 `POST /api/account/snapshot?force=true`（只在 DEV 可用，写开发库）。
+
 ## 5. 日常检查
 
 > 定时作业不再静默丢失：碰撞时每 5 分钟重试、最多半小时，仍失败会写一行 `SKIPPED`；
@@ -165,7 +180,7 @@ systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `Wor
 > 补偿必须早于次日盘前——券商收盘后冻结当前价，过了盘前就取不到当日口径的估值快照了。
 
 
-**收盘后必做**（美东 17:30 增量跑完后，约北京时间次日 06:00）：
+**收盘后必做**（美东 18:30 之后：增量 17:30、估值 17:40、账户快照 18:00 都跑完；约北京时间次日 06:30，冬令时 07:30）：
 
 ```bash
 ./scripts/check-daily.sh http://127.0.0.1:8093        # 在服务器上跑；本机经隧道则改成隧道端口
@@ -176,11 +191,12 @@ systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `Wor
 `historyGaps` 报警时：最近 90 天的缺口先重跑增量（`POST /api/bars/increment`）；补不回来的多是券商缺数。
 全历史深扫用 `GET /api/bars/gaps`，已知长期缺口有 NBIS（停牌 664 天）与 SPY（券商缺数 26 天），两者都补不回来。
 
-它依次调三处，一条命令覆盖全部：
+它依次调四处，一条命令覆盖全部：
 
 1. `GET /api/bars/audit` 日线审计：完整性、字段合理性、前收连续性、复权新鲜度、同步错误、增量作业、日历覆盖、对照日历的近期缺口、网关。
 2. `GET /api/fundamentals/audit` 基本面审计：估值完整性与合理性、财报陈旧度、估值作业。
-3. `GET /actuator/health` 运行健康：`jobs` 组件在任一定时作业 FAILED / SKIPPED / 逾期（`overdue` 每日增量、`catchupOverdue` 补偿检查）时降级，`gateways` 在网关掉线时降级。
+3. `GET /api/account/audit` 账户审计：当天快照是否存在（美东 18:30 前、或刚启用还没有任何快照时，缺快照只提示）、对账状态（FAIL 为关键项）、缺价、快照作业。
+4. `GET /actuator/health` 运行健康：`jobs` 组件在任一定时作业 FAILED / SKIPPED / 逾期（`overdue` 每日增量、`catchupOverdue` 补偿检查、`accountSnapshotOverdue` 账户快照）时降级，`gateways` 在网关掉线时降级。
 
 `ok=false` 时看 `checks` 里失败项与样本；退出码 0 全通过 / 1 有关键项失败或健康降级 / 2 接口不可达。假日（如劳工节）不带参数跑会自动审计上一个交易日；显式传休市日则回"当天休市"并判通过。
 

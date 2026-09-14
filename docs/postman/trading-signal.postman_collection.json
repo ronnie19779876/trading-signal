@@ -1974,6 +1974,44 @@
       "name": "账户与持仓（第 3 期）",
       "item": [
         {
+          "name": "账户审计（收盘后必查）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/account/audit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "account",
+                "audit"
+              ]
+            },
+            "description": "当天快照是否存在（美东 18:30 前缺快照只提示）、对账状态（FAIL 为关键项，WARN 只提示）、缺价、最近一次快照作业。休市日直接判过。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"审计通过 ok=true（失败时看 checks）\", () => pm.expect(body.ok, JSON.stringify(body.checks.filter(c => !c.ok))).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
           "name": "最新账户快照",
           "request": {
             "method": "GET",
