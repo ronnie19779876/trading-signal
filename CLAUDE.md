@@ -112,10 +112,12 @@ storage → common ；ai → common
 | 富途回复在 `futu-dispatch` 上完成；在它上面 `thenCompose` 续发请求，会睡在限流器上（最长 30 秒），心跳回复排不上、被判断线（2.0.2 前历史 K 线翻页如此） | 接续请求一律 `thenComposeAsync` 换线程；`FutuChannel.qotCall` 在 dispatch 线程上直接失败提醒 |
 | 2.0.2 起写接口必须带请求头 `X-Trader-Client`（值任意），`Host` 只认回环；手工 curl 不带头是 403 `REQUEST_REJECTED`，旧 Postman 集合的写请求同样被拒 | `curl -X POST -H 'X-Trader-Client: cli' …`；脚本、前端、Postman 集合都已带，升级后重新导入集合 |
 | `check-secrets.sh` 在 2.0.2 前**静默漏报**：`${entry%%\|*}` 切在第一个 `\|` 上，IPv4 与明文口令两个模式被切成非法正则（grep 报错被 `2>/dev/null` 吞掉）；带空格的文件名被 xargs 切碎；`--staged` 扫的是工作区 | NUL 分隔清单 + 系统 grep、按最后一个 `\|` 切、模式非法直接报错退出；改扫描规则后用探针文件反证。别换成 `git grep`：它的正则不认 `\b` |
+| 富途复权因子的 `fwdA` 只保留 5 位小数（WMT 拆股 1:3 给 0.33333）；合股与分拆可同在一个事件里（HON flag=258 合股 2:1、fwdA=1.09203），DD 2019 只标合股却含分拆（fwdA=2.116 ≠ 3）；分拆当天原始价跳空（DD 2025-11-03 81.65 → 34.69） | 信号判定用结构口径（ARCHITECTURE §18.4）：纯股数变动用 base/ert 精确比例，混合事件价格用 fwdA、成交量只按股数比例；缺比例不予判定 |
 
 ## 当前状态
 
 **第 3 期「账户与持仓」已交付，生产跑 2.0.2**（第 3 期见 ARCHITECTURE §16，2.0.2 全量审查后的修复见 §17）。
+**第 4 期「入场信号」进行中（3.0.0-SNAPSHOT，ARCHITECTURE §18）**：步骤 1 判定引擎已完成。
 每一期的设计决策、实测结论与已知边界都在
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~17 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
 

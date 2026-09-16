@@ -153,6 +153,19 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 - `holdings`：持有的股票与池里的 HOLDING 角色一致（基准与现金管理工具不参与），不一致或库里没有该标的时 WARN；快照作业先同步再对账，正常应为 OK；
 - `otherAssets`：非股票持仓不参与估值，有就 WARN。
 
+## 入场信号（第 4 期）
+
+判据版本 `sentinel-v1`（四门：趋势 / 定位 / 触发 / 风控，设计见 ARCHITECTURE §18）。目前只有只读计算，不落库、不调网关与模型。
+价量口径是**结构口径**：以判定日为基准前复权，价格调拆股、合股、送股、分拆、特别股息，不调普通分红；成交量只按股数比例调。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/signals/evaluate/{symbol}?date=` | 单日判定。`date` 缺省取最近收盘落定的交易日，晚于它 409，非交易日 400。返回 `evaluation`（`status`、`gates[]` 每道门的 `verdict` PASS/FAIL/UNAVAILABLE、`criteria` 判据原文、`values` 代入值；`indicators`、`zones` 支撑区、`hitZone`、`exitPlan` 出场预案、`bonus` 加分项）、`droppedNonTradingDays`（交易日历之外被剔除的 K 线）、`missingTradingDays`、`thresholds` 参数全集 |
+| `GET /api/signals/replay/{symbol}?from&to` | 区间回放，默认最近一年、最长 21 年。`days[]` 每天的状态、通过门数、首个未过的门、`outcome`（按边沿与冷却：SIGNAL / NO_SIGNAL / SUPPRESSED_EDGE / SUPPRESSED_COOLDOWN；历史上没有 AI 结论，不含否决层）、收盘、止损与止损距离；另给 `statusCounts` / `outcomeCounts` |
+
+`status` 取值：`EVALUATED`；`SKIPPED_INSUFFICIENT_BARS`（窗口 600 自然日内少于 260 根）；`SKIPPED_STALE_DATA`（判定日没有 K 线）；
+`SKIPPED_DATA_GAP`（对照交易日历缺超过 3 个交易日，停牌空 K 也算缺）；`SKIPPED_CORPORATE_ACTION`（股数变动事件缺比例，等复权因子重拉）。
+
 ## 实时报价（第 2 期·步骤 2，不落库）
 
 报价里有三个价格字段，别混用：`price` 是按时段取的有效价，`rthPrice` 是常规时段价（盘前盘后冻结在上个收盘），

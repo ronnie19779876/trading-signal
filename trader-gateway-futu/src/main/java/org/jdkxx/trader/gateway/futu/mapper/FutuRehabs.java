@@ -23,7 +23,13 @@ public final class FutuRehabs {
                     r.hasDividend() ? factor(r.getDividend()) : null,
                     r.hasSpDividend() ? factor(r.getSpDividend()) : null,
                     r.hasSplitBase() ? r.getSplitBase() : 0,
-                    r.hasSplitErt() ? r.getSplitErt() : 0));
+                    r.hasSplitErt() ? r.getSplitErt() : 0,
+                    r.hasJoinBase() ? r.getJoinBase() : 0,
+                    r.hasJoinErt() ? r.getJoinErt() : 0,
+                    r.hasBonusBase() ? r.getBonusBase() : 0,
+                    r.hasBonusErt() ? r.getBonusErt() : 0,
+                    r.hasTransferBase() ? r.getTransferBase() : 0,
+                    r.hasTransferErt() ? r.getTransferErt() : 0));
         }
         return out;
     }

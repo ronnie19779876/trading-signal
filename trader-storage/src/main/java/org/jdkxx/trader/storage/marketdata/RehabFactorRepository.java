@@ -31,16 +31,20 @@ public class RehabFactorRepository {
         List<Object[]> args = new ArrayList<>(factors.size());
         for (RehabFactor f : factors) {
             args.add(new Object[] {instrumentId, Date.valueOf(f.exDate()), f.fwdA(), f.fwdB(), f.bwdA(), f.bwdB(),
-                    f.companyActFlag(), f.dividend(), f.spDividend(), f.splitBase(), f.splitErt()});
+                    f.companyActFlag(), f.dividend(), f.spDividend(), f.splitBase(), f.splitErt(), f.joinBase(), f.joinErt(),
+                    f.bonusBase(), f.bonusErt(), f.transferBase(), f.transferErt()});
         }
         jdbc.batchUpdate("""
                 INSERT INTO rehab_factor (instrument_id, ex_date, fwd_a, fwd_b, bwd_a, bwd_b, company_act_flag, dividend,
-                                          sp_dividend, split_base, split_ert)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                          sp_dividend, split_base, split_ert, join_base, join_ert, bonus_base, bonus_ert,
+                                          transfer_base, transfer_ert)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (instrument_id, ex_date) DO UPDATE SET fwd_a = EXCLUDED.fwd_a, fwd_b = EXCLUDED.fwd_b,
                     bwd_a = EXCLUDED.bwd_a, bwd_b = EXCLUDED.bwd_b, company_act_flag = EXCLUDED.company_act_flag,
                     dividend = EXCLUDED.dividend, sp_dividend = EXCLUDED.sp_dividend, split_base = EXCLUDED.split_base,
-                    split_ert = EXCLUDED.split_ert, fetched_at = now()""", args);
+                    split_ert = EXCLUDED.split_ert, join_base = EXCLUDED.join_base, join_ert = EXCLUDED.join_ert,
+                    bonus_base = EXCLUDED.bonus_base, bonus_ert = EXCLUDED.bonus_ert, transfer_base = EXCLUDED.transfer_base,
+                    transfer_ert = EXCLUDED.transfer_ert, fetched_at = now()""", args);
     }
 
     public List<RehabFactor> find(Instrument instrument, long instrumentId) {
@@ -48,6 +52,8 @@ public class RehabFactorRepository {
                 (rs, i) -> new RehabFactor(instrument, rs.getDate("ex_date").toLocalDate(), rs.getBigDecimal("fwd_a"),
                         rs.getBigDecimal("fwd_b"), rs.getBigDecimal("bwd_a"), rs.getBigDecimal("bwd_b"),
                         rs.getLong("company_act_flag"), rs.getBigDecimal("dividend"), rs.getBigDecimal("sp_dividend"),
-                        rs.getInt("split_base"), rs.getInt("split_ert")), instrumentId);
+                        rs.getInt("split_base"), rs.getInt("split_ert"), rs.getInt("join_base"), rs.getInt("join_ert"),
+                        rs.getInt("bonus_base"), rs.getInt("bonus_ert"), rs.getInt("transfer_base"), rs.getInt("transfer_ert")),
+                instrumentId);
     }
 }

@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## 3.0.0（未发布）
+
+第 4 期「入场信号」进行中，设计与实测见 ARCHITECTURE §18。
+
+- 步骤 1：入场哨兵四门判定（判据版本 `sentinel-v1`，沿用 futu-trader entry-v3 的判据与阈值，独立实现）；
+  结构口径（价格调拆股、合股、送股、分拆、特别股息，成交量只按股数比例调）；数据层检查（剔除非交易日 K 线、陈旧、缺日、口径换算失败）；
+  只读接口 `GET /api/signals/evaluate/{symbol}`、`GET /api/signals/replay/{symbol}`。开发库回放 MSFT / ISRG / MU 信号数与 entry-v3 分享稿逐一相同。
+- V10：`rehab_factor` 补存合股、送股、转增比例；已有这三类事件的标的在下一次增量里优先重拉复权因子。
+
 ## 2.0.2（2026-09-14 发布）
 
 全量代码审查后的修复，设计与实测见 ARCHITECTURE §17。
