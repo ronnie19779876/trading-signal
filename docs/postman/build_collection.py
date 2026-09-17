@@ -302,6 +302,33 @@ ENDPOINTS = [
              {"key": "trades", "value": "true"}, {"key": "stopAtr", "value": ""}, {"key": "half", "value": "false"}],
              "desc": "逐个交易日判定，按边沿与冷却标出 SIGNAL（历史上没有 AI 结论，不含否决层）。默认最近一年，最长 21 年。trades=true 附纸面交易；stopAtr / half 只改纸面交易的出场（配对比较用）。只读、不落库。",
              "tests": T_200 + T_JSON + ['pm.test("days 是数组", () => pm.expect(body.days).to.be.an("array"));']},
+            {"name": "信号审计（收盘后必查）", "method": "GET", "path": "/api/signals/audit",
+             "desc": "收盘巡检第五段：当天评估是否存在（美东 19:00 前缺评估只提示）、覆盖是否完整、未平仓账本是否算到当天为关键项；过期跳过占比、缺日与口径失败、信号与重算不一致、最近一次作业为提示项。",
+             "tests": T_200 + T_JSON + ['pm.test("审计通过 ok=true（失败时看 checks）", () => pm.expect(body.ok, JSON.stringify(body.checks.filter(c => !c.ok))).to.eql(true));']},
+            {"name": "信号列表", "method": "GET", "path": "/api/signals", "query": [{"key": "from", "value": ""}, {"key": "to", "value": ""},
+             {"key": "status", "value": ""}, {"key": "scope", "value": "pool"}, {"key": "origin", "value": ""}],
+             "desc": "默认最近 30 天、只看池与持仓（scope=all 含池外）；status 逗号分隔（NEW,ACKNOWLEDGED,DISMISSED,EXPIRED,VETOED）；origin 取 LIVE / BACKFILL。每条附 BASE 变体账本。",
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
+            {"name": "信号详情", "method": "GET", "path": "/api/signals/{{signalId}}",
+             "desc": "信号 + 当天评估（含判定明细）+ 指纹核对（fingerprintMatches=false 说明 K 线或因子被重拉改过）+ 两个出场变体的账本。不存在 → 404。",
+             "tests": ['pm.test("HTTP 200 或 404", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));']},
+            {"name": "某天的全部评估", "method": "GET", "path": "/api/signals/evaluations", "query": [{"key": "date", "value": ""},
+             {"key": "outcome", "value": ""}, {"key": "gate", "value": ""}, {"key": "scope", "value": "all"}],
+             "desc": "回答「今天为什么没信号、卡在哪道门」。outcome 取 SIGNAL / NO_SIGNAL / SUPPRESSED_EDGE / SUPPRESSED_COOLDOWN / BLOCKED_BY_AI，也接受 SKIPPED_* 状态名；gate 按首个未过的门过滤（TREND / LOCATION / TRIGGER / RISK）。",
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
+            {"name": "单只评估历史", "method": "GET", "path": "/api/signals/evaluations/{{symbol}}", "query": [{"key": "from", "value": ""}, {"key": "to", "value": ""}],
+             "desc": "默认最近 90 天，倒序。",
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
+            {"name": "纸面账本", "method": "GET", "path": "/api/signals/ledger", "query": [{"key": "variant", "value": "BASE"}, {"key": "status", "value": ""}],
+             "desc": "stats 按变体（BASE / STOP_2_5）与来源（LIVE / BACKFILL）分开汇总；pairedMeanReturnDiff = 同一批已平仓信号上 STOP_2_5 − BASE 的收益率均值；entries 按 variant / status 过滤。",
+             "tests": T_200 + T_JSON + ['pm.test("有 stats 与 entries", () => { pm.expect(body.stats).to.be.an("array"); pm.expect(body.entries).to.be.an("array"); });']},
+            {"name": "提交信号评估（异步作业，会写库）", "method": "POST", "path": "/api/signals/evaluate", "query": [{"key": "date", "value": ""}],
+             "desc": "date 缺省取收盘落定日；过去的日期记为补跑（信号 origin=BACKFILL）；晚于收盘落定日 409、非交易日 400、有作业在跑 409。",
+             "tests": ['pm.test("HTTP 200（已提交）或 409", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));']},
+            {"name": "改信号状态", "method": "POST", "path": "/api/signals/{{signalId}}/status", "contentType": "application/json",
+             "body": "{\"status\": \"ACKNOWLEDGED\", \"note\": \"\"}",
+             "desc": "NEW → ACKNOWLEDGED / DISMISSED；ACKNOWLEDGED → DISMISSED；其余 409。",
+             "tests": ['pm.test("HTTP 200、404 或 409", () => pm.expect(pm.response.code).to.be.oneOf([200, 404, 409]));']},
         ],
     },
     {
@@ -345,7 +372,7 @@ def request(item):
     ]
     req = {"method": item["method"], "header": headers, "url": url, "description": item.get("desc", "")}
     if "body" in item:
-        headers.append({"key": "Content-Type", "value": "text/plain"})
+        headers.append({"key": "Content-Type", "value": item.get("contentType", "text/plain")})
         req["body"] = {"mode": "raw", "raw": item["body"]}
     return {
         "name": item["name"],
@@ -389,6 +416,8 @@ def build_environment(name, base_url, symbol):
             # 生产环境不给默认代码：加池 / 移出池 / 回补都拿它当参数，默认值一点就改到真实池
             {"key": "symbol", "value": symbol, "enabled": True},
             {"key": "jobId", "value": "1", "enabled": True},
+            # 同理不给默认信号 id：改信号状态拿它当参数
+            {"key": "signalId", "value": "1" if name == "dev" else "", "enabled": True},
         ],
         "_postman_variable_scope": "environment",
     }

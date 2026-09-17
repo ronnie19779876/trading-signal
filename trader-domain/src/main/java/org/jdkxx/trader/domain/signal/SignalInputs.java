@@ -31,8 +31,12 @@ public final class SignalInputs {
     /**
      * @param skipped 不予判定时的结果，此时 bars 为空
      */
+    /**
+     * @param fingerprint 输入指纹：窗口内原始 K 线（含被剔除与空 K）+ 窗口内除权的结构性事件因子 + 判据版本的 SHA-256 前 32 位。
+     *                    判定是确定性的，复算时指纹不同只可能是 K 线或因子被重拉改过（实测成交量次日会上修）
+     */
     public record Prepared(List<SignalBar> bars, SentinelEvaluation skipped,
-                           List<LocalDate> droppedNonTradingDays, List<LocalDate> missingTradingDays) {
+                           List<LocalDate> droppedNonTradingDays, List<LocalDate> missingTradingDays, String fingerprint) {
     }
 
     /**
@@ -48,6 +52,7 @@ public final class SignalInputs {
         LocalDate from = asOf.minusDays(th.windowCalendarDays());
         List<DailyBar> window = new ArrayList<>();
         List<LocalDate> dropped = new ArrayList<>();
+        String fingerprint = fingerprint(raw, factors, from, asOf, th);
         for (DailyBar b : raw) {
             if (b.tradeDate().isBefore(from) || b.tradeDate().isAfter(asOf)) {
                 continue;
@@ -60,7 +65,7 @@ public final class SignalInputs {
         }
         if (window.isEmpty() || !window.get(window.size() - 1).tradeDate().equals(asOf)) {
             String latest = window.isEmpty() ? "窗口内没有 K 线" : "最新 K 线是 " + window.get(window.size() - 1).tradeDate();
-            return skipped(th, asOf, SentinelEvaluation.Status.SKIPPED_STALE_DATA, "判定日没有 K 线，" + latest, dropped, List.of());
+            return skipped(th, asOf, SentinelEvaluation.Status.SKIPPED_STALE_DATA, "判定日没有 K 线，" + latest, dropped, List.of(), fingerprint);
         }
 
         Set<LocalDate> present = new HashSet<>();
@@ -72,14 +77,14 @@ public final class SignalInputs {
         if (missing.size() > th.maxMissingTradingDays()) {
             return skipped(th, asOf, SentinelEvaluation.Status.SKIPPED_DATA_GAP, "窗口内缺 " + missing.size() + " 个交易日（容忍 "
                     + th.maxMissingTradingDays() + "），最早 " + missing.get(0) + "、最晚 " + missing.get(missing.size() - 1),
-                    dropped, missing);
+                    dropped, missing, fingerprint);
         }
 
         StructuralAdjustment.Result adjusted = StructuralAdjustment.apply(window, factors, asOf);
         if (!adjusted.ok()) {
-            return skipped(th, asOf, SentinelEvaluation.Status.SKIPPED_CORPORATE_ACTION, adjusted.problem(), dropped, missing);
+            return skipped(th, asOf, SentinelEvaluation.Status.SKIPPED_CORPORATE_ACTION, adjusted.problem(), dropped, missing, fingerprint);
         }
-        return new Prepared(adjusted.bars(), null, List.copyOf(dropped), List.copyOf(missing));
+        return new Prepared(adjusted.bars(), null, List.copyOf(dropped), List.copyOf(missing), fingerprint);
     }
 
     /** 数据层检查 + 四门判定。 */
@@ -90,8 +95,40 @@ public final class SignalInputs {
     }
 
     private static Prepared skipped(SentinelThresholds th, LocalDate asOf, SentinelEvaluation.Status status, String detail,
-                                    List<LocalDate> dropped, List<LocalDate> missing) {
+                                    List<LocalDate> dropped, List<LocalDate> missing, String fingerprint) {
         return new Prepared(List.of(), SentinelEvaluation.skipped(th.version(), asOf, status, detail),
-                List.copyOf(dropped), List.copyOf(missing));
+                List.copyOf(dropped), List.copyOf(missing), fingerprint);
+    }
+
+    /** 数值一律用 BigDecimal 的规范文本（去掉尾零），与库里 numeric 的精度无关。 */
+    static String fingerprint(List<DailyBar> raw, List<RehabFactor> factors, LocalDate from, LocalDate asOf, SentinelThresholds th) {
+        StringBuilder sb = new StringBuilder(th.version()).append('\n');
+        for (DailyBar b : raw) {
+            if (b.tradeDate().isBefore(from) || b.tradeDate().isAfter(asOf)) {
+                continue;
+            }
+            sb.append(b.tradeDate()).append('|').append(n(b.open())).append('|').append(n(b.high())).append('|')
+                    .append(n(b.low())).append('|').append(n(b.close())).append('|').append(b.volume()).append('|')
+                    .append(b.blank()).append('\n');
+        }
+        factors.stream()
+                .filter(f -> f.exDate().isAfter(from) && !f.exDate().isAfter(asOf))
+                .sorted(java.util.Comparator.comparing(RehabFactor::exDate))
+                .forEach(f -> sb.append(f.exDate()).append('|').append(f.companyActFlag()).append('|').append(n(f.fwdA()))
+                        .append('|').append(n(f.fwdB())).append('|').append(f.splitBase()).append(':').append(f.splitErt())
+                        .append('|').append(f.joinBase()).append(':').append(f.joinErt()).append('|').append(f.bonusBase())
+                        .append(':').append(f.bonusErt()).append('|').append(f.transferBase()).append(':').append(f.transferErt())
+                        .append('\n'));
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest, 0, 16);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String n(java.math.BigDecimal x) {
+        return x == null ? "" : x.stripTrailingZeros().toPlainString();
     }
 }

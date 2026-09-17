@@ -28,7 +28,7 @@ cd trader-web && npm run dev              # Vite :5174，/api 与 /actuator 代�
 cd trader-web && npm run build            # 产物进 trader-app/src/main/resources/static（gitignore）
 ./scripts/package.sh                      # dist/trading-signal-<版本>-<时间戳>.tar.gz
 ./scripts/check-secrets.sh                # 敏感信息扫描
-./scripts/check-daily.sh [baseUrl]        # 收盘后日线数据审计（GET /api/bars/audit）
+./scripts/check-daily.sh [baseUrl]        # 收盘后巡检五段：日线、基本面、账户、信号审计 + 运行健康
 # 集成测试（对真实网关只读；参数从环境变量读，见 OPERATIONS §2）
 ./mvnw -pl trader-app -am verify -Dtrader.integration=true -Dtest='IbkrGatewayIT,FutuGatewayIT,ReconnectIT' -Dsurefire.failIfNoSpecifiedTests=false
 ```
@@ -119,13 +119,13 @@ storage → common ；ai → common
 ## 当前状态
 
 **第 3 期「账户与持仓」已交付，生产跑 2.0.2**（第 3 期见 ARCHITECTURE §16，2.0.2 全量审查后的修复见 §17）。
-**第 4 期「入场信号」进行中（3.0.0-SNAPSHOT，ARCHITECTURE §18）**：步骤 1 判定引擎、步骤 2 对账与回放统计已完成。
+**第 4 期「入场信号」进行中（3.0.0-SNAPSHOT，ARCHITECTURE §18）**：步骤 1 判定引擎、步骤 2 对账与回放统计、步骤 3 每日评估与纸面账本已完成。
 每一期的设计决策、实测结论与已知边界都在
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~17 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
 
 - 数据规模：521 只标的、58.8 万根日 K（池/持仓/基准 20 年深度）、3.7 万条复权因子、
   5052 天交易日历（2006 起）、2.5 万期财报、逐日估值快照。
-- 跑批：每日增量、估值快照、账户快照（美东 18:00，含持仓同步 HOLDING）、成分股周同步、财报周刷新、当天补偿检查；
+- 跑批：每日增量、估值快照、账户快照（美东 18:00，含持仓同步 HOLDING）、信号评估（18:10，22:00 补偿）、成分股周同步、财报周刷新、当天补偿检查；
   碰撞重试 + SKIPPED 留痕 + `jobs` 健康指标。
-- 巡检：`./scripts/check-daily.sh` 一条命令覆盖日线审计、基本面审计、账户审计、运行健康（美东 18:30 之后跑）。
+- 巡检：`./scripts/check-daily.sh` 一条命令覆盖日线审计、基本面审计、账户审计、信号审计、运行健康（美东 19:00 之后跑）。
 - 本机 `config/secrets.yml` 已启用两家网关（隧道 + 开发 client-id）；入库的 `config/application.yml` 仍是 `enabled: false`。

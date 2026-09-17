@@ -110,6 +110,12 @@ trader:
     snapshot-cron: "0 0 18 * * MON-FRI"    # 美东 18:00：排在增量 17:30、估值 17:40 之后；21:00 补偿检查兜底
     value-tolerance: 0.002                  # 市值对账容差（比例），超过 5 倍记 FAIL
     identity-tolerance: 1                   # 资金恒等式容差（美元）
+  # 入场信号（第 4 期）。判据参数跟着判据版本写死在代码里，这里只有开关与时点；定时评估只在 schedule-enabled 的实例装配
+  signal:
+    enabled: true
+    evaluation-cron: "0 10 18 * * MON-FRI"   # 美东 18:10：排在增量、估值、账户快照（含持仓同步 HOLDING）之后
+    catchup-cron: "0 0 22 * * MON-FRI"       # 与 21:00 行情补偿错开：当天缺评估或有过期跳过但现已补齐的就重跑
+
   ai:
     api-key: ${OPENAI_API_KEY:}
     model: gpt-5.6-sol

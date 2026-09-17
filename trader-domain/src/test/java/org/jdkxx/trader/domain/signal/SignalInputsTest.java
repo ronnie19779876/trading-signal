@@ -98,6 +98,29 @@ class SignalInputsTest {
     }
 
     @Test
+    void 指纹只随窗口内数据变化() {
+        List<LocalDate> days = calendar();
+        List<DailyBar> raw = bars(days);
+        String base = SignalInputs.prepare(raw, List.of(), days, AS_OF, TH).fingerprint();
+
+        List<DailyBar> revised = new ArrayList<>(raw);
+        DailyBar last = revised.get(revised.size() - 1);
+        revised.set(revised.size() - 1, new DailyBar(X, last.tradeDate(), last.open(), last.high(), last.low(), last.close(),
+                null, last.volume() + 1, null, null, null, null, false));
+        List<DailyBar> older = new ArrayList<>(raw);
+        older.add(0, bar(AS_OF.minusDays(700), false));
+        DailyBar scaled = raw.get(0);
+        List<DailyBar> trailingZeros = new ArrayList<>(raw);
+        trailingZeros.set(0, new DailyBar(X, scaled.tradeDate(), scaled.open().setScale(6), scaled.high(), scaled.low(),
+                scaled.close(), null, scaled.volume(), null, null, null, null, false));
+
+        assertThat(base).hasSize(32);
+        assertThat(SignalInputs.prepare(revised, List.of(), days, AS_OF, TH).fingerprint()).as("成交量上修").isNotEqualTo(base);
+        assertThat(SignalInputs.prepare(older, List.of(), days, AS_OF, TH).fingerprint()).as("窗口外的 K 线").isEqualTo(base);
+        assertThat(SignalInputs.prepare(trailingZeros, List.of(), days, AS_OF, TH).fingerprint()).as("小数位数").isEqualTo(base);
+    }
+
+    @Test
     void 数据齐全时进入四门判定() {
         List<LocalDate> days = calendar();
 

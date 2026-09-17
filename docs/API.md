@@ -155,13 +155,21 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 
 ## 入场信号（第 4 期）
 
-判据版本 `sentinel-v1`（四门：趋势 / 定位 / 触发 / 风控，设计见 ARCHITECTURE §18）。目前只有只读计算，不落库、不调网关与模型。
+判据版本 `sentinel-v1`（四门：趋势 / 定位 / 触发 / 风控，设计见 ARCHITECTURE §18）。每个交易日美东 18:10 评估全量成分股 ∪ 池与持仓（去掉基准），22:00 补偿检查；不调网关与模型。
 价量口径是**结构口径**：以判定日为基准前复权，价格调拆股、合股、送股、分拆、特别股息，不调普通分红；成交量只按股数比例调。
 
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/signals/evaluate/{symbol}?date=` | 单日判定。`date` 缺省取最近收盘落定的交易日，晚于它 409，非交易日 400。返回 `evaluation`（`status`、`gates[]` 每道门的 `verdict` PASS/FAIL/UNAVAILABLE、`criteria` 判据原文、`values` 代入值；`indicators`、`zones` 支撑区、`hitZone`、`exitPlan` 出场预案、`bonus` 加分项）、`droppedNonTradingDays`（交易日历之外被剔除的 K 线）、`missingTradingDays`、`thresholds` 参数全集 |
 | `GET /api/signals/replay/{symbol}?from&to&trades=false&stopAtr&half=false` | 区间回放，默认最近一年、最长 21 年。`days[]` 每天的状态、通过门数、首个未过的门、`outcome`（按边沿与冷却：SIGNAL / NO_SIGNAL / SUPPRESSED_EDGE / SUPPRESSED_COOLDOWN；历史上没有 AI 结论，不含否决层）、收盘、ATR、RVOL、命中区底、止损与止损距离，`gates` 为四门缩写（P 通过 / F 不过 / U 不可判定）；另给 `statusCounts` / `outcomeCounts`。`trades=true` 附每条信号的纸面交易 `trades[]`（次日开盘入场，`reason` STOP / CHANDELIER / TIME / OPEN，`r` 为 R 倍数、未平仓为 null，`mfeR` / `maeR`；价格为收盘落定日口径）；`stopAtr`（默认 2.0）与 `half`（+1R 减半仓）只改纸面交易的出场、不改判定，供同一批信号配对比较，`exitVariant` 写明所用变体 |
+| `POST /api/signals/evaluate?date=` | 提交评估作业（写库），返回 `{jobId}`。`date` 缺省取收盘落定日；过去的日期为补跑，产生的信号 `origin=BACKFILL`；晚于收盘落定日 409、非交易日 400、有作业在跑 409。同一天重跑：评估覆盖，已发出的信号不动 |
+| `GET /api/signals?from&to&status&scope=pool&origin` | 信号列表，默认最近 30 天、只看池与持仓（`scope=all` 含池外），`status` 逗号分隔。每条是 `{signal, base}`：`signal` 的价位为判定日口径（`close`、`stop`、`stopLeg` ATR/ZONE、`riskPerShare`、`plusOneR`、`chandelierStop`、`target`、`rewardRisk`、命中区、`bonus`），`status` NEW / ACKNOWLEDGED / DISMISSED / EXPIRED / VETOED，`expiresOn` 为判定日后第 2 个交易日（该日评估后 NEW 与 ACKNOWLEDGED 过期）；`base` 是 BASE 变体的账本行 |
+| `GET /api/signals/{id}` | 信号详情：`signal`、`evaluation`（当天评估行，`detail` 为判定明细）、`fingerprintMatches`（按当前库里数据重算的输入指纹与存档一致与否）、`recomputed`（存档没有明细时现场重算）、`tracks`（两个出场变体）；不存在 404 |
+| `POST /api/signals/{id}/status` | body `{"status": "ACKNOWLEDGED" \| "DISMISSED", "note": "..."}`。NEW → ACKNOWLEDGED / DISMISSED、ACKNOWLEDGED → DISMISSED，其余 409 |
+| `GET /api/signals/evaluations?date&outcome&gate&scope=all` | 某天的全部评估（回答"为什么没信号"）：状态、`outcome`、`gates` 缩写、通过门数、首个未过的门、`role`（POOL / HOLDING / UNIVERSE）、收盘、ATR、RVOL、区底、止损、`inputFingerprint`；`detail` 只给池与持仓、至少过三门、结果不是 NO_SIGNAL 的存，其余为 null（用单日判定接口现场看）。`outcome` 也接受 SKIPPED_* 状态名，`gate` 按首个未过的门过滤 |
+| `GET /api/signals/evaluations/{symbol}?from&to` | 单只评估历史，默认最近 90 天，倒序 |
+| `GET /api/signals/ledger?variant&status` | 纸面账本。`stats[]` 按变体（`BASE` 止损 2.0×ATR、`STOP_2_5` 止损 2.5×ATR，都不减半仓）与来源分开：总数、未平、待入场、已平、胜率、每笔 R、每笔收益率；`pairedCount` / `pairedMeanReturnDiff` 为同一批已平仓信号上 STOP_2_5 − BASE 的收益率差；`entries[]` 为 `{signal, track}`。账本行 `status` PENDING_ENTRY / OPEN / CLOSED，`exitReason` STOP / CHANDELIER / TIME，价格为判定日口径，未平仓每天从信号日整段重算，`updatedThrough` 为算到的日期 |
+| `GET /api/signals/audit?date=` | 信号审计（收盘巡检第五段）：`evaluationExists` / `coverage` / `ledgerCurrent` 为关键项（美东 19:00 前缺评估只提示）；`staleData`（超过目标 2% 才判不过）、`dataQuality`、`signalConsistency`（当天信号与重算后的评估不一致，信号保留）、`evaluationJob` 为提示项；休市日直接判过 |
 
 `status` 取值：`EVALUATED`；`SKIPPED_INSUFFICIENT_BARS`（窗口 600 自然日内少于 260 根）；`SKIPPED_STALE_DATA`（判定日没有 K 线）；
 `SKIPPED_DATA_GAP`（对照交易日历缺超过 3 个交易日，停牌空 K 也算缺）；`SKIPPED_CORPORATE_ACTION`（股数变动事件缺比例，等复权因子重拉）。

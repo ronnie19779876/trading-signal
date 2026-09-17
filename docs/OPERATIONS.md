@@ -180,7 +180,7 @@ systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `Wor
 > 补偿必须早于次日盘前——券商收盘后冻结当前价，过了盘前就取不到当日口径的估值快照了。
 
 
-**收盘后必做**（美东 18:30 之后：增量 17:30、估值 17:40、账户快照 18:00 都跑完；约北京时间次日 06:30，冬令时 07:30）：
+**收盘后必做**（美东 19:00 之后：增量 17:30、估值 17:40、账户快照 18:00、信号评估 18:10 都跑完；约北京时间次日 07:00，冬令时 08:00）：
 
 ```bash
 ./scripts/check-daily.sh http://127.0.0.1:8093        # 在服务器上跑；本机经隧道则改成隧道端口
@@ -191,12 +191,13 @@ systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `Wor
 `historyGaps` 报警时：最近 90 天的缺口先重跑增量（`POST /api/bars/increment`）；补不回来的多是券商缺数。
 全历史深扫用 `GET /api/bars/gaps`，已知长期缺口有 NBIS（停牌 664 天）与 SPY（券商缺数 26 天），两者都补不回来。
 
-它依次调四处，一条命令覆盖全部：
+它依次调五处，一条命令覆盖全部：
 
 1. `GET /api/bars/audit` 日线审计：完整性、字段合理性、前收连续性、复权新鲜度、同步错误、增量作业、日历覆盖、对照日历的近期缺口、网关。
 2. `GET /api/fundamentals/audit` 基本面审计：估值完整性与合理性、财报陈旧度、估值作业。
 3. `GET /api/account/audit` 账户审计：当天快照是否存在（美东 18:30 前、或刚启用还没有任何快照时，缺快照只提示）、对账状态（FAIL 为关键项）、缺价、快照作业。
-4. `GET /actuator/health` 运行健康：`jobs` 组件在任一定时作业 FAILED / SKIPPED / 逾期（`overdue` 每日增量、`catchupOverdue` 补偿检查、`accountSnapshotOverdue` 账户快照）时降级，`gateways` 在网关掉线时降级。
+4. `GET /api/signals/audit` 信号审计：当天评估是否存在（美东 19:00 前只提示）、覆盖是否完整、未平仓纸面账本是否算到当天为关键项；过期跳过超过 2%、缺日与公司行动口径失败、信号与重算结论不一致（多半是 K 线被订正，信号保留）、最近一次评估作业为提示项。缺评估时 22:00 补偿检查会补跑；手工补跑 `POST /api/signals/evaluate?date=`（过去的日期产生的信号记 BACKFILL）。
+5. `GET /actuator/health` 运行健康：`jobs` 组件在任一定时作业 FAILED / SKIPPED / 逾期（`overdue` 每日增量、`catchupOverdue` 补偿检查、`accountSnapshotOverdue` 账户快照、`signalEvaluationOverdue` 信号评估）时降级，`gateways` 在网关掉线时降级。
 
 `ok=false` 时看 `checks` 里失败项与样本；退出码 0 全通过 / 1 有关键项失败或健康降级 / 2 接口不可达。假日（如劳工节）不带参数跑会自动审计上一个交易日；显式传休市日则回"当天休市"并判通过。
 

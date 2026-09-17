@@ -1,6 +1,7 @@
 package org.jdkxx.trader.app;
 
 import org.jdkxx.trader.core.account.AccountScheduler;
+import org.jdkxx.trader.core.signal.SignalScheduler;
 import org.jdkxx.trader.core.marketdata.MarketDataScheduler;
 import org.junit.jupiter.api.Test;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -54,7 +55,7 @@ class ScheduledPlaceholdersTest {
     /** 所有带 {@code @Scheduled} 的调度类。新增调度类必须加到这里，否则它的占位符不受检查。 */
     private static List<Method> scheduledMethods() {
         List<Method> all = new ArrayList<>();
-        for (Class<?> type : List.of(MarketDataScheduler.class, AccountScheduler.class)) {
+        for (Class<?> type : List.of(MarketDataScheduler.class, AccountScheduler.class, SignalScheduler.class)) {
             all.addAll(List.of(type.getDeclaredMethods()));
         }
         return all;

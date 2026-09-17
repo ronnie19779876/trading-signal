@@ -12,6 +12,10 @@
   修两处口径：支撑区回看边界改为 t − j ≤ 252（与 entry-v3 一致）、均线比较的真平局不再因浮点噪声判成大于。
   纸面交易 `PaperTrade`；回放接口加 `trades` / `stopAtr` / `half`；回放统计脚本 `scripts/research/sentinel_report.py`
   （结论：入场判据没有显示出择时价值，收益来自池的选择与出场规则，见 ARCHITECTURE §18.6）。
+- 步骤 3：V11 三张表（每日评估、信号、纸面账本）；评估作业 `SIGNAL_EVALUATION`（美东 18:10，22:00 补偿），
+  边沿 / 冷却 / 过期、输入指纹、两个出场变体的账本每天整段重算；接口 `POST /api/signals/evaluate`、`GET /api/signals`、
+  `GET /api/signals/{id}`、`POST /api/signals/{id}/status`、`GET /api/signals/evaluations`、`/evaluations/{symbol}`、`/ledger`、`/audit`；
+  `check-daily.sh` 加第五段信号审计；`jobs` 健康指标监控信号评估。
 
 ## 2.0.2（2026-09-14 发布）
 

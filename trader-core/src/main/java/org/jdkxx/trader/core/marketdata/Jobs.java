@@ -16,6 +16,9 @@ public final class Jobs {
     /** 账户与持仓的每日快照（第 3 期）。 */
     public static final String ACCOUNT_SNAPSHOT = "ACCOUNT_SNAPSHOT";
 
+    /** 第 4 期：入场哨兵每日评估（含信号、过期、纸面账本） */
+    public static final String SIGNAL_EVALUATION = "SIGNAL_EVALUATION";
+
     private Jobs() {
     }
 }

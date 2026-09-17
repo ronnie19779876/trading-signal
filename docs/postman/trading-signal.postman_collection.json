@@ -2626,6 +2626,416 @@
             }
           ],
           "response": []
+        },
+        {
+          "name": "信号审计（收盘后必查）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/signals/audit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "signals",
+                "audit"
+              ]
+            },
+            "description": "收盘巡检第五段：当天评估是否存在（美东 19:00 前缺评估只提示）、覆盖是否完整、未平仓账本是否算到当天为关键项；过期跳过占比、缺日与口径失败、信号与重算不一致、最近一次作业为提示项。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"审计通过 ok=true（失败时看 checks）\", () => pm.expect(body.ok, JSON.stringify(body.checks.filter(c => !c.ok))).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "信号列表",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/signals?from=&to=&status=&scope=pool&origin=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "signals"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": ""
+                },
+                {
+                  "key": "to",
+                  "value": ""
+                },
+                {
+                  "key": "status",
+                  "value": ""
+                },
+                {
+                  "key": "scope",
+                  "value": "pool"
+                },
+                {
+                  "key": "origin",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "默认最近 30 天、只看池与持仓（scope=all 含池外）；status 逗号分隔（NEW,ACKNOWLEDGED,DISMISSED,EXPIRED,VETOED）；origin 取 LIVE / BACKFILL。每条附 BASE 变体账本。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "信号详情",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/signals/{{signalId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "signals",
+                "{{signalId}}"
+              ]
+            },
+            "description": "信号 + 当天评估（含判定明细）+ 指纹核对（fingerprintMatches=false 说明 K 线或因子被重拉改过）+ 两个出场变体的账本。不存在 → 404。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200 或 404\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "某天的全部评估",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/signals/evaluations?date=&outcome=&gate=&scope=all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "signals",
+                "evaluations"
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": ""
+                },
+                {
+                  "key": "outcome",
+                  "value": ""
+                },
+                {
+                  "key": "gate",
+                  "value": ""
+                },
+                {
+                  "key": "scope",
+                  "value": "all"
+                }
+              ]
+            },
+            "description": "回答「今天为什么没信号、卡在哪道门」。outcome 取 SIGNAL / NO_SIGNAL / SUPPRESSED_EDGE / SUPPRESSED_COOLDOWN / BLOCKED_BY_AI，也接受 SKIPPED_* 状态名；gate 按首个未过的门过滤（TREND / LOCATION / TRIGGER / RISK）。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "单只评估历史",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/signals/evaluations/{{symbol}}?from=&to=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "signals",
+                "evaluations",
+                "{{symbol}}"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": ""
+                },
+                {
+                  "key": "to",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "默认最近 90 天，倒序。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "纸面账本",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/signals/ledger?variant=BASE&status=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "signals",
+                "ledger"
+              ],
+              "query": [
+                {
+                  "key": "variant",
+                  "value": "BASE"
+                },
+                {
+                  "key": "status",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "stats 按变体（BASE / STOP_2_5）与来源（LIVE / BACKFILL）分开汇总；pairedMeanReturnDiff = 同一批已平仓信号上 STOP_2_5 − BASE 的收益率均值；entries 按 variant / status 过滤。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"有 stats 与 entries\", () => { pm.expect(body.stats).to.be.an(\"array\"); pm.expect(body.entries).to.be.an(\"array\"); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "⚠ 写操作（改状态或触发跑批，别对生产整组跑）",
+          "item": [
+            {
+              "name": "提交信号评估（异步作业，会写库）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/signals/evaluate?date=",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "signals",
+                    "evaluate"
+                  ],
+                  "query": [
+                    {
+                      "key": "date",
+                      "value": ""
+                    }
+                  ]
+                },
+                "description": "date 缺省取收盘落定日；过去的日期记为补跑（信号 origin=BACKFILL）；晚于收盘落定日 409、非交易日 400、有作业在跑 409。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200（已提交）或 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "改信号状态",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/signals/{{signalId}}/status",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "signals",
+                    "{{signalId}}",
+                    "status"
+                  ]
+                },
+                "description": "NEW → ACKNOWLEDGED / DISMISSED；ACKNOWLEDGED → DISMISSED；其余 409。",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"status\": \"ACKNOWLEDGED\", \"note\": \"\"}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200、404 或 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404, 409]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
         }
       ]
     },

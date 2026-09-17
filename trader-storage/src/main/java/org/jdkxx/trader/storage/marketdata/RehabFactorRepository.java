@@ -47,13 +47,29 @@ public class RehabFactorRepository {
                     transfer_ert = EXCLUDED.transfer_ert, fetched_at = now()""", args);
     }
 
+    /** 多只标的一次取出（按标的分组、除权日升序）。 */
+    public java.util.Map<Long, List<RehabFactor>> findMany(java.util.Map<Long, Instrument> instruments) {
+        java.util.Map<Long, List<RehabFactor>> out = new java.util.HashMap<>();
+        if (instruments.isEmpty()) {
+            return out;
+        }
+        jdbc.query("SELECT * FROM rehab_factor WHERE instrument_id = ANY (?) ORDER BY instrument_id, ex_date", rs -> {
+            long id = rs.getLong("instrument_id");
+            out.computeIfAbsent(id, k -> new ArrayList<>()).add(map(instruments.get(id), rs));
+        }, (Object) instruments.keySet().toArray(Long[]::new));
+        return out;
+    }
+
+    private static RehabFactor map(Instrument instrument, java.sql.ResultSet rs) throws java.sql.SQLException {
+        return new RehabFactor(instrument, rs.getDate("ex_date").toLocalDate(), rs.getBigDecimal("fwd_a"),
+                rs.getBigDecimal("fwd_b"), rs.getBigDecimal("bwd_a"), rs.getBigDecimal("bwd_b"),
+                rs.getLong("company_act_flag"), rs.getBigDecimal("dividend"), rs.getBigDecimal("sp_dividend"),
+                rs.getInt("split_base"), rs.getInt("split_ert"), rs.getInt("join_base"), rs.getInt("join_ert"),
+                rs.getInt("bonus_base"), rs.getInt("bonus_ert"), rs.getInt("transfer_base"), rs.getInt("transfer_ert"));
+    }
+
     public List<RehabFactor> find(Instrument instrument, long instrumentId) {
         return jdbc.query("SELECT * FROM rehab_factor WHERE instrument_id = ? ORDER BY ex_date",
-                (rs, i) -> new RehabFactor(instrument, rs.getDate("ex_date").toLocalDate(), rs.getBigDecimal("fwd_a"),
-                        rs.getBigDecimal("fwd_b"), rs.getBigDecimal("bwd_a"), rs.getBigDecimal("bwd_b"),
-                        rs.getLong("company_act_flag"), rs.getBigDecimal("dividend"), rs.getBigDecimal("sp_dividend"),
-                        rs.getInt("split_base"), rs.getInt("split_ert"), rs.getInt("join_base"), rs.getInt("join_ert"),
-                        rs.getInt("bonus_base"), rs.getInt("bonus_ert"), rs.getInt("transfer_base"), rs.getInt("transfer_ert")),
-                instrumentId);
+                (rs, i) -> map(instrument, rs), instrumentId);
     }
 }

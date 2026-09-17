@@ -68,6 +68,27 @@ public class DailyBarRepository {
                 instrumentId, Date.valueOf(from), Date.valueOf(to));
     }
 
+    /** 多只标的一次取出（按标的分组、日期升序）；ids 里没有 K 线的标的不出现在结果里。 */
+    public Map<Long, List<DailyBar>> findMany(Map<Long, Instrument> instruments, LocalDate from, LocalDate to) {
+        Map<Long, List<DailyBar>> out = new HashMap<>();
+        if (instruments.isEmpty()) {
+            return out;
+        }
+        jdbc.query("""
+                SELECT instrument_id, trade_date, open, high, low, close, last_close, volume, turnover, turnover_rate, change_rate, pe, blank
+                FROM daily_bar WHERE instrument_id = ANY (?) AND trade_date BETWEEN ? AND ? ORDER BY instrument_id, trade_date""",
+                rs -> {
+                    long id = rs.getLong("instrument_id");
+                    out.computeIfAbsent(id, k -> new java.util.ArrayList<>()).add(new DailyBar(instruments.get(id),
+                            rs.getDate("trade_date").toLocalDate(), rs.getBigDecimal("open"), rs.getBigDecimal("high"),
+                            rs.getBigDecimal("low"), rs.getBigDecimal("close"), rs.getBigDecimal("last_close"), rs.getLong("volume"),
+                            rs.getBigDecimal("turnover"), rs.getBigDecimal("turnover_rate"), rs.getBigDecimal("change_rate"),
+                            rs.getBigDecimal("pe"), rs.getBoolean("blank")));
+                },
+                instruments.keySet().toArray(Long[]::new), Date.valueOf(from), Date.valueOf(to));
+        return out;
+    }
+
     public Optional<LocalDate> latestDate(long instrumentId) {
         Date d = jdbc.query("SELECT max(trade_date) FROM daily_bar WHERE instrument_id = ?", rs -> rs.next() ? rs.getDate(1) : null, instrumentId);
         return Optional.ofNullable(d).map(Date::toLocalDate);

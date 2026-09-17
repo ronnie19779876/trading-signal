@@ -6,14 +6,12 @@ import org.jdkxx.trader.domain.DailyBar;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.RehabFactor;
 import org.jdkxx.trader.domain.signal.GateResult;
-import org.jdkxx.trader.domain.signal.Indicators;
 import org.jdkxx.trader.domain.signal.PaperTrade;
 import org.jdkxx.trader.domain.signal.SentinelEvaluation;
 import org.jdkxx.trader.domain.signal.SentinelThresholds;
-import org.jdkxx.trader.domain.signal.SignalBar;
 import org.jdkxx.trader.domain.signal.SignalInputs;
 import org.jdkxx.trader.domain.signal.SignalSuppression;
-import org.jdkxx.trader.domain.signal.StructuralAdjustment;
+import org.jdkxx.trader.domain.signal.SignalTrades;
 import org.jdkxx.trader.storage.marketdata.DailyBarRepository;
 import org.jdkxx.trader.storage.marketdata.InstrumentRow;
 import org.jdkxx.trader.storage.marketdata.RehabFactorRepository;
@@ -54,7 +52,7 @@ public class SentinelService {
     }
 
     public record Judgement(String symbol, SentinelEvaluation evaluation, List<LocalDate> droppedNonTradingDays,
-                            List<LocalDate> missingTradingDays, Map<String, Object> thresholds) {
+                            List<LocalDate> missingTradingDays, String fingerprint, Map<String, Object> thresholds) {
     }
 
     /** 单日判定。date 为空取最近收盘落定的交易日。 */
@@ -72,7 +70,7 @@ public class SentinelService {
         SignalInputs.Prepared p = SignalInputs.prepare(raw, factors, calendar, asOf, thresholds);
         SentinelEvaluation e = p.skipped() != null ? p.skipped()
                 : org.jdkxx.trader.domain.signal.SentinelEvaluator.evaluate(p.bars(), asOf, thresholds);
-        return new Judgement(row.symbol(), e, p.droppedNonTradingDays(), p.missingTradingDays(), thresholds.toMap());
+        return new Judgement(row.symbol(), e, p.droppedNonTradingDays(), p.missingTradingDays(), p.fingerprint(), thresholds.toMap());
     }
 
     /**
@@ -187,39 +185,17 @@ public class SentinelService {
                 trades(raw, factors, settled, signals, multiple, rules));
     }
 
-    /** 整段换算到收盘落定日口径后逐条模拟；判定口径的止损按当日收盘的比例换算过来。 */
+    /** 逐条模拟（与纸面账本同一入口 {@link SignalTrades}）：价格为判定日口径。 */
     private List<PaperTrade.Result> trades(List<DailyBar> raw, List<RehabFactor> factors, LocalDate settled,
                                            List<SentinelEvaluation> signals, double stopAtrMultiple, PaperTrade.Rules rules) {
         LocalDate first = raw.isEmpty() ? settled : raw.get(0).tradeDate();
         Set<LocalDate> tradingDays = new HashSet<>(days.between(Market.US, first, settled));
-        List<DailyBar> clean = raw.stream().filter(b -> tradingDays.contains(b.tradeDate())).toList();
-        StructuralAdjustment.Result adjusted = StructuralAdjustment.apply(clean, factors, settled);
-        if (!adjusted.ok()) {
-            throw new IllegalStateException("纸面交易的价量口径换算失败：" + adjusted.problem());
-        }
-        List<SignalBar> series = adjusted.bars();
-        Map<LocalDate, Integer> index = new java.util.HashMap<>();
-        for (int i = 0; i < series.size(); i++) {
-            index.put(series.get(i).date(), i);
-        }
-        double[] high = series.stream().mapToDouble(SignalBar::high).toArray();
-        double[] low = series.stream().mapToDouble(SignalBar::low).toArray();
-        double[] close = series.stream().mapToDouble(SignalBar::close).toArray();
-        double[] atr = Indicators.wilderAtr(high, low, close, thresholds.atrPeriod());
         List<PaperTrade.Result> out = new ArrayList<>();
         for (SentinelEvaluation e : signals) {
-            Integer i = index.get(e.asOf());
-            if (i == null) {
-                continue;
-            }
-            double evalClose = (Double) e.indicators().get("close");
-            double evalAtr = (Double) e.indicators().get("atr14");
-            double stop = evalClose - stopAtrMultiple * evalAtr;
-            if (e.hitZone() != null) {
-                stop = Math.min(stop, e.hitZone().bottom() - thresholds.zoneStopAtrMultiple() * evalAtr);
-            }
-            double scale = close[i] / evalClose;
-            PaperTrade.Result r = PaperTrade.simulate(series, atr, i, stop * scale, rules);
+            double close = (Double) e.indicators().get("close");
+            double atr = (Double) e.indicators().get("atr14");
+            double stop = SignalTrades.stop(close, atr, e.hitZone() == null ? null : e.hitZone().bottom(), stopAtrMultiple, thresholds);
+            PaperTrade.Result r = SignalTrades.simulate(raw, factors, tradingDays, e.asOf(), close, stop, settled, thresholds, rules);
             if (r != null) {
                 out.add(r);
             }
