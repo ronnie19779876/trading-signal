@@ -172,6 +172,40 @@ class SentinelEvaluatorTest {
         }
     }
 
+    /**
+     * 守护：支撑区回看边界与 entry-v3 一致（t − j ≤ 252）。2026-09-17 与 futu-trader 对账时发现少回看一根，
+     * MSFT/ISRG/WMT 共 7 个交易日的定位或风控结论因此不同。
+     */
+    @Test
+    void 支撑区回看含判定日往前第252根() {
+        for (int age : new int[]{252, 253}) {
+            List<SignalBar> bars = new ArrayList<>();
+            LocalDate d = LocalDate.of(2025, 1, 6);
+            int n = 300;
+            for (int i = 0; i < n; i++) {
+                double low = 100;
+                int t = n - 1;
+                if (i == t - age || i == t - 5) {
+                    low = 50;          // 两个同价分形低点：一个在回看边界上，一个在近处
+                }
+                bars.add(new SignalBar(d, 101, 102, low, 101, 1_000_000));
+                d = nextWeekday(d);
+            }
+
+            SentinelEvaluation e = SentinelEvaluator.evaluate(bars, last(bars), TH);
+
+            assertThat(e.zones()).as("age=" + age).hasSize(age == 252 ? 1 : 0);
+        }
+    }
+
+    /** 守护：均线的真平局不因浮点噪声判成"大于"（WMT 2021-11-04 实测平局）。 */
+    @Test
+    void 均线平局按不大于处理() {
+        assertThat(SentinelEvaluator.greater(141.12535000000001, 141.12535)).isFalse();
+        assertThat(SentinelEvaluator.greater(0.1 + 0.2, 0.3)).isFalse();
+        assertThat(SentinelEvaluator.greater(141.1254, 141.1253)).isTrue();
+    }
+
     @Test
     void 乱序输入直接报错() {
         List<SignalBar> bars = new ArrayList<>(series(300, 149.5, 148.5, 152, 3_000_000));

@@ -8,6 +8,10 @@
   结构口径（价格调拆股、合股、送股、分拆、特别股息，成交量只按股数比例调）；数据层检查（剔除非交易日 K 线、陈旧、缺日、口径换算失败）；
   只读接口 `GET /api/signals/evaluate/{symbol}`、`GET /api/signals/replay/{symbol}`。开发库回放 MSFT / ISRG / MU 信号数与 entry-v3 分享稿逐一相同。
 - V10：`rehab_factor` 补存合股、送股、转增比例；已有这三类事件的标的在下一次增量里优先重拉复权因子。
+- 步骤 2：与 futu-trader 研究缓存逐日对账（7 只约 3 万个判定日，信号日期逐条相同，TSM 金样本逐项吻合）；
+  修两处口径：支撑区回看边界改为 t − j ≤ 252（与 entry-v3 一致）、均线比较的真平局不再因浮点噪声判成大于。
+  纸面交易 `PaperTrade`；回放接口加 `trades` / `stopAtr` / `half`；回放统计脚本 `scripts/research/sentinel_report.py`
+  （结论：入场判据没有显示出择时价值，收益来自池的选择与出场规则，见 ARCHITECTURE §18.6）。
 
 ## 2.0.2（2026-09-14 发布）
 

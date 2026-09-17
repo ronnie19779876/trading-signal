@@ -30,11 +30,17 @@ public class SignalController {
         return sentinel.evaluate(symbol, date);
     }
 
-    /** 区间回放：逐个交易日判定，按边沿与冷却标出信号（历史上没有 AI 结论）。默认最近一年，最长 21 年。 */
+    /**
+     * 区间回放：逐个交易日判定，按边沿与冷却标出信号（历史上没有 AI 结论）。默认最近一年，最长 21 年。
+     * trades=true 附每条信号的纸面交易；stopAtr / half 只改纸面交易的出场（同一批信号配对比较用），不改判定。
+     */
     @GetMapping("/api/signals/replay/{symbol}")
     public SentinelService.Replay replay(@PathVariable String symbol,
                                          @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-                                         @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
-        return sentinel.replay(symbol, from, to);
+                                         @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+                                         @RequestParam(defaultValue = "false") boolean trades,
+                                         @RequestParam(required = false) Double stopAtr,
+                                         @RequestParam(defaultValue = "false") boolean half) {
+        return sentinel.replay(symbol, from, to, trades, stopAtr, half);
     }
 }

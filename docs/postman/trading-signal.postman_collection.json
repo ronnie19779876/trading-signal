@@ -2577,7 +2577,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/signals/replay/{{symbol}}?from=2025-09-01&to=",
+              "raw": "{{baseUrl}}/api/signals/replay/{{symbol}}?from=2025-09-01&to=&trades=true&stopAtr=&half=false",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -2595,10 +2595,22 @@
                 {
                   "key": "to",
                   "value": ""
+                },
+                {
+                  "key": "trades",
+                  "value": "true"
+                },
+                {
+                  "key": "stopAtr",
+                  "value": ""
+                },
+                {
+                  "key": "half",
+                  "value": "false"
                 }
               ]
             },
-            "description": "逐个交易日判定，按边沿与冷却标出 SIGNAL（历史上没有 AI 结论，不含否决层）。默认最近一年，最长 21 年。只读、不落库。"
+            "description": "逐个交易日判定，按边沿与冷却标出 SIGNAL（历史上没有 AI 结论，不含否决层）。默认最近一年，最长 21 年。trades=true 附纸面交易；stopAtr / half 只改纸面交易的出场（配对比较用）。只读、不落库。"
           },
           "event": [
             {

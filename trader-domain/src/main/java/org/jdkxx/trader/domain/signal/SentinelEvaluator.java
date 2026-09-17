@@ -17,7 +17,7 @@ import java.util.Map;
  *
  * <ol>
  *   <li>趋势：收盘 &gt; SMA200 且 SMA200[t] &gt; SMA200[t−20]；</li>
- *   <li>定位：最近 252 根内的分形低点按 τ = 0.5×ATR14 聚类，触及 ≥ 2 次为有效区；当日最低 ≤ 区顶 且 收盘 ≥ 区底。
+ *   <li>定位：判定日往前 252 根以内（t − j ≤ 252，含判定日共 253 根，与 entry-v3 生产引擎一致）的分形低点按 τ = 0.5×ATR14 聚类，触及 ≥ 2 次为有效区；当日最低 ≤ 区顶 且 收盘 ≥ 区底。
  *       同时命中多个区时取区顶最高者（离现价最近、止损最紧，结论唯一）；</li>
  *   <li>触发：RVOL ≥ 1.5（前 20 日均量，不含当日）且 收盘 &gt; 开盘；</li>
  *   <li>风控：止损 = min(收盘 − 2×ATR14, 区底 − 0.5×ATR14)，没有命中区时只用 ATR 腿；止损距离 ≤ 10%。</li>
@@ -85,7 +85,7 @@ public final class SentinelEvaluator {
         SentinelEvaluation run() {
             double atrT = atr[t];
             double tau = th.zoneToleranceAtr() * atrT;
-            int from = Math.max(0, t - th.zoneLookback() + 1);
+            int from = Math.max(0, t - th.zoneLookback());
             List<PriceZone> zones = Double.isNaN(tau) ? List.of()
                     : Fractals.cluster(Fractals.lows(low, th.fractalSide(), from), low, date, tau, th.minTouches());
 
@@ -125,9 +125,11 @@ public final class SentinelEvaluator {
             if (Double.isNaN(now) || Double.isNaN(prior)) {
                 return new GateResult(Gate.TREND, Verdict.UNAVAILABLE, "SMA200 或其 " + k + " 日前的值样本不足", v);
             }
-            boolean pass = close[t] > now && now > prior;
-            String criteria = "收盘 " + f(close[t]) + (close[t] > now ? " > " : " ≤ ") + "SMA200 " + f(now)
-                    + "（" + pct(close[t] / now - 1, true) + "）；SMA200 " + f(now) + (now > prior ? " > " : " ≤ ")
+            boolean aboveMa = greater(close[t], now);
+            boolean rising = greater(now, prior);
+            boolean pass = aboveMa && rising;
+            String criteria = "收盘 " + f(close[t]) + (aboveMa ? " > " : " ≤ ") + "SMA200 " + f(now)
+                    + "（" + pct(close[t] / now - 1, true) + "）；SMA200 " + f(now) + (rising ? " > " : " ≤ ")
                     + k + " 日前 " + f(prior);
             return new GateResult(Gate.TREND, pass ? Verdict.PASS : Verdict.FAIL, criteria, v);
         }
@@ -207,7 +209,7 @@ public final class SentinelEvaluator {
                 highest = Math.max(highest, high[i]);
             }
             double chandelier = highest - th.chandelierAtrMultiple() * atrT;
-            int from = Math.max(0, t - th.zoneLookback() + 1);
+            int from = Math.max(0, t - th.zoneLookback());
             PriceZone target = Fractals.cluster(Fractals.highs(high, th.fractalSide(), from), high, date,
                             th.zoneToleranceAtr() * atrT, th.minTouches()).stream()
                     .filter(z -> z.bottom() > close[t])
@@ -221,6 +223,7 @@ public final class SentinelEvaluator {
 
         private Map<String, Object> bonus(double tau, PriceZone hit) {
             Map<String, Object> b = new LinkedHashMap<>();
+            // 52 周高低取最近 252 根（含判定日）；只是加分项，不影响判定
             int from = Math.max(0, t - th.zoneLookback() + 1);
             double hi = Double.NEGATIVE_INFINITY;
             double lo = Double.POSITIVE_INFINITY;
@@ -242,6 +245,15 @@ public final class SentinelEvaluator {
             b.put("macdPositive", !Double.isNaN(macd[t]) && macd[t] > 0);
             return b;
         }
+    }
+
+    /**
+     * 均线参与的"严格大于"：差值在相对 1e-9 以内视为相等。均线是两百个价格的和，数学上相等的两个值在 double 里会差一个噪声，
+     * 结论随价格口径（判定日口径 / 今天的拆股口径）翻转。实测 WMT 2021-11-04 的 SMA200 与 20 日前精确相等（141.12535），
+     * futu-trader 按今天口径的六位小数价格算成"大于"判了通过。
+     */
+    static boolean greater(double a, double b) {
+        return a - b > 1e-9 * Math.max(Math.abs(a), Math.abs(b));
     }
 
     private static Map<String, Object> values(Object... kv) {

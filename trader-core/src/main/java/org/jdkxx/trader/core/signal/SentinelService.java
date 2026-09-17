@@ -6,10 +6,14 @@ import org.jdkxx.trader.domain.DailyBar;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.RehabFactor;
 import org.jdkxx.trader.domain.signal.GateResult;
+import org.jdkxx.trader.domain.signal.Indicators;
+import org.jdkxx.trader.domain.signal.PaperTrade;
 import org.jdkxx.trader.domain.signal.SentinelEvaluation;
 import org.jdkxx.trader.domain.signal.SentinelThresholds;
+import org.jdkxx.trader.domain.signal.SignalBar;
 import org.jdkxx.trader.domain.signal.SignalInputs;
 import org.jdkxx.trader.domain.signal.SignalSuppression;
+import org.jdkxx.trader.domain.signal.StructuralAdjustment;
 import org.jdkxx.trader.storage.marketdata.DailyBarRepository;
 import org.jdkxx.trader.storage.marketdata.InstrumentRow;
 import org.jdkxx.trader.storage.marketdata.RehabFactorRepository;
@@ -75,15 +79,33 @@ public class SentinelService {
      * 回放的一天。outcome 按边沿与冷却算（历史上没有 AI 结论，按"无结论不阻断"处理），
      * 与实盘跑批的区别只在 AI 否决层。
      */
-    public record ReplayDay(LocalDate date, SentinelEvaluation.Status status, int gatesPassed, GateResult.Gate firstBlockingGate,
-                            SignalSuppression.Outcome outcome, Double close, Double stop, Double stopDistance, String detail) {
+    /**
+     * @param gates 四门结论缩写，按趋势 / 定位 / 触发 / 风控顺序：P 通过、F 不过、U 不可判定；不予判定时为 null
+     */
+    public record ReplayDay(LocalDate date, SentinelEvaluation.Status status, String gates, int gatesPassed,
+                            GateResult.Gate firstBlockingGate, SignalSuppression.Outcome outcome, Double close, Double atr14,
+                            Double rvol, Double zoneBottom, Double stop, Double stopDistance, String detail) {
     }
 
+    /**
+     * @param trades 每条 SIGNAL 的纸面交易（{@link PaperTrade}，价格为回放末日口径）；没要求时为 null
+     * @param exitVariant 纸面交易用的出场变体说明；信号集合始终按 sentinel-v1 判定，变体只改出场，便于同一批信号配对比较
+     */
     public record Replay(String symbol, LocalDate from, LocalDate to, Map<String, Long> statusCounts,
-                         Map<String, Long> outcomeCounts, List<ReplayDay> days) {
+                         Map<String, Long> outcomeCounts, List<ReplayDay> days, String exitVariant,
+                         List<PaperTrade.Result> trades) {
     }
 
     public Replay replay(String symbol, LocalDate from, LocalDate to) {
+        return replay(symbol, from, to, false, null, false);
+    }
+
+    /**
+     * @param stopAtrMultiple 纸面交易的止损 ATR 倍数（配对比较用，只改出场不改判定）；null 取 sentinel-v1 的 2.0
+     * @param halfAtPlusOneR  纸面交易是否 +1R 减半仓（对照变体）
+     */
+    public Replay replay(String symbol, LocalDate from, LocalDate to, boolean withTrades, Double stopAtrMultiple,
+                         boolean halfAtPlusOneR) {
         LocalDate settled = cutoff.current();
         LocalDate end = to == null || to.isAfter(settled) ? settled : to;
         LocalDate start = from == null ? end.minusYears(1) : from;
@@ -95,7 +117,8 @@ public class SentinelService {
         }
         InstrumentRow row = directory.require(symbol);
         LocalDate loadFrom = start.minusDays(thresholds.windowCalendarDays());
-        List<DailyBar> raw = bars.find(row.instrument(), row.id(), loadFrom, end);
+        // 纸面交易要走到回放区间之后，K 线取到收盘落定日
+        List<DailyBar> raw = bars.find(row.instrument(), row.id(), loadFrom, withTrades ? settled : end);
         List<RehabFactor> factors = rehabs.find(row.instrument(), row.id());
         List<LocalDate> calendarList = days.between(Market.US, loadFrom, end);
         Set<LocalDate> calendar = new HashSet<>(calendarList);
@@ -105,6 +128,7 @@ public class SentinelService {
         Map<String, Long> outcomeCounts = new LinkedHashMap<>();
         boolean previousPassed = false;
         Integer sinceLastSignal = null;
+        List<SentinelEvaluation> signals = new ArrayList<>();
         int lo = 0;
         for (LocalDate asOf : calendarList) {
             if (asOf.isBefore(start)) {
@@ -130,18 +154,76 @@ public class SentinelService {
                     SignalSuppression.AiVerdict.ABSENT);
             if (outcome == SignalSuppression.Outcome.SIGNAL) {
                 sinceLastSignal = 0;
+                signals.add(e);
             }
             previousPassed = e.allPassed();
 
             GateResult risk = e.gates().stream().filter(g -> g.gate() == GateResult.Gate.RISK).findFirst().orElse(null);
-            out.add(new ReplayDay(asOf, e.status(), e.gatesPassed(), e.firstBlockingGate().orElse(null), outcome,
-                    (Double) e.indicators().get("close"),
+            String gates = e.gates().isEmpty() ? null : e.gates().stream()
+                    .map(g -> g.verdict().name().substring(0, 1)).reduce("", String::concat);
+            out.add(new ReplayDay(asOf, e.status(), gates, e.gatesPassed(), e.firstBlockingGate().orElse(null), outcome,
+                    (Double) e.indicators().get("close"), (Double) e.indicators().get("atr14"), (Double) e.indicators().get("rvol"),
+                    e.hitZone() == null ? null : e.hitZone().bottom(),
                     risk == null ? null : (Double) risk.values().get("stop"),
                     risk == null ? null : (Double) risk.values().get("stopDistance"),
                     e.statusDetail()));
             statusCounts.merge(e.status().name(), 1L, Long::sum);
             outcomeCounts.merge(outcome.name(), 1L, Long::sum);
         }
-        return new Replay(row.symbol(), start, end, statusCounts, outcomeCounts, out);
+        if (!withTrades) {
+            return new Replay(row.symbol(), start, end, statusCounts, outcomeCounts, out, null, null);
+        }
+        double multiple = stopAtrMultiple == null ? thresholds.stopAtrMultiple() : stopAtrMultiple;
+        if (!(multiple > 0 && multiple <= 10)) {
+            throw new IllegalArgumentException("stopAtr 取值 (0, 10]");
+        }
+        PaperTrade.Rules rules = PaperTrade.Rules.of(thresholds);
+        if (halfAtPlusOneR) {
+            rules = rules.withHalfAtPlusOneR();
+        }
+        String variant = "止损 min(收盘 − " + multiple + "×ATR, 区底 − " + thresholds.zoneStopAtrMultiple() + "×ATR)"
+                + (halfAtPlusOneR ? "，+1R 减半仓" : "，不减半仓");
+        return new Replay(row.symbol(), start, end, statusCounts, outcomeCounts, out, variant,
+                trades(raw, factors, settled, signals, multiple, rules));
+    }
+
+    /** 整段换算到收盘落定日口径后逐条模拟；判定口径的止损按当日收盘的比例换算过来。 */
+    private List<PaperTrade.Result> trades(List<DailyBar> raw, List<RehabFactor> factors, LocalDate settled,
+                                           List<SentinelEvaluation> signals, double stopAtrMultiple, PaperTrade.Rules rules) {
+        LocalDate first = raw.isEmpty() ? settled : raw.get(0).tradeDate();
+        Set<LocalDate> tradingDays = new HashSet<>(days.between(Market.US, first, settled));
+        List<DailyBar> clean = raw.stream().filter(b -> tradingDays.contains(b.tradeDate())).toList();
+        StructuralAdjustment.Result adjusted = StructuralAdjustment.apply(clean, factors, settled);
+        if (!adjusted.ok()) {
+            throw new IllegalStateException("纸面交易的价量口径换算失败：" + adjusted.problem());
+        }
+        List<SignalBar> series = adjusted.bars();
+        Map<LocalDate, Integer> index = new java.util.HashMap<>();
+        for (int i = 0; i < series.size(); i++) {
+            index.put(series.get(i).date(), i);
+        }
+        double[] high = series.stream().mapToDouble(SignalBar::high).toArray();
+        double[] low = series.stream().mapToDouble(SignalBar::low).toArray();
+        double[] close = series.stream().mapToDouble(SignalBar::close).toArray();
+        double[] atr = Indicators.wilderAtr(high, low, close, thresholds.atrPeriod());
+        List<PaperTrade.Result> out = new ArrayList<>();
+        for (SentinelEvaluation e : signals) {
+            Integer i = index.get(e.asOf());
+            if (i == null) {
+                continue;
+            }
+            double evalClose = (Double) e.indicators().get("close");
+            double evalAtr = (Double) e.indicators().get("atr14");
+            double stop = evalClose - stopAtrMultiple * evalAtr;
+            if (e.hitZone() != null) {
+                stop = Math.min(stop, e.hitZone().bottom() - thresholds.zoneStopAtrMultiple() * evalAtr);
+            }
+            double scale = close[i] / evalClose;
+            PaperTrade.Result r = PaperTrade.simulate(series, atr, i, stop * scale, rules);
+            if (r != null) {
+                out.add(r);
+            }
+        }
+        return out;
     }
 }
