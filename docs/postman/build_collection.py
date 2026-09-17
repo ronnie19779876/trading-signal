@@ -335,6 +335,24 @@ ENDPOINTS = [
         ],
     },
     {
+        "folder": "模型第二意见（第 4 期·步骤 4）",
+        "items": [
+            {"name": "用量与配置", "method": "GET", "path": "/api/ai/usage", "query": [{"key": "from", "value": ""}, {"key": "to", "value": ""}],
+             "desc": "settings（是否配置密钥、模型、开关、每日上限、预算、推理强度、提示词版本，不含密钥）+ 按美东自然日的调用次数、失败、跳过、否决与 token。",
+             "tests": T_200 + T_JSON + ['pm.test("有 settings 且不含密钥", () => { pm.expect(body.settings).to.be.an("object"); pm.expect(JSON.stringify(body)).to.not.match(/sk-[A-Za-z0-9]/); });']},
+            {"name": "分析列表", "method": "GET", "path": "/api/ai/analyses", "query": [{"key": "from", "value": ""}, {"key": "to", "value": ""},
+             {"key": "status", "value": ""}, {"key": "symbol", "value": ""}, {"key": "limit", "value": "100"}],
+             "desc": "默认最近 7 天（按创建日，美东），倒序。",
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
+            {"name": "单次分析", "method": "GET", "path": "/api/ai/analyses/{{analysisId}}",
+             "desc": "输入、结论、逐条证据核对、裁决、token 与耗时。不存在 404。",
+             "tests": ['pm.test("HTTP 200 或 404", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));']},
+            {"name": "手工分析（同步约 15 秒，会计费）", "method": "POST", "path": "/api/ai/analyses", "query": [{"key": "symbol", "value": "{{symbol}}"}, {"key": "date", "value": ""}],
+             "desc": "计入每日上限；同一输入已有 OK 结论直接复用不计费。当天不予判定 409。",
+             "tests": ['pm.test("HTTP 200 或 409", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));']},
+        ],
+    },
+    {
         "folder": "Actuator",
         "items": [
             {
@@ -421,6 +439,7 @@ def build_environment(name, base_url, symbol):
             {"key": "jobId", "value": "1", "enabled": True},
             # 同理不给默认信号 id：改信号状态拿它当参数
             {"key": "signalId", "value": "1" if name == "dev" else "", "enabled": True},
+            {"key": "analysisId", "value": "1" if name == "dev" else "", "enabled": True},
         ],
         "_postman_variable_scope": "environment",
     }

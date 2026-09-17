@@ -46,13 +46,13 @@ public class EntrySignalRepository {
         List<Long> ids = jdbc.queryForList("""
                 INSERT INTO entry_signal (instrument_id, trade_date, ruleset_version, role, origin, close, atr14, stop, stop_leg,
                         stop_distance, risk_per_share, plus_one_r, chandelier_stop, target, reward_risk, zone_bottom, zone_top,
-                        zone_touches, bonus, status, expires_on, job_run_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?)
+                        zone_touches, bonus, ai_analysis_id, ai_stance, status, expires_on, job_run_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?)
                 ON CONFLICT (instrument_id, trade_date, ruleset_version) DO NOTHING
                 RETURNING id""", Long.class,
                 r.instrumentId(), Date.valueOf(r.tradeDate()), r.rulesetVersion(), r.role(), r.origin(), r.close(), r.atr14(),
                 r.stop(), r.stopLeg(), r.stopDistance(), r.riskPerShare(), r.plusOneR(), r.chandelierStop(), r.target(),
-                r.rewardRisk(), r.zoneBottom(), r.zoneTop(), r.zoneTouches(), r.bonus(), r.status(),
+                r.rewardRisk(), r.zoneBottom(), r.zoneTop(), r.zoneTouches(), r.bonus(), r.aiAnalysisId(), r.aiStance(), r.status(),
                 Date.valueOf(r.expiresOn()), r.jobRunId());
         if (!ids.isEmpty()) {
             return new Inserted(ids.get(0), true);

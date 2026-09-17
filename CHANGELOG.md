@@ -16,6 +16,11 @@
   边沿 / 冷却 / 过期、输入指纹、两个出场变体的账本每天整段重算；接口 `POST /api/signals/evaluate`、`GET /api/signals`、
   `GET /api/signals/{id}`、`POST /api/signals/{id}/status`、`GET /api/signals/evaluations`、`/evaluations/{symbol}`、`/ledger`、`/audit`；
   `check-daily.sh` 加第五段信号审计；`jobs` 健康指标监控信号评估。
+- 步骤 4：模型第二意见（只有否决权）。V12 `ai_analysis`；输入构建（技术面、静态市盈率 5 年分位、财报白名单、公司简介、财报窗口提示，
+  不含持仓与账户）、提示词 `sentinel-veto-v1`、Responses API 结构化输出、证据逐条核对、否决规则（看空 + 把握非 LOW + ≥2 条核对通过的看空证据）；
+  评估作业对候选调用，否决的信号记 `VETOED`；每日上限、作业内时长预算、同一输入复用；补跑不调。
+  接口 `GET /api/signals/ai-input/{symbol}`、`POST|GET /api/ai/analyses`、`GET /api/ai/analyses/{id}`、`GET /api/ai/usage`；
+  账本汇总按模型裁决分组；信号审计加 `aiAnalyses`。**升级注意**：生产 `trader.env` 需配 `OPENAI_API_KEY`，外置配置打开 `trader.ai.signal-veto-enabled`。
 
 ## 2.0.2（2026-09-14 发布）
 

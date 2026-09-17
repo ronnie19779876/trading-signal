@@ -22,7 +22,7 @@ class SignalEvaluationServiceTest {
     private static final LocalDate PREV = LocalDate.of(2026, 9, 1);
 
     private final SignalEvaluationService service =
-            new SignalEvaluationService(null, null, null, null, null, null, null, null, null, null);
+            new SignalEvaluationService(null, null, null, null, null, null, null, null, null, null, null);
 
     private static SignalEvaluationRow stored(String status, String gates, String outcome) {
         return new SignalEvaluationRow(1, "X", PREV, "sentinel-v1", status, null, outcome, gates, 0, null, "POOL",
@@ -73,6 +73,81 @@ class SignalEvaluationServiceTest {
 
     private static BigDecimal bd(double v) {
         return BigDecimal.valueOf(v);
+    }
+
+    /** 守护：模型否决的候选写成 BLOCKED_BY_AI 评估 + VETOED 信号（照样进账本）；否决信息关联到信号。 */
+    @Test
+    void 模型否决时信号记为VETOED且评估记BLOCKED_BY_AI() {
+        org.jdkxx.trader.storage.signal.SignalStore store = org.mockito.Mockito.mock(org.jdkxx.trader.storage.signal.SignalStore.class);
+        org.jdkxx.trader.core.signal.ai.AiVetoService ai = org.mockito.Mockito.mock(org.jdkxx.trader.core.signal.ai.AiVetoService.class);
+        org.mockito.Mockito.when(ai.analyze(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq("SIGNAL_VETO"), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new org.jdkxx.trader.core.signal.ai.AiVetoService.Outcome(
+                        org.jdkxx.trader.domain.signal.SignalSuppression.AiVerdict.VETO, 42L, "AVOID"));
+        org.mockito.Mockito.when(store.save(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any())).thenReturn(11L);
+        SignalEvaluationService svc = new SignalEvaluationService(null, null, null, null, null, null, store, null, null,
+                new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules(), ai);
+
+        Series s = passingSeries();
+        var instrument = new org.jdkxx.trader.storage.marketdata.InstrumentRow(1, org.jdkxx.trader.domain.Market.US, "X", "X", null,
+                org.jdkxx.trader.domain.SecurityType.STOCK, 1, null, false, null, null, "RESOLVED");
+        List<LocalDate> cal = new ArrayList<>(s.days());
+        SignalEvaluationService.Result r = svc.evaluate(instrument, s.raw(), List.of(), s.last(), cal.get(cal.size() - 2),
+                new HashSet<>(cal), cal, null, null, "POOL", "LIVE", s.last().plusDays(3), 5L, new ArrayList<>(),
+                new SignalEvaluationService.AiContext(true, null));
+
+        assertThat(r.outcome()).isEqualTo(org.jdkxx.trader.domain.signal.SignalSuppression.Outcome.BLOCKED_BY_AI);
+        var evalCaptor = org.mockito.ArgumentCaptor.forClass(SignalEvaluationRow.class);
+        var signalCaptor = org.mockito.ArgumentCaptor.forClass(org.jdkxx.trader.storage.signal.EntrySignalRow.class);
+        org.mockito.Mockito.verify(store).save(evalCaptor.capture(), signalCaptor.capture(), org.mockito.ArgumentMatchers.any());
+        assertThat(evalCaptor.getValue().outcome()).isEqualTo("BLOCKED_BY_AI");
+        assertThat(signalCaptor.getValue().status()).isEqualTo("VETOED");
+        assertThat(signalCaptor.getValue().aiAnalysisId()).isEqualTo(42L);
+        assertThat(signalCaptor.getValue().aiStance()).isEqualTo("AVOID");
+        org.mockito.Mockito.verify(ai).linkSignal(42L, 11L);
+    }
+
+    /** 守护：AI 关着（补跑或开关关闭）时不调模型，候选直接成为信号。 */
+    @Test
+    void AI关闭时不调模型() {
+        org.jdkxx.trader.storage.signal.SignalStore store = org.mockito.Mockito.mock(org.jdkxx.trader.storage.signal.SignalStore.class);
+        org.jdkxx.trader.core.signal.ai.AiVetoService ai = org.mockito.Mockito.mock(org.jdkxx.trader.core.signal.ai.AiVetoService.class);
+        SignalEvaluationService svc = new SignalEvaluationService(null, null, null, null, null, null, store, null, null,
+                new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules(), ai);
+        Series s = passingSeries();
+        var instrument = new org.jdkxx.trader.storage.marketdata.InstrumentRow(1, org.jdkxx.trader.domain.Market.US, "X", "X", null,
+                org.jdkxx.trader.domain.SecurityType.STOCK, 1, null, false, null, null, "RESOLVED");
+        List<LocalDate> cal = new ArrayList<>(s.days());
+
+        SignalEvaluationService.Result r = svc.evaluate(instrument, s.raw(), List.of(), s.last(), cal.get(cal.size() - 2),
+                new HashSet<>(cal), cal, null, null, "POOL", "BACKFILL", s.last().plusDays(3), 5L, new ArrayList<>(),
+                SignalEvaluationService.AiContext.OFF);
+
+        assertThat(r.outcome()).isEqualTo(org.jdkxx.trader.domain.signal.SignalSuppression.Outcome.SIGNAL);
+        org.mockito.Mockito.verifyNoInteractions(ai);
+    }
+
+    record Series(List<DailyBar> raw, List<LocalDate> days, LocalDate last) {
+    }
+
+    /** 先涨后围绕 155 摆动形成支撑区，最后一根回踩放量收阳：四门全过；倒数第二根不过（边沿成立）。 */
+    private static Series passingSeries() {
+        List<LocalDate> days = new ArrayList<>();
+        List<DailyBar> raw = new ArrayList<>();
+        LocalDate d = LocalDate.of(2025, 6, 2);
+        for (int i = 0; i < 300; i++) {
+            while (d.getDayOfWeek() == DayOfWeek.SATURDAY || d.getDayOfWeek() == DayOfWeek.SUNDAY) {
+                d = d.plusDays(1);
+            }
+            boolean last = i == 299;
+            double p = i < 200 ? 100 + 0.25 * i : 155 + 5 * Math.sin(2 * Math.PI * (i - 200) / 20.0);
+            raw.add(new DailyBar(X, d, bd(last ? 149.5 : p), bd(last ? 152.5 : p + 1), bd(last ? 148.5 : p - 1), bd(last ? 152 : p),
+                    null, last ? 3_000_000 : 1_000_000, null, null, null, null, false));
+            days.add(d);
+            d = d.plusDays(1);
+        }
+        return new Series(raw, days, days.get(days.size() - 1));
     }
 
     @Test

@@ -6,6 +6,7 @@ import org.jdkxx.trader.ai.AiProperties;
 import org.jdkxx.trader.ai.OpenAiClientFactory;
 import org.jdkxx.trader.ai.veto.EvidenceVerifier;
 import org.jdkxx.trader.ai.veto.Prompts;
+import org.jdkxx.trader.ai.veto.OpenAiVetoClient;
 import org.jdkxx.trader.ai.veto.VetoClient;
 import org.jdkxx.trader.ai.veto.VetoRule;
 import org.junit.jupiter.api.Test;
@@ -42,7 +43,7 @@ class AiVetoIT {
         JsonNode inputTree = new ObjectMapper().readTree(input);
 
         for (int round = 1; round <= Integer.parseInt(System.getenv().getOrDefault("TRADER_AI_ROUNDS", "1")); round++) {
-            VetoClient.Call call = new VetoClient(new OpenAiClientFactory(props), props).analyze(Prompts.VERSION, input);
+            VetoClient.Call call = new OpenAiVetoClient(new OpenAiClientFactory(props), props).analyze(Prompts.VERSION, input);
             System.out.printf("[IT] round=%d status=%s model=%s latency=%dms in=%d cached=%d out=%d reasoning=%d error=%s%n",
                     round, call.status(), call.model(), call.latencyMs(), call.inputTokens(), call.cachedTokens(), call.outputTokens(),
                     call.reasoningTokens(), call.error());

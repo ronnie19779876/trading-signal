@@ -46,12 +46,15 @@ public class SignalAuditService {
     private final SignalTrackRepository tracks;
     private final TradingDayRepository days;
     private final JobRunRepository jobs;
+    private final org.jdkxx.trader.storage.signal.AiAnalysisRepository analyses;
     private final Clock clock;
     private final ZoneId zone;
     private final String version = SentinelThresholds.V1.version();
 
     public SignalAuditService(SignalEvaluationService evaluation, SignalEvaluationRepository evaluations, EntrySignalRepository signals,
-                              SignalTrackRepository tracks, TradingDayRepository days, JobRunRepository jobs, Clock clock, ZoneId zone) {
+                              SignalTrackRepository tracks, TradingDayRepository days, JobRunRepository jobs,
+                              org.jdkxx.trader.storage.signal.AiAnalysisRepository analyses, Clock clock, ZoneId zone) {
+        this.analyses = analyses;
         this.evaluation = evaluation;
         this.evaluations = evaluations;
         this.signals = signals;
@@ -116,6 +119,21 @@ public class SignalAuditService {
                     mismatched.isEmpty() ? daySignals.size() + " 条信号与当天评估结论一致"
                             : mismatched.size() + " 条信号与重算后的评估结论不一致（多半是 K 线被订正过，信号保留）",
                     mismatched.size(), head(mismatched)));
+
+            List<org.jdkxx.trader.storage.signal.AiAnalysisRow> ai = analyses.onTradeDate(d).stream()
+                    .filter(a -> "SIGNAL_VETO".equals(a.purpose())).toList();
+            summary.put("aiAnalyses", ai.size());
+            summary.put("aiVetoes", ai.stream().filter(a -> "VETO".equals(a.verdict())).count());
+            List<String> aiProblems = ai.stream()
+                    .filter(a -> !"OK".equals(a.status()))
+                    .map(a -> a.symbol() + " " + a.status() + (a.error() == null ? "" : "：" + a.error()))
+                    .toList();
+            int unverified = ai.stream().mapToInt(a -> a.unverified() == null ? 0 : a.unverified()).sum();
+            checks.add(new Check("aiAnalyses", aiProblems.isEmpty(), false,
+                    ai.isEmpty() ? "当天没有调用模型（没有候选，或未开启 / 补跑）"
+                            : ai.size() + " 次模型分析，" + aiProblems.size() + " 次没有结论（失败、拒答、截断或预算跳过，均按放行处理）"
+                            + (unverified > 0 ? "；" + unverified + " 条证据核对不通过" : ""),
+                    aiProblems.size(), head(aiProblems)));
 
             long staleTracks = tracks.staleUnfinished(d);
             checks.add(new Check("ledgerCurrent", staleTracks == 0, due,

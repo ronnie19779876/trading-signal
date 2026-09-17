@@ -28,6 +28,10 @@ trader:
     enabled: false
   futu:
     enabled: false
+  ai:
+    # 信号评估里调模型做否决（第 4 期）：只在生产实例打开。密钥 OPENAI_API_KEY 在 trader.env；
+    # 没配密钥时照常出信号，每个候选记一行 SKIPPED_BUDGET（未配置），信号审计会提示
+    signal-veto-enabled: true
 
 management:
   endpoints:

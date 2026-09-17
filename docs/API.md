@@ -168,12 +168,25 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | `POST /api/signals/{id}/status` | body `{"status": "ACKNOWLEDGED" \| "DISMISSED", "note": "..."}`。NEW → ACKNOWLEDGED / DISMISSED、ACKNOWLEDGED → DISMISSED，其余 409 |
 | `GET /api/signals/evaluations?date&outcome&gate&scope=all` | 某天的全部评估（回答"为什么没信号"）：状态、`outcome`、`gates` 缩写、通过门数、首个未过的门、`role`（POOL / HOLDING / UNIVERSE）、收盘、ATR、RVOL、区底、止损、`inputFingerprint`；`detail` 只给池与持仓、至少过三门、结果不是 NO_SIGNAL 的存，其余为 null（用单日判定接口现场看）。`outcome` 也接受 SKIPPED_* 状态名，`gate` 按首个未过的门过滤 |
 | `GET /api/signals/evaluations/{symbol}?from&to` | 单只评估历史，默认最近 90 天，倒序 |
-| `GET /api/signals/ledger?variant&status` | 纸面账本。`stats[]` 按变体（`BASE` 止损 2.0×ATR、`STOP_2_5` 止损 2.5×ATR，都不减半仓）与来源分开：总数、未平、待入场、已平、胜率、每笔 R、每笔收益率；`pairedCount` / `pairedMeanReturnDiff` 为同一批已平仓信号上 STOP_2_5 − BASE 的收益率差；`entries[]` 为 `{signal, track}`。账本行 `status` PENDING_ENTRY / OPEN / CLOSED，`exitReason` STOP / CHANDELIER / TIME，价格为判定日口径，未平仓每天从信号日整段重算，`updatedThrough` 为算到的日期 |
-| `GET /api/signals/audit?date=` | 信号审计（收盘巡检第五段）：`evaluationExists` / `coverage` / `ledgerCurrent` 为关键项（美东 19:00 前缺评估只提示）；`staleData`（超过目标 2% 才判不过）、`dataQuality`、`signalConsistency`（当天信号与重算后的评估不一致，信号保留）、`evaluationJob` 为提示项；休市日直接判过 |
+| `GET /api/signals/ledger?variant&status` | 纸面账本。`stats[]` 按变体（`BASE` 止损 2.0×ATR、`STOP_2_5` 止损 2.5×ATR，都不减半仓）、来源、模型裁决（`ai`：VETO 被否决 / ALLOW 调过模型并放行 / NONE 没有模型结论）分开：总数、未平、待入场、已平、胜率、每笔 R、每笔收益率；`pairedCount` / `pairedMeanReturnDiff` 为同一批已平仓信号上 STOP_2_5 − BASE 的收益率差；`entries[]` 为 `{signal, track}`。账本行 `status` PENDING_ENTRY / OPEN / CLOSED，`exitReason` STOP / CHANDELIER / TIME，价格为判定日口径，未平仓每天从信号日整段重算，`updatedThrough` 为算到的日期 |
+| `GET /api/signals/audit?date=` | 信号审计（收盘巡检第五段）：`evaluationExists` / `coverage` / `ledgerCurrent` 为关键项（美东 19:00 前缺评估只提示）；`staleData`（超过目标 2% 才判不过）、`dataQuality`、`signalConsistency`（当天信号与重算后的评估不一致，信号保留）、`aiAnalyses`（当天模型分析里没有结论的次数与原因、证据核对不通过的条数）、`evaluationJob` 为提示项；休市日直接判过 |
 | `GET /api/signals/ai-input/{symbol}?date=` | 预览发给模型的输入（不调模型、不计费）：`meta`（行业、所属指数）、`signal`（四门判据原文、支撑区、止损、出场预案）、`technicals`（均线距离、ATR%、RVOL、20/60/250 日涨跌与相对 SPY 超额、52 周位置、最近 15 根日 K）、`valuation`（估值快照、静态市盈率 5 年分位）、`financials`（最近 8 个单季与 3 个年度的白名单科目，金额为百万美元 `*UsdM`）、`calendarHint`（距最近季报期末天数与下一次财报的粗估窗口）、`profile`、`caveats`。不含任何持仓与账户信息。当天不予判定 409 |
 
 `status` 取值：`EVALUATED`；`SKIPPED_INSUFFICIENT_BARS`（窗口 600 自然日内少于 260 根）；`SKIPPED_STALE_DATA`（判定日没有 K 线）；
 `SKIPPED_DATA_GAP`（对照交易日历缺超过 3 个交易日，停牌空 K 也算缺）；`SKIPPED_CORPORATE_ACTION`（股数变动事件缺比例，等复权因子重拉）。
+
+## 模型第二意见（第 4 期·步骤 4）
+
+模型只有否决权（设计与实测见 ARCHITECTURE §18.8）。18:10 评估作业里，对过了边沿与冷却的候选调用（只在 `trader.ai.signal-veto-enabled=true` 的实例、且是实盘判定；补跑不调）。
+否决 = 立场 BEARISH / AVOID 且把握不是 LOW 且至少 2 条核对通过的看空证据；否决的信号状态为 `VETOED`、评估结果为 `BLOCKED_BY_AI`，照样进纸面账本。
+失败、拒答、截断、结构非法、预算跳过都按没有结论（`ABSENT`）放行。发给模型的输入不含持仓与账户信息（预览见 `GET /api/signals/ai-input/{symbol}`）。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `POST /api/ai/analyses?symbol&date=` | 手工分析（**同步约 15 秒，会计费**；计入每日上限；同一标的、判定日、提示词、模型、输入哈希已有 OK 的直接复用）。当天不予判定 409。返回落库的一行 |
+| `GET /api/ai/analyses?from&to&status&symbol&limit=100` | 按创建日（美东）过滤，默认最近 7 天，倒序 |
+| `GET /api/ai/analyses/{id}` | 一次分析：`purpose`（SIGNAL_VETO / MANUAL）、`signalId`、`promptVersion`、`model`、`reasoningEffort`、`inputHash`、`input`（发给模型的 JSON）、`status`（OK / REFUSED / TRUNCATED / INVALID / FAILED / SKIPPED_BUDGET / FAILED_DATA）、`judgment`（`stance`、`confidence`、`summary`、`bullEvidence[]` / `bearEvidence[]` 每条 `{field, value, point}`、`risks`、`dataGaps`、`vetoReason`）、`outputText`、`verdict`（VETO / ALLOW / ABSENT）与 `verdictReason`、`checks`（逐条证据核对）、`verifiedBear` / `unverified`、`error`、token 用量（输入含缓存命中、输出含推理）与耗时；不存在 404 |
+| `GET /api/ai/usage?from&to` | `settings`（是否配置密钥、模型、开关、每日上限、作业时长预算、推理强度、提示词版本；不含密钥）+ `days[]` 按美东自然日汇总：行数、实际调用次数、OK、失败、预算跳过、否决、各类 token |
 
 ## 实时报价（第 2 期·步骤 2，不落库）
 

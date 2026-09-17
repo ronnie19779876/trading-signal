@@ -134,7 +134,10 @@ public class SignalFacade {
     }
 
     /** 账本汇总：每个变体按来源分开统计；BASE 与 STOP_2_5 在同一批已平仓信号上的收益率配对差。 */
-    public record LedgerStats(String variant, String origin, int total, int open, int pending, int closed, Double winRate,
+    /**
+     * @param ai 模型裁决分组：VETO 被否决（信号状态 VETOED）、ALLOW 调过模型且放行、NONE 没有模型结论（补跑、未开启、失败、预算跳过）
+     */
+    public record LedgerStats(String variant, String origin, String ai, int total, int open, int pending, int closed, Double winRate,
                               Double meanR, Double meanReturn) {
     }
 
@@ -151,16 +154,18 @@ public class SignalFacade {
             signalById.computeIfAbsent(t.signalId(), id -> signals.find(id).orElseThrow());
         }
         List<LedgerStats> stats = new ArrayList<>();
-        Map<String, Map<String, List<SignalTrackRow>>> grouped = all.stream().collect(Collectors.groupingBy(SignalTrackRow::variant,
-                LinkedHashMap::new, Collectors.groupingBy(t -> signalById.get(t.signalId()).origin(), LinkedHashMap::new,
-                        Collectors.toList())));
-        grouped.forEach((v, byOrigin) -> byOrigin.forEach((origin, rows) -> {
+        Map<List<String>, List<SignalTrackRow>> grouped = all.stream().collect(Collectors.groupingBy(t -> {
+            EntrySignalRow sig = signalById.get(t.signalId());
+            return List.of(t.variant(), sig.origin(), aiGroup(sig));
+        }, () -> new java.util.TreeMap<>(java.util.Comparator.comparing((List<String> k) -> String.join("|", k))), Collectors.toList()));
+        grouped.forEach((key, rows) -> {
             List<SignalTrackRow> closed = rows.stream().filter(t -> "CLOSED".equals(t.status())).toList();
-            stats.add(new LedgerStats(v, origin, rows.size(), count(rows, "OPEN"), count(rows, "PENDING_ENTRY"), closed.size(),
+            stats.add(new LedgerStats(key.get(0), key.get(1), key.get(2), rows.size(), count(rows, "OPEN"), count(rows, "PENDING_ENTRY"),
+                    closed.size(),
                     closed.isEmpty() ? null : (double) closed.stream().filter(t -> t.rMultiple().signum() > 0).count() / closed.size(),
                     mean(closed.stream().map(SignalTrackRow::rMultiple).toList()),
                     mean(closed.stream().map(SignalTrackRow::returnPct).toList())));
-        }));
+        });
         Map<Long, BigDecimal> base = closedReturns(all, "BASE");
         Map<Long, BigDecimal> wide = closedReturns(all, "STOP_2_5");
         List<BigDecimal> diffs = base.entrySet().stream().filter(en -> wide.containsKey(en.getKey()))
@@ -171,6 +176,10 @@ public class SignalFacade {
                 .map(t -> new LedgerEntry(signalById.get(t.signalId()), t))
                 .toList();
         return new Ledger(stats, diffs.size(), mean(diffs), entries);
+    }
+
+    static String aiGroup(EntrySignalRow s) {
+        return "VETOED".equals(s.status()) ? "VETO" : s.aiAnalysisId() == null ? "NONE" : "ALLOW";
     }
 
     private static int count(List<SignalTrackRow> rows, String status) {

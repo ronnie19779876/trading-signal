@@ -3087,6 +3087,223 @@
       ]
     },
     {
+      "name": "模型第二意见（第 4 期·步骤 4）",
+      "item": [
+        {
+          "name": "用量与配置",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ai/usage?from=&to=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "ai",
+                "usage"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": ""
+                },
+                {
+                  "key": "to",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "settings（是否配置密钥、模型、开关、每日上限、预算、推理强度、提示词版本，不含密钥）+ 按美东自然日的调用次数、失败、跳过、否决与 token。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"有 settings 且不含密钥\", () => { pm.expect(body.settings).to.be.an(\"object\"); pm.expect(JSON.stringify(body)).to.not.match(/sk-[A-Za-z0-9]/); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "分析列表",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ai/analyses?from=&to=&status=&symbol=&limit=100",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "ai",
+                "analyses"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": ""
+                },
+                {
+                  "key": "to",
+                  "value": ""
+                },
+                {
+                  "key": "status",
+                  "value": ""
+                },
+                {
+                  "key": "symbol",
+                  "value": ""
+                },
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            },
+            "description": "默认最近 7 天（按创建日，美东），倒序。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "单次分析",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ai/analyses/{{analysisId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "ai",
+                "analyses",
+                "{{analysisId}}"
+              ]
+            },
+            "description": "输入、结论、逐条证据核对、裁决、token 与耗时。不存在 404。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200 或 404\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "⚠ 写操作（改状态或触发跑批，别对生产整组跑）",
+          "item": [
+            {
+              "name": "手工分析（同步约 15 秒，会计费）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/ai/analyses?symbol={{symbol}}&date=",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "ai",
+                    "analyses"
+                  ],
+                  "query": [
+                    {
+                      "key": "symbol",
+                      "value": "{{symbol}}"
+                    },
+                    {
+                      "key": "date",
+                      "value": ""
+                    }
+                  ]
+                },
+                "description": "计入每日上限；同一输入已有 OK 结论直接复用不计费。当天不予判定 409。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200 或 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Actuator",
       "item": [
         {

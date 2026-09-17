@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jdkxx.trader.core.marketdata.bars.SettledCutoff;
 import org.jdkxx.trader.core.marketdata.jobs.JobContext;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
+import org.jdkxx.trader.core.signal.ai.AiVetoService;
 import org.jdkxx.trader.domain.DailyBar;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.PoolRole;
@@ -69,11 +70,13 @@ public class SignalEvaluationService {
     private final SignalLedgerService ledger;
     private final SettledCutoff cutoff;
     private final ObjectMapper json;
+    private final AiVetoService ai;
     private final SentinelThresholds th = SentinelThresholds.V1;
 
     public SignalEvaluationService(UniverseScope scope, DailyBarRepository bars, RehabFactorRepository rehabs,
                                    TradingDayRepository days, SignalEvaluationRepository evaluations, EntrySignalRepository signals,
-                                   SignalStore store, SignalLedgerService ledger, SettledCutoff cutoff, ObjectMapper json) {
+                                   SignalStore store, SignalLedgerService ledger, SettledCutoff cutoff, ObjectMapper json,
+                                   AiVetoService ai) {
         this.scope = scope;
         this.bars = bars;
         this.rehabs = rehabs;
@@ -84,6 +87,7 @@ public class SignalEvaluationService {
         this.ledger = ledger;
         this.cutoff = cutoff;
         this.json = json;
+        this.ai = ai;
     }
 
     /** 评估目标：全量成分股 ∪ 池与持仓，去掉基准。 */
@@ -113,6 +117,8 @@ public class SignalEvaluationService {
         Set<LocalDate> calendarSet = new HashSet<>(calendar);
 
         Map<Long, InstrumentRow> targets = targets();
+        boolean aiOn = ai != null && ai.enabledFor(origin);
+        AiContext aiContext = new AiContext(aiOn, aiOn ? ai.jobDeadline() : null);
         Map<Long, PoolRole> roles = scope.roles();
         Map<Long, SignalEvaluationRow> previous = evaluations.byInstrumentOn(previousDay, th.version());
         Map<Long, LocalDate> lastSignals = signals.lastSignalDatesBefore(asOf, th.version());
@@ -137,12 +143,12 @@ public class SignalEvaluationService {
                     String role = roleOf(roles.get(row.id()));
                     Result r = evaluate(row, barsById.getOrDefault(row.id(), List.of()), factorsById.getOrDefault(row.id(), List.of()),
                             asOf, previousDay, calendarSet, calendar, previous.get(row.id()), lastSignals.get(row.id()), role,
-                            origin, expiresOn, ctx.id(), plain);
+                            origin, expiresOn, ctx.id(), plain, aiContext);
                     statuses.merge(r.evaluation().status(), 1, Integer::sum);
                     if (r.outcome() != null) {
                         outcomes.merge(r.outcome(), 1, Integer::sum);
                     }
-                    if (r.createdSignal()) {
+                    if (r.createdSignal() && r.outcome() == Outcome.SIGNAL) {
                         created++;
                         poolSignals += "UNIVERSE".equals(role) ? 0 : 1;
                     }
@@ -180,16 +186,23 @@ public class SignalEvaluationService {
      */
     Result evaluate(InstrumentRow row, List<DailyBar> raw, List<RehabFactor> factors, LocalDate asOf, LocalDate previousDay,
                     Set<LocalDate> calendarSet, List<LocalDate> calendar, SignalEvaluationRow previousRow, LocalDate lastSignal,
-                    String role, String origin, LocalDate expiresOn, Long jobRunId, List<SignalEvaluationRow> plain) {
+                    String role, String origin, LocalDate expiresOn, Long jobRunId, List<SignalEvaluationRow> plain,
+                    AiContext aiContext) {
         SignalInputs.Prepared p = SignalInputs.prepare(raw, factors, calendarSet, asOf, th);
         SentinelEvaluation e = p.skipped() != null ? p.skipped() : SentinelEvaluator.evaluate(p.bars(), asOf, th);
 
         Outcome outcome = null;
+        AiVetoService.Outcome aiOutcome = null;
         if (e.status() == SentinelEvaluation.Status.EVALUATED) {
             PreviousDay prev = previousDay(previousRow, raw, factors, calendarSet, previousDay);
             Integer since = tradingDaysSince(calendar, lastSignal, asOf);
-            outcome = SignalSuppression.afterAi(SignalSuppression.beforeAi(e.allPassed(), prev, since, th),
-                    SignalSuppression.AiVerdict.ABSENT);
+            Outcome beforeAi = SignalSuppression.beforeAi(e.allPassed(), prev, since, th);
+            // 只对过了边沿与冷却、当天将成为信号的候选调模型
+            if (beforeAi == Outcome.PENDING_AI && aiContext.enabled()) {
+                aiOutcome = ai.analyze(row, e, "SIGNAL_VETO", jobRunId, aiContext.deadline());
+            }
+            outcome = SignalSuppression.afterAi(beforeAi,
+                    aiOutcome == null ? SignalSuppression.AiVerdict.ABSENT : aiOutcome.verdict());
         }
         boolean keepDetail = !"UNIVERSE".equals(role) || e.gatesPassed() >= 3 || (outcome != null && outcome != Outcome.NO_SIGNAL);
         Map<String, Object> detail = null;
@@ -208,11 +221,12 @@ public class SignalEvaluationService {
                 risk == null ? null : num(risk.values().get("stop")), risk == null ? null : num(risk.values().get("stopDistance")),
                 p.fingerprint(), detail == null ? null : write(detail), jobRunId, null);
 
-        if (outcome != Outcome.SIGNAL) {
+        if (outcome != Outcome.SIGNAL && outcome != Outcome.BLOCKED_BY_AI) {
             plain.add(evaluationRow);
             return new Result(e, outcome, false);
         }
-        EntrySignalRow signal = signalRow(row, e, risk, role, origin, expiresOn, jobRunId);
+        EntrySignalRow signal = signalRow(row, e, risk, role, origin, expiresOn, jobRunId,
+                outcome == Outcome.BLOCKED_BY_AI ? "VETOED" : "NEW", aiOutcome);
         double close = (Double) e.indicators().get("close");
         double atr = (Double) e.indicators().get("atr14");
         Double zoneBottom = e.hitZone() == null ? null : e.hitZone().bottom();
@@ -220,6 +234,9 @@ public class SignalEvaluationService {
         VARIANTS.forEach((variant, multiple) -> stops.put(variant,
                 "BASE".equals(variant) ? signal.stop() : scaled(SignalTrades.stop(close, atr, zoneBottom, multiple, th))));
         Long id = store.save(evaluationRow, signal, stops);
+        if (id != null && aiOutcome != null) {
+            ai.linkSignal(aiOutcome.analysisId(), id);
+        }
         return new Result(e, outcome, id != null);
     }
 
@@ -245,8 +262,12 @@ public class SignalEvaluationService {
         return from < 0 || to < 0 ? null : to - from;
     }
 
+    record AiContext(boolean enabled, java.time.Instant deadline) {
+        static final AiContext OFF = new AiContext(false, null);
+    }
+
     private EntrySignalRow signalRow(InstrumentRow row, SentinelEvaluation e, GateResult risk, String role, String origin,
-                                     LocalDate expiresOn, Long jobRunId) {
+                                     LocalDate expiresOn, Long jobRunId, String status, AiVetoService.Outcome aiOutcome) {
         ExitPlan plan = e.exitPlan();
         return new EntrySignalRow(0, row.id(), row.symbol(), e.asOf(), th.version(), role, origin,
                 num(e.indicators().get("close")), num(e.indicators().get("atr14")), num(risk.values().get("stop")),
@@ -254,7 +275,8 @@ public class SignalEvaluationService {
                 scaled(plan.plusOneR()), scaled(plan.chandelierStop()), plan.target() == null ? null : scaled(plan.target()),
                 plan.rewardRisk() == null ? null : scaled(plan.rewardRisk()),
                 e.hitZone() == null ? null : scaled(e.hitZone().bottom()), e.hitZone() == null ? null : scaled(e.hitZone().top()),
-                e.hitZone() == null ? null : e.hitZone().touches(), write(e.bonus()), null, null, "NEW", expiresOn, null, null,
+                e.hitZone() == null ? null : e.hitZone().touches(), write(e.bonus()),
+                aiOutcome == null ? null : aiOutcome.analysisId(), aiOutcome == null ? null : aiOutcome.stance(), status, expiresOn, null, null,
                 jobRunId, null);
     }
 

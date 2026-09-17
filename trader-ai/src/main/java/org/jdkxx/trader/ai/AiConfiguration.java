@@ -15,6 +15,6 @@ public class AiConfiguration {
 
     @Bean
     public org.jdkxx.trader.ai.veto.VetoClient vetoClient(OpenAiClientFactory factory, AiProperties properties) {
-        return new org.jdkxx.trader.ai.veto.VetoClient(factory, properties);
+        return new org.jdkxx.trader.ai.veto.OpenAiVetoClient(factory, properties);
     }
 }

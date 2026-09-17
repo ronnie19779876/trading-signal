@@ -172,6 +172,17 @@ systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `Wor
   恒等式不过多半是账户里有期权等非股票资产。
 - 开发实例验证快照用 `POST /api/account/snapshot?force=true`（只在 DEV 可用，写开发库）。
 
+## 4d. 入场信号与模型第二意见（第 4 期）
+
+- 评估：每个交易日美东 18:10 `SIGNAL_EVALUATION`（全量成分股 ∪ 池与持仓，去掉基准），22:00 缺评估或有过期跳过但现已补齐的就补跑。
+  手工 `POST /api/signals/evaluate?date=`；过去的日期是补跑，信号记 `BACKFILL`、不调模型。
+- 模型：只在 `trader.ai.signal-veto-enabled=true` 的实例调用（生产外置配置已打开，开发实例保持关闭——两个实例都开会重复计费）。
+  密钥放服务器 `trader.env` 的 `OPENAI_API_KEY`；本机开发放 `config/secrets.yml` 的 `trader.ai.api-key`（**缩进在 `ai:` 之下**，
+  和 `ai:` 同级会被读成 `trader.api-key`，表现是 `GET /api/ai/usage` 的 `settings.configured=false`）。
+- 看用量与失败：`GET /api/ai/usage`；某次分析的输入、结论、证据核对：`GET /api/ai/analyses/{id}`。没有结论（失败、拒答、截断、预算跳过）
+  一律放行，信号审计 `aiAnalyses` 会提示。每日上限（默认 20 次）按美东自然日数实际发出的调用。
+- 预览发给模型的输入（不计费）：`GET /api/signals/ai-input/{symbol}?date=`；手工分析（计费）：`POST /api/ai/analyses?symbol=&date=`。
+
 ## 5. 日常检查
 
 > 定时作业不再静默丢失：碰撞时每 5 分钟重试、最多半小时，仍失败会写一行 `SKIPPED`；
