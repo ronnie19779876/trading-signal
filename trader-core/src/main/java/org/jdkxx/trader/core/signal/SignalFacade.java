@@ -76,10 +76,12 @@ public class SignalFacade {
         if (start.isAfter(end)) {
             throw new IllegalArgumentException("from 不能晚于 to");
         }
-        return signals.list(start, end, statuses, poolOnly, origin).stream()
-                .map(s -> new SignalView(s, tracks.bySignal(s.id()).stream().filter(t -> "BASE".equals(t.variant()))
-                        .findFirst().orElse(null)))
-                .toList();
+        List<EntrySignalRow> rows = signals.list(start, end, statuses, poolOnly, origin);
+        Map<Long, SignalTrackRow> base = new HashMap<>();
+        tracks.bySignals(rows.stream().map(EntrySignalRow::id).toList()).stream()
+                .filter(t -> "BASE".equals(t.variant()))
+                .forEach(t -> base.put(t.signalId(), t));
+        return rows.stream().map(s -> new SignalView(s, base.get(s.id()))).toList();
     }
 
     /**
@@ -150,9 +152,8 @@ public class SignalFacade {
     public Ledger ledger(String variant, String status) {
         List<SignalTrackRow> all = tracks.list(null, null);
         Map<Long, EntrySignalRow> signalById = new HashMap<>();
-        for (SignalTrackRow t : all) {
-            signalById.computeIfAbsent(t.signalId(), id -> signals.find(id).orElseThrow());
-        }
+        signals.findAll(all.stream().map(SignalTrackRow::signalId).distinct().toList())
+                .forEach(s -> signalById.put(s.id(), s));
         List<LedgerStats> stats = new ArrayList<>();
         Map<List<String>, List<SignalTrackRow>> grouped = all.stream().collect(Collectors.groupingBy(t -> {
             EntrySignalRow sig = signalById.get(t.signalId());

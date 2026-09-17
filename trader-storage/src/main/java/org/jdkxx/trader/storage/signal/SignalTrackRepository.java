@@ -56,6 +56,14 @@ public class SignalTrackRepository {
         return jdbc.query("SELECT * FROM signal_track WHERE status <> 'CLOSED' ORDER BY signal_id, variant", MAPPER);
     }
 
+    public List<SignalTrackRow> bySignals(java.util.Collection<Long> signalIds) {
+        if (signalIds.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.query("SELECT * FROM signal_track WHERE signal_id = ANY (?) ORDER BY signal_id, variant", MAPPER,
+                (Object) signalIds.toArray(Long[]::new));
+    }
+
     public List<SignalTrackRow> bySignal(long signalId) {
         return jdbc.query("SELECT * FROM signal_track WHERE signal_id = ? ORDER BY variant", MAPPER, signalId);
     }

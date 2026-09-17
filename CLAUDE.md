@@ -120,7 +120,7 @@ storage → common ；ai → common
 ## 当前状态
 
 **第 3 期「账户与持仓」已交付，生产跑 2.0.2**（第 3 期见 ARCHITECTURE §16，2.0.2 全量审查后的修复见 §17）。
-**第 4 期「入场信号」进行中（3.0.0-SNAPSHOT，ARCHITECTURE §18）**：步骤 1 判定引擎、步骤 2 对账与回放统计、步骤 3 每日评估与纸面账本、步骤 4 AI 否决已完成（待部署前检查）。
+**第 4 期「入场信号」进行中（3.0.0-SNAPSHOT，ARCHITECTURE §18）**：步骤 1~5（判定引擎、对账与回放统计、每日评估与纸面账本、AI 否决、前端信号页）已完成，待发布 3.0.0。
 每一期的设计决策、实测结论与已知边界都在
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~17 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
 

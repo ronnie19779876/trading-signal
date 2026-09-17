@@ -19,6 +19,13 @@ public class SignalEvaluationRepository {
     private static final String SELECT = """
             SELECT e.*, i.symbol FROM signal_evaluation e JOIN instrument i ON i.id = e.instrument_id
             """;
+    /** 列表用：不取判定明细（jsonb，单行几 KB，一天 500 多行） */
+    private static final String SELECT_LIGHT = """
+            SELECT e.instrument_id, e.trade_date, e.ruleset_version, e.status, e.status_detail, e.outcome, e.gates, e.gates_passed,
+                   e.first_blocking_gate, e.role, e.close, e.atr14, e.rvol, e.zone_bottom, e.stop, e.stop_distance,
+                   e.input_fingerprint, NULL::text AS detail, e.job_run_id, e.evaluated_at, i.symbol
+            FROM signal_evaluation e JOIN instrument i ON i.id = e.instrument_id
+            """;
 
     private static final RowMapper<SignalEvaluationRow> MAPPER = (rs, n) -> new SignalEvaluationRow(
             rs.getLong("instrument_id"), rs.getString("symbol"), rs.getDate("trade_date").toLocalDate(),
@@ -67,9 +74,9 @@ public class SignalEvaluationRepository {
                 instrumentId, Date.valueOf(date), version).stream().findFirst();
     }
 
-    /** 某天某版本的全部评估，按代码排序。 */
+    /** 某天某版本的全部评估，按代码排序；不含判定明细（detail 为 null），要明细用 {@link #find}。 */
     public List<SignalEvaluationRow> on(LocalDate date, String version) {
-        return jdbc.query(SELECT + " WHERE e.trade_date = ? AND e.ruleset_version = ? ORDER BY i.symbol", MAPPER,
+        return jdbc.query(SELECT_LIGHT + " WHERE e.trade_date = ? AND e.ruleset_version = ? ORDER BY i.symbol", MAPPER,
                 Date.valueOf(date), version);
     }
 
@@ -81,7 +88,7 @@ public class SignalEvaluationRepository {
     }
 
     public List<SignalEvaluationRow> history(long instrumentId, LocalDate from, LocalDate to, String version) {
-        return jdbc.query(SELECT + " WHERE e.instrument_id = ? AND e.trade_date BETWEEN ? AND ? AND e.ruleset_version = ?"
+        return jdbc.query(SELECT_LIGHT + " WHERE e.instrument_id = ? AND e.trade_date BETWEEN ? AND ? AND e.ruleset_version = ?"
                 + " ORDER BY e.trade_date DESC", MAPPER, instrumentId, Date.valueOf(from), Date.valueOf(to), version);
     }
 

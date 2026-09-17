@@ -74,6 +74,23 @@ class SignalTradesTest {
     }
 
     @Test
+    void 画图的K线折回判定日口径_判定日之后拆股也对齐() {
+        LocalDate d0 = LocalDate.of(2026, 3, 2);
+        LocalDate d1 = d0.plusDays(1);
+        LocalDate d2 = d0.plusDays(2);
+        List<DailyBar> raw = List.of(bar(d0, 100, 101, 99, 100), bar(d1, 50, 51, 49, 50), bar(d2, 52, 53, 51, 52));
+        RehabFactor split = new RehabFactor(X, d1, new BigDecimal("0.5"), BigDecimal.ZERO, BigDecimal.ONE, BigDecimal.ZERO,
+                1, null, null, 1, 2);
+
+        List<SignalBar> atSignal = SignalTrades.scaledTo(raw, List.of(split), Set.of(d0, d1, d2), d2, d0);
+        List<SignalBar> atToday = SignalTrades.scaledTo(raw, List.of(split), Set.of(d0, d1, d2), d2, d2);
+
+        assertThat(atSignal).extracting(SignalBar::close).containsExactly(100.0, 100.0, 104.0);
+        assertThat(atSignal.get(1).volume()).isCloseTo(500, within(1e-9));
+        assertThat(atToday).extracting(SignalBar::close).containsExactly(50.0, 50.0, 52.0);
+    }
+
+    @Test
     void 两种止损倍数() {
         assertThat(SignalTrades.stop(100, 2, null, 2.5, TH)).isEqualTo(95);
         assertThat(SignalTrades.stop(100, 2, 94.0, 2.5, TH)).isEqualTo(93);

@@ -75,6 +75,15 @@ public class SignalController {
         return sentinel.replay(symbol, from, to, trades, stopAtr, half);
     }
 
+    /** 画图用的 K 线：价格尺度折回 asOf 那天，与当天的信号价位对齐。默认 asOf = to = 收盘落定日、from 往前一年，最长 3 年。 */
+    @GetMapping("/api/signals/bars/{symbol}")
+    public List<SentinelService.ChartBar> chartBars(@PathVariable String symbol,
+                                                    @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate asOf,
+                                                    @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+                                                    @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return sentinel.chartBars(symbol, asOf, from, to);
+    }
+
     /** 提交评估作业（写库）。date 缺省取收盘落定日；过去的日期记为补跑（BACKFILL）。 */
     @PostMapping("/api/signals/evaluate")
     public Map<String, Long> submit(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {

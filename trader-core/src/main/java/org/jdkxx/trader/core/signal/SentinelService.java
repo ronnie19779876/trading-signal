@@ -73,6 +73,36 @@ public class SentinelService {
         return new Judgement(row.symbol(), e, p.droppedNonTradingDays(), p.missingTradingDays(), p.fingerprint(), thresholds.toMap());
     }
 
+    public record ChartBar(LocalDate tradeDate, double open, double high, double low, double close, long volume) {
+    }
+
+    /**
+     * 画图用的 K 线，价格尺度折回 asOf 那天（与当天的信号价位对齐，之后遇到拆股也连续）。
+     * 默认 to = 收盘落定日、asOf = to、from = asOf 往前一年；区间最长 3 年。
+     */
+    public List<ChartBar> chartBars(String symbol, LocalDate asOf, LocalDate from, LocalDate to) {
+        LocalDate settled = cutoff.current();
+        LocalDate end = to == null || to.isAfter(settled) ? settled : to;
+        LocalDate anchor = asOf == null ? end : asOf;
+        LocalDate start = from == null ? anchor.minusYears(1) : from;
+        if (start.isAfter(end) || anchor.isAfter(end)) {
+            throw new IllegalArgumentException("需要 from ≤ asOf ≤ to");
+        }
+        if (start.isBefore(end.minusYears(3))) {
+            throw new IllegalArgumentException("区间不能超过 3 年");
+        }
+        InstrumentRow row = directory.require(symbol);
+        List<DailyBar> raw = bars.find(row.instrument(), row.id(), start, end);
+        Set<LocalDate> calendar = new HashSet<>(days.between(Market.US, start, end));
+        return SignalTrades.scaledTo(raw, rehabs.find(row.instrument(), row.id()), calendar, end, anchor).stream()
+                .map(b -> new ChartBar(b.date(), round(b.open()), round(b.high()), round(b.low()), round(b.close()), Math.round(b.volume())))
+                .toList();
+    }
+
+    private static double round(double v) {
+        return java.math.BigDecimal.valueOf(v).setScale(4, java.math.RoundingMode.HALF_UP).doubleValue();
+    }
+
     /**
      * 回放的一天。outcome 按边沿与冷却算（历史上没有 AI 结论，按"无结论不阻断"处理），
      * 与实盘跑批的区别只在 AI 否决层。

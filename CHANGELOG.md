@@ -21,6 +21,8 @@
   评估作业对候选调用，否决的信号记 `VETOED`；每日上限、作业内时长预算、同一输入复用；补跑不调。
   接口 `GET /api/signals/ai-input/{symbol}`、`POST|GET /api/ai/analyses`、`GET /api/ai/analyses/{id}`、`GET /api/ai/usage`；
   账本汇总按模型裁决分组；信号审计加 `aiAnalyses`。**升级注意**：生产 `trader.env` 需配 `OPENAI_API_KEY`，外置配置打开 `trader.ai.signal-veto-enabled`。
+- 步骤 5：前端"信号"页（`/signals`）：状态条、今日评估（四门漏斗）、信号（状态操作、详情抽屉含 K 线价位线与 AI 多空证据、手工分析）、纸面账本、回放。
+  新增 `GET /api/signals/bars/{symbol}`（折回判定日价格尺度的 K 线）；`KlineChart` 支持标记、价位线与区间；信号与账本查询改为批量、列表不取判定明细。
 
 ## 2.0.2（2026-09-14 发布）
 

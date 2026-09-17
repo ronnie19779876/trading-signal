@@ -2628,6 +2628,63 @@
           "response": []
         },
         {
+          "name": "画图用 K 线（折回判定日口径）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/signals/bars/{{symbol}}?asOf=&from=&to=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "signals",
+                "bars",
+                "{{symbol}}"
+              ],
+              "query": [
+                {
+                  "key": "asOf",
+                  "value": ""
+                },
+                {
+                  "key": "from",
+                  "value": ""
+                },
+                {
+                  "key": "to",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "整段结构口径换算后折回 asOf 当天的价格尺度，与当天的信号价位对齐；默认 to = asOf = 收盘落定日、from 往前一年，最长 3 年。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
           "name": "预览发给模型的输入（不计费）",
           "request": {
             "method": "GET",

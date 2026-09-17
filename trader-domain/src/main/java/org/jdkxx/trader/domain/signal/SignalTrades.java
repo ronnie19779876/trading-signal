@@ -64,6 +64,43 @@ public final class SignalTrades {
                 r.mfeR(), r.maeR(), r.barsHeld());
     }
 
+    /**
+     * 画图用的 K 线：整段按 {@code through} 做结构换算（跨拆股连续），再整体折回 {@code asOf} 那天的价格尺度，
+     * 使判定日的价位（止损、+1R、支撑区）与图上的 K 线对齐。asOf 当天没有 K 线时取之前最近的一根定尺度；
+     * 窗口内一根都没有返回空列表。成交量按同样的股数比例折算。
+     */
+    public static List<SignalBar> scaledTo(List<DailyBar> raw, List<RehabFactor> factors, Set<LocalDate> tradingDays,
+                                           LocalDate through, LocalDate asOf) {
+        List<DailyBar> slice = raw.stream()
+                .filter(b -> !b.tradeDate().isAfter(through) && tradingDays.contains(b.tradeDate()))
+                .toList();
+        StructuralAdjustment.Result adjusted = StructuralAdjustment.apply(slice, factors, through);
+        if (!adjusted.ok()) {
+            throw new IllegalStateException("价量口径换算失败：" + adjusted.problem());
+        }
+        DailyBar anchorRaw = null;
+        SignalBar anchorAdj = null;
+        for (int i = 0; i < slice.size(); i++) {
+            if (!slice.get(i).tradeDate().isAfter(asOf) && !slice.get(i).blank()) {
+                anchorRaw = slice.get(i);
+            }
+        }
+        if (anchorRaw == null) {
+            return List.of();
+        }
+        for (SignalBar b : adjusted.bars()) {
+            if (b.date().equals(anchorRaw.tradeDate())) {
+                anchorAdj = b;
+            }
+        }
+        double price = anchorRaw.close().doubleValue() / anchorAdj.close();
+        double volume = anchorAdj.volume() == 0 ? 1 : anchorRaw.volume() / anchorAdj.volume();
+        return adjusted.bars().stream()
+                .map(b -> new SignalBar(b.date(), b.open() * price, b.high() * price, b.low() * price, b.close() * price,
+                        b.volume() * volume))
+                .toList();
+    }
+
     /** 某个止损 ATR 倍数下的止损（判定日口径）：min(收盘 − m×ATR, 区底 − 0.5×ATR)，没有命中区只用 ATR 腿。 */
     public static double stop(double close, double atr, Double zoneBottom, double atrMultiple, SentinelThresholds th) {
         double stop = close - atrMultiple * atr;

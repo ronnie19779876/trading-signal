@@ -65,6 +65,13 @@ public class EntrySignalRepository {
     public record Inserted(long id, boolean created) {
     }
 
+    public List<EntrySignalRow> findAll(java.util.Collection<Long> ids) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.query(SELECT + " WHERE s.id = ANY (?)", MAPPER, (Object) ids.toArray(Long[]::new));
+    }
+
     public Optional<EntrySignalRow> find(long id) {
         return jdbc.query(SELECT + " WHERE s.id = ?", MAPPER, id).stream().findFirst();
     }
