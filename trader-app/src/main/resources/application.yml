@@ -119,8 +119,13 @@ trader:
   ai:
     api-key: ${OPENAI_API_KEY:}
     model: gpt-5.6-sol
-    timeout: 120s
+    timeout: 120s                 # 单次调用
     max-retries: 2
+    signal-veto-enabled: false    # 信号评估里调模型做否决：只在生产外置配置打开（开发与生产同时开会重复计费）
+    daily-call-limit: 20          # 每天（美东）最多调用次数，含手工
+    job-budget: 15m               # 一次评估作业里 AI 部分的总时长上限，超出的候选按没有结论放行
+    reasoning-effort: medium
+    max-output-tokens: 16000      # 推理 token 也算在内，给小了会截断
 
 management:
   endpoints:

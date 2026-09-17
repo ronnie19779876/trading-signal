@@ -11,7 +11,7 @@ class OpenAiClientFactoryTest {
 
     @Test
     void 未配置key时状态为未配置且取客户端报错() {
-        OpenAiClientFactory factory = new OpenAiClientFactory(new AiProperties("", "m", null, Duration.ofSeconds(1), 0));
+        OpenAiClientFactory factory = new OpenAiClientFactory(new AiProperties("", "m", null, Duration.ofSeconds(1), 0, false, 20, Duration.ofMinutes(15), "medium", 16000));
 
         assertThat(factory.status().configured()).isFalse();
         assertThat(factory.status().model()).isEqualTo("m");
@@ -20,7 +20,7 @@ class OpenAiClientFactoryTest {
 
     @Test
     void 配置了key时能构建客户端且状态不泄露key() {
-        OpenAiClientFactory factory = new OpenAiClientFactory(new AiProperties("sk-test-not-real", "m", null, Duration.ofSeconds(1), 0));
+        OpenAiClientFactory factory = new OpenAiClientFactory(new AiProperties("sk-test-not-real", "m", null, Duration.ofSeconds(1), 0, false, 20, Duration.ofMinutes(15), "medium", 16000));
 
         assertThat(factory.status().configured()).isTrue();
         assertThat(factory.status().toString()).doesNotContain("sk-test");

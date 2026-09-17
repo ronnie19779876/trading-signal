@@ -122,6 +122,10 @@ public class SignalFacade {
                 .toList();
     }
 
+    public InstrumentRow instrument(String symbol) {
+        return directory.require(symbol);
+    }
+
     public List<SignalEvaluationRow> history(String symbol, LocalDate from, LocalDate to) {
         InstrumentRow row = directory.require(symbol);
         LocalDate end = to == null ? cutoff.current() : to;

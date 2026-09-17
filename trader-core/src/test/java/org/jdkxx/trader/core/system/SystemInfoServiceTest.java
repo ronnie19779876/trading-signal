@@ -27,7 +27,7 @@ class SystemInfoServiceTest {
                 new StubGateway(Broker.IBKR, GatewayStatus.disconnected("y"))));
         SystemInfoService service = new SystemInfoService("trading-signal", "dev",
                 (ObjectProvider) empty, registry, (ObjectProvider) empty,
-                new OpenAiClientFactory(new AiProperties(null, "m", null, Duration.ofSeconds(1), 0)));
+                new OpenAiClientFactory(new AiProperties(null, "m", null, Duration.ofSeconds(1), 0, false, 20, Duration.ofMinutes(15), "medium", 16000)));
 
         SystemInfo info = service.current();
 

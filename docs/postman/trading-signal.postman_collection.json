@@ -2628,6 +2628,53 @@
           "response": []
         },
         {
+          "name": "预览发给模型的输入（不计费）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/signals/ai-input/{{symbol}}?date=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "signals",
+                "ai-input",
+                "{{symbol}}"
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "代码算好的技术面、估值、财报、公司简介与四门判据，键序固定。不含持仓与账户信息。当天不予判定 409。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200 或 409（当天不予判定）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
           "name": "信号审计（收盘后必查）",
           "request": {
             "method": "GET",

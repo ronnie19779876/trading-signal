@@ -4,6 +4,7 @@ import org.jdkxx.trader.core.marketdata.audit.BarAuditService;
 import org.jdkxx.trader.core.signal.SentinelService;
 import org.jdkxx.trader.core.signal.SignalAuditService;
 import org.jdkxx.trader.core.signal.SignalFacade;
+import org.jdkxx.trader.core.signal.ai.SignalPayloadBuilder;
 import org.jdkxx.trader.storage.signal.EntrySignalRow;
 import org.jdkxx.trader.storage.signal.SignalEvaluationRow;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -33,11 +34,24 @@ public class SignalController {
     private final SentinelService sentinel;
     private final SignalFacade facade;
     private final SignalAuditService audit;
+    private final SignalPayloadBuilder payloads;
 
-    public SignalController(SentinelService sentinel, SignalFacade facade, SignalAuditService audit) {
+    public SignalController(SentinelService sentinel, SignalFacade facade, SignalAuditService audit, SignalPayloadBuilder payloads) {
         this.sentinel = sentinel;
         this.facade = facade;
         this.audit = audit;
+        this.payloads = payloads;
+    }
+
+    /** 预览发给模型的输入（不调模型、不计费）：某只某天的判定 + 技术面 + 估值 + 财报 + 公司简介。 */
+    @GetMapping("/api/signals/ai-input/{symbol}")
+    public Map<String, Object> aiInput(@PathVariable String symbol,
+                                       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        SentinelService.Judgement j = sentinel.evaluate(symbol, date);
+        if (j.evaluation().status() != org.jdkxx.trader.domain.signal.SentinelEvaluation.Status.EVALUATED) {
+            throw new IllegalStateException(j.symbol() + " " + j.evaluation().asOf() + " 不予判定：" + j.evaluation().statusDetail());
+        }
+        return payloads.build(facade.instrument(symbol), j.evaluation(), LocalDate.now());
     }
 
     /** 某只某天的四门判定过程（现场计算）。date 缺省取最近收盘落定的交易日。 */

@@ -170,6 +170,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | `GET /api/signals/evaluations/{symbol}?from&to` | 单只评估历史，默认最近 90 天，倒序 |
 | `GET /api/signals/ledger?variant&status` | 纸面账本。`stats[]` 按变体（`BASE` 止损 2.0×ATR、`STOP_2_5` 止损 2.5×ATR，都不减半仓）与来源分开：总数、未平、待入场、已平、胜率、每笔 R、每笔收益率；`pairedCount` / `pairedMeanReturnDiff` 为同一批已平仓信号上 STOP_2_5 − BASE 的收益率差；`entries[]` 为 `{signal, track}`。账本行 `status` PENDING_ENTRY / OPEN / CLOSED，`exitReason` STOP / CHANDELIER / TIME，价格为判定日口径，未平仓每天从信号日整段重算，`updatedThrough` 为算到的日期 |
 | `GET /api/signals/audit?date=` | 信号审计（收盘巡检第五段）：`evaluationExists` / `coverage` / `ledgerCurrent` 为关键项（美东 19:00 前缺评估只提示）；`staleData`（超过目标 2% 才判不过）、`dataQuality`、`signalConsistency`（当天信号与重算后的评估不一致，信号保留）、`evaluationJob` 为提示项；休市日直接判过 |
+| `GET /api/signals/ai-input/{symbol}?date=` | 预览发给模型的输入（不调模型、不计费）：`meta`（行业、所属指数）、`signal`（四门判据原文、支撑区、止损、出场预案）、`technicals`（均线距离、ATR%、RVOL、20/60/250 日涨跌与相对 SPY 超额、52 周位置、最近 15 根日 K）、`valuation`（估值快照、静态市盈率 5 年分位）、`financials`（最近 8 个单季与 3 个年度的白名单科目，金额为百万美元 `*UsdM`）、`calendarHint`（距最近季报期末天数与下一次财报的粗估窗口）、`profile`、`caveats`。不含任何持仓与账户信息。当天不予判定 409 |
 
 `status` 取值：`EVALUATED`；`SKIPPED_INSUFFICIENT_BARS`（窗口 600 自然日内少于 260 根）；`SKIPPED_STALE_DATA`（判定日没有 K 线）；
 `SKIPPED_DATA_GAP`（对照交易日历缺超过 3 个交易日，停牌空 K 也算缺）；`SKIPPED_CORPORATE_ACTION`（股数变动事件缺比例，等复权因子重拉）。
