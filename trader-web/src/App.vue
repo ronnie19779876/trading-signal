@@ -5,11 +5,12 @@ import { useAutoRefresh } from './composables/useAutoRefresh'
 import { useTheme, type ThemeMode } from './composables/useTheme'
 
 const links = [
-  { to: '/', label: '系统' },
+  { to: '/', label: '仪表盘' },
   { to: '/marketdata', label: '行情' },
   { to: '/fundamentals', label: '基本面' },
   { to: '/account', label: '账户' },
   { to: '/signals', label: '信号' },
+  { to: '/system', label: '系统' },
 ]
 
 const THEME_LABEL: Record<ThemeMode, string> = { system: '跟随系统', light: '浅色', dark: '深色' }

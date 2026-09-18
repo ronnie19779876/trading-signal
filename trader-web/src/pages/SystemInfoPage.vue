@@ -21,6 +21,8 @@ const app = useAppStore()
 const events = ref<EventView[]>([])
 const accounts = ref<Record<string, AccountView[]>>({})
 const loading = ref(false)
+const drawer = ref(false)
+const picked = ref<GatewayView | null>(null)
 
 const info = computed(() => app.info)
 const health = computed(() => app.health)
@@ -55,6 +57,15 @@ async function toggle(g: GatewayView) {
     ElMessage.error(errMsg(e))
   }
 }
+
+/** 连接明细原先塞在展开行里，展开箭头是表格最后一列，窄一点就被挤出视口，点"账户"像没反应。 */
+function openDetail(g: GatewayView) {
+  picked.value = g
+  drawer.value = true
+}
+
+/** 抽屉里显示的是最新一轮拉回来的网关，不是打开时的那份快照。 */
+const pickedLive = computed(() => info.value?.gateways.find((g) => g.broker === picked.value?.broker) ?? picked.value)
 
 async function loadAccounts(g: GatewayView) {
   try {
@@ -120,7 +131,7 @@ function factsText(facts: Record<string, string>): string {
       </el-card>
 
       <el-card shadow="never" header="券商网关">
-        <el-table :data="info.gateways" size="small">
+        <el-table :data="info.gateways" size="small" highlight-current-row @row-click="openDetail">
           <el-table-column label="券商" width="110">
             <template #default="{ row }: { row: GatewayView }">{{ row.displayName }}（{{ row.broker }}）</template>
           </el-table-column>
@@ -135,31 +146,44 @@ function factsText(facts: Record<string, string>): string {
             <template #default="{ row }: { row: GatewayView }">{{ fmtEt(row.lastHeartbeatAt) }}</template>
           </el-table-column>
           <el-table-column label="重连" width="60" prop="reconnectAttempts" />
-          <el-table-column label="操作" width="170">
+          <el-table-column label="操作" min-width="180">
             <template #default="{ row }: { row: GatewayView }">
-              <el-button v-if="row.enabled" size="small" :type="busy(row.state) ? 'warning' : 'primary'" @click="toggle(row)">
+              <el-button v-if="row.enabled" size="small" :type="busy(row.state) ? 'warning' : 'primary'" @click.stop="toggle(row)">
                 {{ busy(row.state) ? '断开' : '连接' }}
               </el-button>
-              <el-button v-if="row.state === 'CONNECTED'" size="small" @click="loadAccounts(row)">账户</el-button>
+              <el-button size="small" @click.stop="openDetail(row)">详情</el-button>
               <span v-if="!row.enabled" class="muted">未启用</span>
-            </template>
-          </el-table-column>
-          <el-table-column type="expand" width="50">
-            <template #default="{ row }: { row: GatewayView }">
-              <div class="expand">
-                <p><b>连接自</b> {{ fmtEt(row.connectedSince) }}</p>
-                <p><b>事实</b> <code>{{ factsText(row.facts) || '—' }}</code></p>
-                <p v-if="accounts[row.broker]">
-                  <b>账户</b>
-                  <el-tag v-for="a in accounts[row.broker]" :key="a.maskedId" size="small" class="acct" :type="a.kind === 'LIVE' ? 'danger' : 'info'">
-                    {{ a.maskedId }} {{ a.kind }} {{ a.markets.join('/') }}
-                  </el-tag>
-                </p>
-              </div>
             </template>
           </el-table-column>
         </el-table>
       </el-card>
+
+      <el-drawer v-model="drawer" size="40%" :title="pickedLive ? `${pickedLive.displayName}（${pickedLive.broker}）` : '网关'">
+        <div v-if="pickedLive" class="detail">
+          <el-descriptions :column="1" border size="small" label-width="88">
+            <el-descriptions-item label="状态">
+              <el-tag :type="stateTag(pickedLive.state)" size="small">{{ pickedLive.state }}</el-tag>
+              <span class="muted">{{ pickedLive.detail }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="职责">{{ pickedLive.role }}</el-descriptions-item>
+            <el-descriptions-item label="连接自">{{ fmtEt(pickedLive.connectedSince) }}</el-descriptions-item>
+            <el-descriptions-item label="最近心跳">{{ fmtEt(pickedLive.lastHeartbeatAt) }}</el-descriptions-item>
+            <el-descriptions-item label="重连次数">{{ pickedLive.reconnectAttempts }}</el-descriptions-item>
+            <el-descriptions-item label="事实"><code>{{ factsText(pickedLive.facts) || '—' }}</code></el-descriptions-item>
+          </el-descriptions>
+
+          <div class="actions">
+            <el-button size="small" :disabled="pickedLive.state !== 'CONNECTED'" @click="loadAccounts(pickedLive)">查询账户</el-button>
+            <span class="muted">账户号只回打码后的尾号</span>
+          </div>
+          <div v-if="accounts[pickedLive.broker]" class="tags">
+            <el-tag v-for="a in accounts[pickedLive.broker]" :key="a.maskedId" size="small" :type="a.kind === 'LIVE' ? 'danger' : 'info'">
+              {{ a.maskedId }} {{ a.kind }} {{ a.markets.join('/') }}
+            </el-tag>
+            <span v-if="!accounts[pickedLive.broker].length" class="muted">没有账户</span>
+          </div>
+        </div>
+      </el-drawer>
 
       <el-card shadow="never" header="最近连接事件">
         <el-table :data="events" size="small" empty-text="暂无事件（存储未启用或尚无记录）">
@@ -198,17 +222,18 @@ function factsText(facts: Record<string, string>): string {
 </template>
 
 <style scoped>
-.expand {
-  padding: 4px 12px;
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.detail code {
+  word-break: break-all;
   font-size: 12px;
 }
-.expand p {
-  margin: 4px 0;
-}
-.expand code {
-  word-break: break-all;
-}
-.acct {
-  margin-right: 6px;
+.tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 </style>
