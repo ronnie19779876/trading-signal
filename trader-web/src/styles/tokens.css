@@ -1,0 +1,71 @@
+/*
+ * 全站设计变量。颜色一律走变量：图表组件也读这里的值，暗色切换才不会留下白底的图。
+ * 明暗两套由 <html class="dark"> 切换（见 composables/useTheme.ts）。
+ */
+:root {
+  /* 中国习惯：红涨绿跌。暗色下同一组色在深底上偏闷，各提亮一档。 */
+  --tr-up: #ef5350;
+  --tr-down: #26a69a;
+  --tr-up-fill: rgba(239, 83, 80, 0.5);
+  --tr-down-fill: rgba(38, 166, 154, 0.5);
+
+  /* 图表：lightweight-charts 只认具体颜色值，不认 CSS 变量，组件里 getComputedStyle 取。 */
+  --tr-chart-text: #606266;
+  --tr-chart-grid: #f0f2f5;
+  --tr-chart-border: #dcdfe6;
+  --tr-chart-line: #409eff;
+
+  --tr-gutter: 24px;
+  --tr-page-gap: 16px;
+}
+
+html.dark {
+  --tr-up: #ff6b68;
+  --tr-down: #3ecabc;
+  --tr-up-fill: rgba(255, 107, 104, 0.45);
+  --tr-down-fill: rgba(62, 202, 188, 0.45);
+
+  --tr-chart-text: #a3a6ad;
+  --tr-chart-grid: #2b2b2d;
+  --tr-chart-border: #414243;
+  --tr-chart-line: #79bbff;
+}
+
+/* 页面通用骨架：各页原本各写一份，值还不一样（gap 12/16、标题 18px/默认）。 */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tr-page-gap);
+}
+
+.up {
+  color: var(--tr-up);
+}
+
+.down {
+  color: var(--tr-down);
+}
+
+.muted {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.toolbar,
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/*
+ * 工具条里的控件按自己的宽度站着，别跟着容器长。
+ * Element Plus 的 .el-input__wrapper 自带 flex: 1 1 auto（本是为了填满 el-input），
+ * 直接放进 flex 工具条就会把 style="width: 240px" 撑破——满宽布局之后尤其明显。
+ * 要占位的用行内 style="flex: 1"，行内样式优先级更高，压得住这条。
+ */
+.toolbar > *,
+.actions > * {
+  flex: none;
+}

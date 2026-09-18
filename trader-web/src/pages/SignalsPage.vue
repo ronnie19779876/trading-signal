@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, useTemplateRef } from 'vue'
+import PageHeader from '../components/PageHeader.vue'
 import { signalsApi } from '../api/signals'
 import type { AuditReport } from '../api/account'
 import { aiApi, type AiSettings, type DailyUsage } from '../api/ai'
@@ -16,7 +17,12 @@ const date = ref<string | null>(null)
 const tab = ref('today')
 const error = ref<string | null>(null)
 const loading = ref(false)
-const reloadKey = ref(0)
+
+// 刷新调各 tab 自己的 load()，而不是换 :key 整体重挂载——后者会丢掉筛选条件和滚动位置。
+// lazy 的 tab 没打开过就没挂载，ref 为 null，跳过即可（打开时自己会加载）。
+const todayTab = useTemplateRef<{ load: () => void }>('todayTab')
+const signalsTab = useTemplateRef<{ load: () => void }>('signalsTab')
+const ledgerTab = useTemplateRef<{ load: () => void }>('ledgerTab')
 
 async function load() {
   loading.value = true
@@ -36,7 +42,9 @@ async function load() {
 
 async function refresh() {
   await load()
-  reloadKey.value++
+  todayTab.value?.load()
+  signalsTab.value?.load()
+  ledgerTab.value?.load()
 }
 
 async function pickDate(d: string | null) {
@@ -52,13 +60,14 @@ onMounted(load)
 
 <template>
   <div class="page">
-    <div class="page__title">
-      <h2>信号</h2>
-      <span class="muted">入场哨兵 sentinel-v1：每个交易日美东 18:10 评估，模型只有否决权；信号是候选提示与风险预案，不是买入指令</span>
-      <el-date-picker :model-value="date" type="date" value-format="YYYY-MM-DD" size="small" style="width: 140px" :clearable="false"
-                      @update:model-value="pickDate" />
-      <el-button size="small" :loading="loading" @click="refresh">刷新</el-button>
-    </div>
+    <PageHeader title="信号"
+                hint="入场哨兵 sentinel-v1：每个交易日美东 18:10 评估，模型只有否决权；信号是候选提示与风险预案，不是买入指令">
+      <template #actions>
+        <el-date-picker :model-value="date" type="date" value-format="YYYY-MM-DD" size="small" style="width: 140px" :clearable="false"
+                        @update:model-value="pickDate" />
+        <el-button size="small" :loading="loading" @click="refresh">刷新</el-button>
+      </template>
+    </PageHeader>
 
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
 
@@ -86,13 +95,13 @@ onMounted(load)
 
     <el-tabs v-model="tab">
       <el-tab-pane label="今日评估" name="today" lazy>
-        <TodayTab :key="'t' + reloadKey" :date="date" />
+        <TodayTab ref="todayTab" :date="date" />
       </el-tab-pane>
       <el-tab-pane label="信号" name="signals" lazy>
-        <SignalsTab :key="'s' + reloadKey" />
+        <SignalsTab ref="signalsTab" />
       </el-tab-pane>
       <el-tab-pane label="纸面账本" name="ledger" lazy>
-        <LedgerTab :key="'l' + reloadKey" />
+        <LedgerTab ref="ledgerTab" />
       </el-tab-pane>
       <el-tab-pane label="回放" name="replay" lazy>
         <ReplayTab />
@@ -102,12 +111,8 @@ onMounted(load)
 </template>
 
 <style scoped>
-.page { display: flex; flex-direction: column; gap: 12px; }
-.page__title { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-.page__title h2 { margin: 0; }
-.muted { color: var(--el-text-color-secondary); font-size: 13px; }
 .status__row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 13px; }
-.status__check { font-size: 13px; margin-top: 6px; color: #b88230; }
-.status__check--critical { color: #f56c6c; }
+.status__check { font-size: 13px; margin-top: 6px; color: var(--el-color-warning); }
+.status__check--critical { color: var(--el-color-danger); }
 .spacer { flex: 1; }
 </style>

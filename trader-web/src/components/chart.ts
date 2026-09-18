@@ -31,3 +31,43 @@ export interface ChartZone {
   color?: string
 }
 
+
+/**
+ * 图表配色。lightweight-charts 只认具体颜色值，不认 CSS 变量，所以从 :root 上取出来传进去；
+ * 主题切换时组件 watch 到变化会重新取一遍（不重取的话暗色下图还是白底）。
+ */
+export interface ChartTheme {
+  text: string
+  grid: string
+  border: string
+  line: string
+  up: string
+  down: string
+  upFill: string
+  downFill: string
+}
+
+export function chartTheme(): ChartTheme {
+  const s = getComputedStyle(document.documentElement)
+  const v = (name: string, fallback: string) => s.getPropertyValue(name).trim() || fallback
+  return {
+    text: v('--tr-chart-text', '#606266'),
+    grid: v('--tr-chart-grid', '#f0f2f5'),
+    border: v('--tr-chart-border', '#dcdfe6'),
+    line: v('--tr-chart-line', '#409eff'),
+    up: v('--tr-up', '#ef5350'),
+    down: v('--tr-down', '#26a69a'),
+    upFill: v('--tr-up-fill', 'rgba(239, 83, 80, 0.5)'),
+    downFill: v('--tr-down-fill', 'rgba(38, 166, 154, 0.5)'),
+  }
+}
+
+/** 两个图表组件共用的基础配置。 */
+export function chartLayout(t: ChartTheme) {
+  return {
+    layout: { background: { color: 'transparent' }, textColor: t.text },
+    grid: { vertLines: { color: t.grid }, horzLines: { color: t.grid } },
+    rightPriceScale: { borderColor: t.border },
+    timeScale: { borderColor: t.border },
+  }
+}

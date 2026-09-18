@@ -129,7 +129,4 @@ defineExpose({ load })
 <style scoped>
 .tab { display: flex; flex-direction: column; gap: 12px; }
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.muted { color: var(--el-text-color-secondary); font-size: 13px; }
-.up { color: #ef5350; }
-.down { color: #26a69a; }
 </style>

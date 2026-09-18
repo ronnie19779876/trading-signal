@@ -50,9 +50,10 @@ class SpaForwardControllerTest {
             paths.add(m.group(1));
         }
         assertThat(paths).as("没从 router/index.ts 里读到路由，测试需要跟着改").isNotEmpty();
+        assertThat(paths).as("前端要有兜底路由，否则打开不存在的路径是白屏而不是 404 页").anyMatch(p -> p.contains(":"));
         for (String p : paths) {
-            if ("/".equals(p)) {
-                continue;   // 首页由静态资源的欢迎页提供
+            if ("/".equals(p) || p.contains(":")) {
+                continue;   // 首页由静态资源的欢迎页提供；带 : 的是参数路由（兜底 404），不是深链接目标
             }
             assertThat(p).as("前端路由必须是单段、不含点的路径，否则深链接回退覆盖不到：%s", p).matches("/[^/.]+");
             mvc.perform(get(p)).andExpect(forwardedUrl("/index.html"));

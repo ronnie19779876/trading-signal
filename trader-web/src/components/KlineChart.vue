@@ -13,7 +13,8 @@ import {
   type SeriesMarker,
   type Time,
 } from 'lightweight-charts'
-import type { ChartMarker, ChartPriceLine, ChartZone, KlineBar } from './chart'
+import { chartLayout, chartTheme, type ChartMarker, type ChartPriceLine, type ChartZone, type KlineBar } from './chart'
+import { useTheme } from '../composables/useTheme'
 
 const props = withDefaults(
   defineProps<{
@@ -27,6 +28,8 @@ const props = withDefaults(
   { height: 380, markers: () => [], priceLines: () => [], zones: () => [] },
 )
 
+const { isDark } = useTheme()
+
 const el = ref<HTMLDivElement | null>(null)
 let chart: IChartApi | null = null
 let candles: ISeriesApi<'Candlestick'> | null = null
@@ -37,9 +40,10 @@ let observer: ResizeObserver | null = null
 
 function render() {
   if (!candles || !volume) return
+  const t = chartTheme()
   const sorted = [...props.bars].sort((a, b) => (a.tradeDate < b.tradeDate ? -1 : 1))
   candles.setData(sorted.map((b) => ({ time: b.tradeDate, open: b.open, high: b.high, low: b.low, close: b.close })))
-  volume.setData(sorted.map((b) => ({ time: b.tradeDate, value: b.volume, color: b.close >= b.open ? 'rgba(239,83,80,0.5)' : 'rgba(38,166,154,0.5)' })))
+  volume.setData(sorted.map((b) => ({ time: b.tradeDate, value: b.volume, color: b.close >= b.open ? t.upFill : t.downFill })))
   renderOverlays()
   chart?.timeScale().fitContent()
 }
@@ -69,17 +73,21 @@ function renderOverlays() {
   else markerApi = createSeriesMarkers(candles, markers)
 }
 
+/** 主题切换：图表配色不是 CSS，改不到，只能重新取值套一遍（成交量柱的颜色在数据里，要重画）。 */
+function applyTheme() {
+  if (!chart || !candles) return
+  const t = chartTheme()
+  chart.applyOptions(chartLayout(t))
+  candles.applyOptions({ upColor: t.up, downColor: t.down, wickUpColor: t.up, wickDownColor: t.down })
+  render()
+}
+
 onMounted(() => {
   if (!el.value) return
-  chart = createChart(el.value, {
-    height: props.height,
-    layout: { background: { color: 'transparent' }, textColor: '#606266' },
-    grid: { vertLines: { color: '#f0f2f5' }, horzLines: { color: '#f0f2f5' } },
-    rightPriceScale: { borderColor: '#dcdfe6' },
-    timeScale: { borderColor: '#dcdfe6' },
-  })
+  const t = chartTheme()
+  chart = createChart(el.value, { height: props.height, ...chartLayout(t) })
   // 中国习惯：红涨绿跌
-  candles = chart.addSeries(CandlestickSeries, { upColor: '#ef5350', downColor: '#26a69a', borderVisible: false, wickUpColor: '#ef5350', wickDownColor: '#26a69a' })
+  candles = chart.addSeries(CandlestickSeries, { upColor: t.up, downColor: t.down, borderVisible: false, wickUpColor: t.up, wickDownColor: t.down })
   volume = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'volume' })
   chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
   observer = new ResizeObserver(() => {
@@ -91,6 +99,7 @@ onMounted(() => {
 
 watch(() => props.bars, render)
 watch(() => [props.markers, props.priceLines, props.zones], renderOverlays, { deep: true })
+watch(isDark, applyTheme)
 
 onBeforeUnmount(() => {
   observer?.disconnect()

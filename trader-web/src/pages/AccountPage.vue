@@ -2,6 +2,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import NavChart from '../components/NavChart.vue'
+import PageHeader from '../components/PageHeader.vue'
+import StatCard from '../components/StatCard.vue'
+import { daysAgoEt, errMsg, isoEt, money, signed, trend } from '../lib/format'
 import {
   accountApi,
   type AccountSnapshot,
@@ -18,27 +21,6 @@ const plan = ref<HoldingSyncResult | null>(null)
 const loading = ref(false)
 const syncing = ref(false)
 const error = ref<string | null>(null)
-
-/** 接口错误带着 {code, message}，比 axios 的 "Request failed with status code 409" 有用得多。 */
-function errMsg(e: unknown): string {
-  const r = (e as { response?: { status?: number; data?: { message?: string } } }).response
-  return r?.data?.message ? `${r.status}：${r.data.message}` : String(e)
-}
-
-function money(v: number | null | undefined): string {
-  return v === null || v === undefined ? '—' : v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-
-function signed(v: number | null | undefined): string {
-  if (v === null || v === undefined) return '—'
-  return (v > 0 ? '+' : '') + money(v)
-}
-
-/** 中国习惯：红涨绿跌。 */
-function trend(v: number | null | undefined): string {
-  if (v === null || v === undefined || v === 0) return ''
-  return v > 0 ? 'up' : 'down'
-}
 
 function statusType(s: string): 'success' | 'warning' | 'danger' {
   return s === 'OK' ? 'success' : s === 'WARN' ? 'warning' : 'danger'
@@ -63,18 +45,11 @@ const positions = computed(() => {
   return list.map((p) => ({ ...p, weight: total > 0 && p.marketValue !== null ? (p.marketValue / total) * 100 : null }))
 })
 
-function iso(d: Date): string {
-  return d.toISOString().slice(0, 10)
-}
-
 async function load() {
   loading.value = true
   error.value = null
   try {
-    const [s, a] = await Promise.all([
-      accountApi.snapshots(iso(new Date(Date.now() - 365 * 86_400_000)), iso(new Date())),
-      accountApi.audit(),
-    ])
+    const [s, a] = await Promise.all([accountApi.snapshots(daysAgoEt(365), isoEt()), accountApi.audit()])
     series.value = s
     audit.value = a
     try {
@@ -139,12 +114,12 @@ onMounted(load)
 
 <template>
   <div class="page">
-    <div class="page__title">
-      <h2>账户</h2>
-      <span class="muted">盈透只读：每个交易日美东 18:00 拍快照，按收盘价估值并对账；池里的 HOLDING 由持仓自动维护</span>
-      <el-button size="small" :loading="loading" @click="load">刷新</el-button>
-      <el-button size="small" @click="takeSnapshot">拍快照（仅快照窗口内）</el-button>
-    </div>
+    <PageHeader title="账户" hint="盈透只读：每个交易日美东 18:00 拍快照，按收盘价估值并对账；池里的 HOLDING 由持仓自动维护">
+      <template #actions>
+        <el-button size="small" :loading="loading" @click="load">刷新</el-button>
+        <el-button size="small" @click="takeSnapshot">拍快照（仅快照窗口内）</el-button>
+      </template>
+    </PageHeader>
 
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
 
@@ -152,53 +127,35 @@ onMounted(load)
 
     <template v-if="snapshot">
       <el-row :gutter="12">
-        <el-col :span="6">
-          <el-card shadow="never">
-            <div class="stat">
-              <div class="stat__v">{{ money(snapshot.netLiquidation) }}</div>
-              <div class="stat__l">净值（{{ snapshot.currency ?? '—' }}）</div>
-              <div class="stat__s">{{ snapshot.asOfDate }} 收盘 · {{ snapshot.accountMask }}</div>
-            </div>
-          </el-card>
+        <el-col :xs="24" :sm="12" :lg="6">
+          <StatCard :value="money(snapshot.netLiquidation)" :label="`净值（${snapshot.currency ?? '—'}）`"
+                    :sub="`${snapshot.asOfDate} 收盘 · ${snapshot.accountMask}`" />
         </el-col>
-        <el-col :span="6">
-          <el-card shadow="never">
-            <div class="stat">
-              <div class="stat__v" :class="trend(view?.change?.netLiquidationChange)">
-                {{ view?.change ? signed(view.change.netLiquidationChange) : '—' }}
-              </div>
-              <div class="stat__l">净值变化（含出入金）</div>
-              <div class="stat__s">
-                <template v-if="view?.change">
-                  较 {{ view.change.previousDate }}；持仓价差
-                  <span :class="trend(view.change.positionPnl)">{{ signed(view.change.positionPnl) }}</span>
-                  <el-tag v-if="view.change.positionsChanged" size="small" type="info">有买卖，近似</el-tag>
-                </template>
-                <template v-else>还没有上一份快照</template>
-              </div>
-            </div>
-          </el-card>
+        <el-col :xs="24" :sm="12" :lg="6">
+          <StatCard label="净值变化（含出入金）" :value-class="trend(view?.change?.netLiquidationChange)">
+            <template #value>{{ view?.change ? signed(view.change.netLiquidationChange) : '—' }}</template>
+            <template #sub>
+              <template v-if="view?.change">
+                较 {{ view.change.previousDate }}；持仓价差
+                <span :class="trend(view.change.positionPnl)">{{ signed(view.change.positionPnl) }}</span>
+                <el-tag v-if="view.change.positionsChanged" size="small" type="info">有买卖，近似</el-tag>
+              </template>
+              <template v-else>还没有上一份快照</template>
+            </template>
+          </StatCard>
         </el-col>
-        <el-col :span="6">
-          <el-card shadow="never">
-            <div class="stat">
-              <div class="stat__v">{{ money(snapshot.stockMarketValue) }}</div>
-              <div class="stat__l">股票市值（盈透）</div>
-              <div class="stat__s">现金 {{ money(snapshot.totalCash) }} · 应计股息 {{ money(snapshot.accruedDividend) }}</div>
-            </div>
-          </el-card>
+        <el-col :xs="24" :sm="12" :lg="6">
+          <StatCard :value="money(snapshot.stockMarketValue)" label="股票市值（盈透）"
+                    :sub="`现金 ${money(snapshot.totalCash)} · 应计股息 ${money(snapshot.accruedDividend)}`" />
         </el-col>
-        <el-col :span="6">
-          <el-card shadow="never">
-            <div class="stat">
-              <div class="stat__v"><el-tag :type="statusType(snapshot.reconStatus)">{{ snapshot.reconStatus }}</el-tag></div>
-              <div class="stat__l">对账</div>
-              <div class="stat__s">
-                持仓 {{ snapshot.positions }} 条 · 未实现盈亏
-                <span :class="trend(snapshot.unrealizedPnl)">{{ signed(snapshot.unrealizedPnl) }}</span>
-              </div>
-            </div>
-          </el-card>
+        <el-col :xs="24" :sm="12" :lg="6">
+          <StatCard label="对账">
+            <template #value><el-tag :type="statusType(snapshot.reconStatus)">{{ snapshot.reconStatus }}</el-tag></template>
+            <template #sub>
+              持仓 {{ snapshot.positions }} 条 · 未实现盈亏
+              <span :class="trend(snapshot.unrealizedPnl)">{{ signed(snapshot.unrealizedPnl) }}</span>
+            </template>
+          </StatCard>
         </el-col>
       </el-row>
 
@@ -289,15 +246,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.page { display: flex; flex-direction: column; gap: 12px; }
-.page__title { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-.page__title h2 { margin: 0; }
-.muted { color: var(--el-text-color-secondary); font-size: 13px; }
-.stat__v { font-size: 20px; font-weight: 600; }
-.stat__l { color: var(--el-text-color-regular); margin-top: 4px; }
-.stat__s { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 2px; }
-.actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.actions { margin-bottom: 8px; }
 .tags { display: flex; gap: 6px; flex-wrap: wrap; }
-.up { color: #ef5350; }
-.down { color: #26a69a; }
 </style>

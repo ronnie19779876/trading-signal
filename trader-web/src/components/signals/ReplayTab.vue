@@ -101,7 +101,4 @@ const markers = computed<ChartMarker[]>(() =>
 .tab { display: flex; flex-direction: column; gap: 12px; }
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .dist { margin: 6px 0; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 13px; }
-.muted { color: var(--el-text-color-secondary); font-size: 13px; }
-.up { color: #ef5350; }
-.down { color: #26a69a; }
 </style>

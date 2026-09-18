@@ -17,9 +17,8 @@ const VERDICT: Record<string, string> = { P: '通过', F: '不过', U: '不可�
 
 <style scoped>
 .dots { display: inline-flex; gap: 4px; align-items: center; }
-.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background: #dcdfe6; }
-.dot--P { background: #67c23a; }
-.dot--F { background: #c0c4cc; }
-.dot--U { background: #e6a23c; }
-.muted { color: var(--el-text-color-secondary); }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background: var(--el-border-color); }
+.dot--P { background: var(--el-color-success); }
+.dot--F { background: var(--el-text-color-disabled); }
+.dot--U { background: var(--el-color-warning); }
 </style>

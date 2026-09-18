@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { LineSeries, createChart, type IChartApi, type ISeriesApi } from 'lightweight-charts'
+import { chartLayout, chartTheme } from './chart'
+import { useTheme } from '../composables/useTheme'
 
 /** 净值走势：一个交易日一个点（time 为 YYYY-MM-DD）。 */
 const props = defineProps<{ points: { time: string; value: number }[]; title?: string }>()
+
+const { isDark } = useTheme()
 
 const el = ref<HTMLDivElement | null>(null)
 let chart: IChartApi | null = null
@@ -16,16 +20,18 @@ function render() {
   chart?.timeScale().fitContent()
 }
 
+function applyTheme() {
+  if (!chart || !line) return
+  const t = chartTheme()
+  chart.applyOptions(chartLayout(t))
+  line.applyOptions({ color: t.line })
+}
+
 onMounted(() => {
   if (!el.value) return
-  chart = createChart(el.value, {
-    height: 260,
-    layout: { background: { color: 'transparent' }, textColor: '#606266' },
-    grid: { vertLines: { color: '#f0f2f5' }, horzLines: { color: '#f0f2f5' } },
-    rightPriceScale: { borderColor: '#dcdfe6' },
-    timeScale: { borderColor: '#dcdfe6' },
-  })
-  line = chart.addSeries(LineSeries, { color: '#409eff', lineWidth: 2 })
+  const t = chartTheme()
+  chart = createChart(el.value, { height: 260, ...chartLayout(t) })
+  line = chart.addSeries(LineSeries, { color: t.line, lineWidth: 2 })
   observer = new ResizeObserver(() => {
     if (el.value && chart) chart.applyOptions({ width: el.value.clientWidth })
   })
@@ -34,11 +40,13 @@ onMounted(() => {
 })
 
 watch(() => props.points, render)
+watch(isDark, applyTheme)
 
 onBeforeUnmount(() => {
   observer?.disconnect()
   chart?.remove()
   chart = null
+  line = null
 })
 </script>
 

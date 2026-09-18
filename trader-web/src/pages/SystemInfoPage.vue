@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getHealth, getSystemInfo, type SystemInfo } from '../api/system'
+import PageHeader from '../components/PageHeader.vue'
+import { useAppStore } from '../stores/app'
+import { useAutoRefresh } from '../composables/useAutoRefresh'
+import { errMsg, fmtEt } from '../lib/format'
 import {
   connectGateway,
   disconnectGateway,
@@ -14,32 +17,33 @@ import {
 
 const REFRESH_MS = 5000
 
-const info = ref<SystemInfo | null>(null)
-const health = ref<string>('未知')
+const app = useAppStore()
 const events = ref<EventView[]>([])
 const accounts = ref<Record<string, AccountView[]>>({})
 const loading = ref(false)
-const error = ref<string | null>(null)
-let timer: ReturnType<typeof setInterval> | null = null
+
+const info = computed(() => app.info)
+const health = computed(() => app.health)
+const error = computed(() => app.error)
 
 async function refresh(showSpinner = false) {
   if (showSpinner) loading.value = true
   try {
-    const [i, h, e] = await Promise.all([getSystemInfo(), getHealth(), getEvents(20)])
-    info.value = i
-    health.value = h.status
+    const [, e] = await Promise.all([app.refresh(), getEvents(20)])
     events.value = e
-    error.value = null
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
   } finally {
     loading.value = false
   }
 }
 
+/** 连接中与重连中也归到"可以断开"这一侧，按钮的文案与颜色用同一个判断。 */
+function busy(state: GatewayView['state']): boolean {
+  return state === 'CONNECTED' || state === 'CONNECTING' || state === 'RECONNECTING'
+}
+
 async function toggle(g: GatewayView) {
   try {
-    if (g.state === 'CONNECTED' || g.state === 'CONNECTING' || g.state === 'RECONNECTING') {
+    if (busy(g.state)) {
       await disconnectGateway(g.broker)
       ElMessage.success(`${g.displayName}：已断开`)
     } else {
@@ -48,7 +52,7 @@ async function toggle(g: GatewayView) {
     }
     await refresh()
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : String(e))
+    ElMessage.error(errMsg(e))
   }
 }
 
@@ -56,19 +60,12 @@ async function loadAccounts(g: GatewayView) {
   try {
     accounts.value = { ...accounts.value, [g.broker]: await getAccounts(g.broker) }
   } catch (e) {
-    ElMessage.error(`${g.displayName}账户查询失败：` + (e instanceof Error ? e.message : String(e)))
+    ElMessage.error(`${g.displayName}账户查询失败：` + errMsg(e))
   }
 }
 
-onMounted(() => {
-  refresh(true)
-  timer = setInterval(() => {
-    if (document.visibilityState === 'visible') refresh()
-  }, REFRESH_MS)
-})
-onBeforeUnmount(() => {
-  if (timer) clearInterval(timer)
-})
+useAutoRefresh(() => refresh(), REFRESH_MS, { immediate: false })
+refresh(true)
 
 function stateTag(state: GatewayView['state']): 'success' | 'info' | 'warning' | 'danger' {
   switch (state) {
@@ -89,11 +86,6 @@ function eventTag(event: EventView['event']): 'success' | 'warning' | 'danger' {
   return event === 'ERROR' ? 'danger' : event === 'DISCONNECTED' ? 'warning' : 'success'
 }
 
-function fmt(iso: string | null | undefined): string {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('zh-CN', { timeZone: 'America/New_York', hour12: false }) + ' ET'
-}
-
 function factsText(facts: Record<string, string>): string {
   return Object.entries(facts)
     .map(([k, v]) => `${k}=${v}`)
@@ -103,11 +95,11 @@ function factsText(facts: Record<string, string>): string {
 
 <template>
   <div v-loading="loading" class="page">
-    <div class="page__title">
-      <h2>系统信息</h2>
-      <span class="muted">每 {{ REFRESH_MS / 1000 }} 秒自动刷新</span>
-      <el-button size="small" :loading="loading" @click="refresh(true)">刷新</el-button>
-    </div>
+    <PageHeader title="系统信息" :hint="`每 ${REFRESH_MS / 1000} 秒自动刷新`">
+      <template #actions>
+        <el-button size="small" :loading="loading" @click="refresh(true)">刷新</el-button>
+      </template>
+    </PageHeader>
 
     <el-alert v-if="error" type="error" :title="'后端不可达：' + error" show-icon :closable="false" />
 
@@ -116,14 +108,14 @@ function factsText(facts: Record<string, string>): string {
         <el-descriptions :column="3" border size="small">
           <el-descriptions-item label="应用">{{ info.application }}</el-descriptions-item>
           <el-descriptions-item label="版本">{{ info.version }}</el-descriptions-item>
-          <el-descriptions-item label="构建时间">{{ fmt(info.buildTime) }}</el-descriptions-item>
+          <el-descriptions-item label="构建时间">{{ fmtEt(info.buildTime) }}</el-descriptions-item>
           <el-descriptions-item label="环境">
             <el-tag :type="info.environment === 'PROD' ? 'danger' : 'success'" size="small">{{ info.environment }}</el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="健康">
             <el-tag :type="health === 'UP' ? 'success' : health === 'DEGRADED' ? 'warning' : 'danger'" size="small">{{ health }}</el-tag>
           </el-descriptions-item>
-          <el-descriptions-item label="服务器时间">{{ fmt(info.serverTime) }}</el-descriptions-item>
+          <el-descriptions-item label="服务器时间">{{ fmtEt(info.serverTime) }}</el-descriptions-item>
         </el-descriptions>
       </el-card>
 
@@ -140,22 +132,22 @@ function factsText(facts: Record<string, string>): string {
           </el-table-column>
           <el-table-column prop="detail" label="说明" min-width="220" />
           <el-table-column label="心跳" width="190">
-            <template #default="{ row }: { row: GatewayView }">{{ fmt(row.lastHeartbeatAt) }}</template>
+            <template #default="{ row }: { row: GatewayView }">{{ fmtEt(row.lastHeartbeatAt) }}</template>
           </el-table-column>
           <el-table-column label="重连" width="60" prop="reconnectAttempts" />
           <el-table-column label="操作" width="170">
             <template #default="{ row }: { row: GatewayView }">
-              <el-button v-if="row.enabled" size="small" :type="row.state === 'CONNECTED' ? 'warning' : 'primary'" @click="toggle(row)">
-                {{ row.state === 'CONNECTED' || row.state === 'CONNECTING' || row.state === 'RECONNECTING' ? '断开' : '连接' }}
+              <el-button v-if="row.enabled" size="small" :type="busy(row.state) ? 'warning' : 'primary'" @click="toggle(row)">
+                {{ busy(row.state) ? '断开' : '连接' }}
               </el-button>
               <el-button v-if="row.state === 'CONNECTED'" size="small" @click="loadAccounts(row)">账户</el-button>
               <span v-if="!row.enabled" class="muted">未启用</span>
             </template>
           </el-table-column>
-          <el-table-column type="expand">
+          <el-table-column type="expand" width="50">
             <template #default="{ row }: { row: GatewayView }">
               <div class="expand">
-                <p><b>连接自</b> {{ fmt(row.connectedSince) }}</p>
+                <p><b>连接自</b> {{ fmtEt(row.connectedSince) }}</p>
                 <p><b>事实</b> <code>{{ factsText(row.facts) || '—' }}</code></p>
                 <p v-if="accounts[row.broker]">
                   <b>账户</b>
@@ -172,7 +164,7 @@ function factsText(facts: Record<string, string>): string {
       <el-card shadow="never" header="最近连接事件">
         <el-table :data="events" size="small" empty-text="暂无事件（存储未启用或尚无记录）">
           <el-table-column label="时间" width="200">
-            <template #default="{ row }: { row: EventView }">{{ fmt(row.occurredAt) }}</template>
+            <template #default="{ row }: { row: EventView }">{{ fmtEt(row.occurredAt) }}</template>
           </el-table-column>
           <el-table-column prop="broker" label="券商" width="80" />
           <el-table-column label="事件" width="140">
@@ -206,26 +198,6 @@ function factsText(facts: Record<string, string>): string {
 </template>
 
 <style scoped>
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.page__title {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.page__title h2 {
-  margin: 0;
-  font-size: 18px;
-  flex: 1;
-}
-.muted {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  margin: 8px 0 0;
-}
 .expand {
   padding: 4px 12px;
   font-size: 12px;

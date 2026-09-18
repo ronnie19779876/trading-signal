@@ -33,14 +33,21 @@ async function load() {
 
 watch(() => [props.date, scope.value], load, { immediate: true })
 
+/** 判定成功、有四门结论的行数：漏斗的分母。 */
+const evaluated = computed(() => rows.value.filter((r) => r.gates))
+
 /** 漏斗：依次通过前 k 道门的只数（四门不短路，每道门都算了）。 */
-const funnel = computed(() => {
-  const evaluated = rows.value.filter((r) => r.gates)
-  return GATES.map((g, k) => ({
-    gate: g,
-    count: evaluated.filter((r) => r.gates!.slice(0, k + 1).split('').every((c) => c === 'P')).length,
-  }))
-})
+const funnel = computed(() =>
+  GATES.map((g, k) => {
+    const count = evaluated.value.filter((r) => r.gates!.slice(0, k + 1).split('').every((c) => c === 'P')).length
+    return {
+      gate: g,
+      label: GATES.slice(0, k + 1).map((x) => GATE_LABEL[x]).join(' + '),
+      count,
+      percent: evaluated.value.length ? Math.round((count / evaluated.value.length) * 100) : 0,
+    }
+  }),
+)
 
 const statusCounts = computed(() => count(rows.value.map((r) => STATUS_LABEL[r.status])))
 const outcomeCounts = computed(() => count(rows.value.filter((r) => r.outcome).map((r) => OUTCOME_LABEL[r.outcome!])))
@@ -62,6 +69,8 @@ function open(row: EvaluationRow) {
   picked.value = row
   drawer.value = true
 }
+
+defineExpose({ load })
 </script>
 
 <template>
@@ -85,23 +94,30 @@ function open(row: EvaluationRow) {
     <el-row :gutter="12">
       <el-col :span="10">
         <el-card shadow="never" header="四门漏斗（依次通过前几道门）">
-          <div v-for="(f, i) in funnel" :key="f.gate" class="funnel">
-            <span class="funnel__label">{{ GATES.slice(0, i + 1).map((g) => GATE_LABEL[g]).join(' + ') }}</span>
-            <el-progress :percentage="funnel[0].count ? Math.round((f.count / Math.max(1, rows.filter((r) => r.gates).length)) * 100) : 0"
-                         :format="() => String(f.count)" :stroke-width="14" />
+          <div v-for="f in funnel" :key="f.gate" class="funnel">
+            <span class="funnel__label">{{ f.label }}</span>
+            <el-progress :percentage="f.percent" :format="() => String(f.count)" :stroke-width="14" />
           </div>
+          <div v-if="!evaluated.length" class="muted">这一天还没有评估结果</div>
         </el-card>
       </el-col>
       <el-col :span="14">
         <el-card shadow="never" header="分布">
-          <div class="dist"><b>状态</b>：<el-tag v-for="[k, v] in statusCounts" :key="k" size="small" type="info">{{ k }} {{ v }}</el-tag></div>
-          <div class="dist"><b>结果</b>：<el-tag v-for="[k, v] in outcomeCounts" :key="k" size="small" :type="k === '信号' ? 'primary' : k === 'AI 否决' ? 'danger' : 'info'">{{ k }} {{ v }}</el-tag></div>
+          <div class="dist">
+            <b>状态</b>：<el-tag v-for="[k, v] in statusCounts" :key="k" size="small" type="info">{{ k }} {{ v }}</el-tag>
+            <span v-if="!statusCounts.length" class="muted">—</span>
+          </div>
+          <div class="dist">
+            <b>结果</b>：<el-tag v-for="[k, v] in outcomeCounts" :key="k" size="small" :type="k === '信号' ? 'primary' : k === 'AI 否决' ? 'danger' : 'info'">{{ k }} {{ v }}</el-tag>
+            <span v-if="!outcomeCounts.length" class="muted">—</span>
+          </div>
         </el-card>
       </el-col>
     </el-row>
 
     <el-card shadow="never">
-      <el-table :data="filtered" size="small" max-height="560" highlight-current-row @row-click="open">
+      <el-table :data="filtered" size="small" max-height="560" highlight-current-row
+                empty-text="这一天没有评估结果：看 SIGNAL_EVALUATION 作业跑了没有" @row-click="open">
         <el-table-column prop="symbol" label="代码" width="90" fixed />
         <el-table-column label="角色" width="60"><template #default="{ row }">{{ ROLE_LABEL[row.role as keyof typeof ROLE_LABEL] }}</template></el-table-column>
         <el-table-column label="结果" width="100">
@@ -132,5 +148,4 @@ function open(row: EvaluationRow) {
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .funnel { display: grid; grid-template-columns: 170px 1fr; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
 .dist { margin: 6px 0; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 13px; }
-.muted { color: var(--el-text-color-secondary); font-size: 13px; }
 </style>

@@ -186,7 +186,4 @@ async function analyze() {
 .head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .spacer { flex: 1; }
 .empty { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.muted { color: var(--el-text-color-secondary); font-size: 13px; }
-.up { color: #ef5350; }
-.down { color: #26a69a; }
 </style>

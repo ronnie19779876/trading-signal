@@ -4,6 +4,7 @@ import KlineChart from '../KlineChart.vue'
 import type { ChartMarker, ChartPriceLine, ChartZone } from '../chart'
 import { signalsApi, type ChartBar, type SignalTrack } from '../../api/signals'
 import { errMsg, iso } from './format'
+import { chartTheme } from '../chart'
 
 /**
  * 判定日口径的 K 线加信号价位：K 线价格尺度折回判定日（之后遇到拆股也对齐），
@@ -52,9 +53,10 @@ const markers = computed<ChartMarker[]>(() => {
 })
 
 const priceLines = computed<ChartPriceLine[]>(() => {
+  const t = chartTheme()
   const l: ChartPriceLine[] = []
-  if (props.stop) l.push({ price: props.stop, title: '止损', color: '#26a69a' })
-  if (props.plusOneR) l.push({ price: props.plusOneR, title: '+1R', color: '#ef5350', dashed: true })
+  if (props.stop) l.push({ price: props.stop, title: '止损', color: t.down })
+  if (props.plusOneR) l.push({ price: props.plusOneR, title: '+1R', color: t.up, dashed: true })
   if (props.chandelier) l.push({ price: props.chandelier, title: '吊灯', color: '#e6a23c', dashed: true })
   if (props.target) l.push({ price: props.target, title: '目标', color: '#909399', dashed: true })
   return l

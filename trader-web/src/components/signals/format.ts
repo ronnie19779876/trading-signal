@@ -1,6 +1,10 @@
 import type { Gate, Outcome, SignalStatus, EvaluationStatus, Role, TrackStatus, ExitReason } from '../../api/signals'
 import type { Stance, Confidence, AiStatus, AiVerdict } from '../../api/ai'
 
+// 数字与日期的格式化全站一份，见 lib/format.ts；这里只留信号相关的中文标签。
+// 仍然从本文件转出，是为了让信号页的组件只 import 一个地方。
+export { errMsg, num, pct, signedR, trend, daysAgoEt as daysAgo, isoEt as iso, todayEt } from '../../lib/format'
+
 type TagType = 'primary' | 'success' | 'warning' | 'danger' | 'info'
 
 export const GATE_LABEL: Record<Gate, string> = { TREND: '趋势', LOCATION: '定位', TRIGGER: '触发', RISK: '风控' }
@@ -29,40 +33,3 @@ export const AI_STATUS_LABEL: Record<AiStatus, string> = {
   OK: '成功', REFUSED: '拒答', TRUNCATED: '截断', INVALID: '结构非法', FAILED: '调用失败', SKIPPED_BUDGET: '预算跳过', FAILED_DATA: '输入构建失败',
 }
 export const VERDICT_LABEL: Record<AiVerdict, string> = { VETO: '否决', ALLOW: '放行', ABSENT: '没有结论' }
-
-export function num(v: number | null | undefined, digits = 2): string {
-  return v === null || v === undefined ? '—' : v.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })
-}
-
-export function pct(ratio: number | null | undefined, digits = 2): string {
-  return ratio === null || ratio === undefined ? '—' : (ratio * 100).toFixed(digits) + '%'
-}
-
-export function signedR(v: number | null | undefined): string {
-  return v === null || v === undefined ? '—' : (v > 0 ? '+' : '') + v.toFixed(2) + 'R'
-}
-
-/** 中国习惯：红涨绿跌 */
-export function trend(v: number | null | undefined): string {
-  if (v === null || v === undefined || v === 0) return ''
-  return v > 0 ? 'up' : 'down'
-}
-
-export function iso(d: Date): string {
-  return d.toISOString().slice(0, 10)
-}
-
-/** 美东当天日期（用量与跑批都按美东自然日） */
-export function todayEt(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
-}
-
-export function daysAgo(n: number): string {
-  return iso(new Date(Date.now() - n * 86_400_000))
-}
-
-/** 接口错误带着 {code, message}，比 axios 的 "Request failed with status code 409" 有用。 */
-export function errMsg(e: unknown): string {
-  const r = (e as { response?: { status?: number; data?: { message?: string } } }).response
-  return r?.data?.message ? `${r.status}：${r.data.message}` : String(e)
-}

@@ -77,14 +77,13 @@ const VERDICT_TYPE = { VETO: 'danger', ALLOW: 'success', ABSENT: 'info' } as con
 .ai__reason { color: var(--el-text-color-regular); }
 .ai__summary { font-size: 14px; }
 .ai__col { border-radius: 4px; padding: 8px; min-height: 60px; }
-.ai__col--bull { background: #fef0f0; }
-.ai__col--bear { background: #f0f9eb; }
+.ai__col--bull { background: var(--el-color-danger-light-9); }
+.ai__col--bear { background: var(--el-color-success-light-9); }
 .ai__col-title { font-weight: 600; margin-bottom: 4px; }
-.ev { padding: 4px 0; border-bottom: 1px dashed #e4e7ed; }
+.ev { padding: 4px 0; border-bottom: 1px dashed var(--el-border-color-lighter); }
 .ev:last-child { border-bottom: none; }
-.ev--bad { background: #fdf6ec; }
+.ev--bad { background: var(--el-color-warning-light-9); }
 .ev__src { color: var(--el-text-color-secondary); font-size: 12px; word-break: break-all; }
 .ai__line { line-height: 1.7; }
 .ai__usage { font-size: 12px; }
-.muted { color: var(--el-text-color-secondary); }
 </style>

@@ -57,5 +57,4 @@ const VERDICT_LABEL = { PASS: '通过', FAIL: '不过', UNAVAILABLE: '不可判�
 .judgement { display: flex; flex-direction: column; gap: 8px; }
 .facts { font-size: 13px; line-height: 1.8; color: var(--el-text-color-regular); }
 .zone { margin: 2px 4px 2px 0; }
-.muted { color: var(--el-text-color-secondary); }
 </style>

@@ -55,5 +55,4 @@ const stop = computed(() => (e.value?.gates.find((g) => g.gate === 'RISK')?.valu
 
 <style scoped>
 .drawer { display: flex; flex-direction: column; gap: 12px; }
-.muted { color: var(--el-text-color-secondary); font-size: 13px; }
 </style>

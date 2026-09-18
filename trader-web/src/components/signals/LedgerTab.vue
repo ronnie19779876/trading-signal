@@ -34,6 +34,8 @@ function open(row: { signal: { id: number }; track: SignalTrack }) {
   pickedId.value = row.signal.id
   drawer.value = true
 }
+
+defineExpose({ load })
 </script>
 
 <template>
@@ -103,7 +105,4 @@ function open(row: { signal: { id: number }; track: SignalTrack }) {
 .tab { display: flex; flex-direction: column; gap: 12px; }
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 .paired { margin-top: 8px; }
-.muted { color: var(--el-text-color-secondary); font-size: 13px; }
-.up { color: #ef5350; }
-.down { color: #26a69a; }
 </style>

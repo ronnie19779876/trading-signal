@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import PageHeader from '../components/PageHeader.vue'
+import StatCard from '../components/StatCard.vue'
+import { useAutoRefresh } from '../composables/useAutoRefresh'
+import { big, errMsg, negative, numMax } from '../lib/format'
 import {
   fundamentalsApi,
   type FinancialReport,
@@ -14,7 +18,6 @@ import { getJobs, type RunningJob } from '../api/marketdata'
 const coverage = ref<FundamentalsCoverage | null>(null)
 const running = ref<RunningJob | null>(null)
 const error = ref<string | null>(null)
-let timer: ReturnType<typeof setInterval> | null = null
 
 const symbol = ref('NVDA')
 const overview = ref<FundamentalsOverview | null>(null)
@@ -45,33 +48,23 @@ const reportGrid = computed(() => {
   }))
 })
 
-function num(v: number | null | undefined, digits = 2): string {
-  return v === null || v === undefined ? '—' : v.toLocaleString(undefined, { maximumFractionDigits: digits })
-}
-
-/** 市值这类大数按亿显示，读起来才有概念。 */
-function big(v: number | null | undefined): string {
-  if (v === null || v === undefined) return '—'
-  const yi = v / 1e8
-  return Math.abs(yi) >= 10000 ? `${(yi / 10000).toFixed(2)} 万亿` : `${yi.toFixed(2)} 亿`
-}
-
-function ratioClass(v: number | null | undefined): string {
-  if (v === null || v === undefined) return ''
-  return v < 0 ? 'down' : ''
-}
-
 async function load() {
+  const s = symbol.value.trim().toUpperCase()
+  if (!s) return
   loading.value = true
   error.value = null
   try {
-    const s = symbol.value.trim().toUpperCase()
-    if (!s) return
-    overview.value = await fundamentalsApi.overview(s)
-    valuations.value = await fundamentalsApi.valuation(s)
-    await loadReports()
+    // 三个请求互不依赖，串着 await 就是三个来回。
+    const [o, v, r] = await Promise.all([
+      fundamentalsApi.overview(s),
+      fundamentalsApi.valuation(s),
+      fundamentalsApi.reports(s, statement.value, 8),
+    ])
+    overview.value = o
+    valuations.value = v
+    reports.value = r
   } catch (e) {
-    error.value = String(e)
+    error.value = errMsg(e)
     overview.value = null
     valuations.value = []
     reports.value = []
@@ -82,13 +75,17 @@ async function load() {
 
 async function loadReports() {
   const s = symbol.value.trim().toUpperCase()
-  reports.value = await fundamentalsApi.reports(s, statement.value, 8)
+  try {
+    reports.value = await fundamentalsApi.reports(s, statement.value, 8)
+  } catch (e) {
+    error.value = errMsg(e)
+  }
 }
 
 async function refreshStatus() {
   try {
     coverage.value = await fundamentalsApi.coverage()
-    const r = (await getJobs()).running
+    const r = (await getJobs(1)).running
     running.value = r && 'id' in r ? (r as RunningJob) : null
   } catch {
     // 状态轮询失败不打扰用户，下一轮会再试
@@ -101,7 +98,7 @@ async function runValuation() {
     ElMessage.success(`估值快照作业 #${jobId} 已提交`)
     await refreshStatus()
   } catch (e) {
-    ElMessage.error(String(e))
+    ElMessage.error(errMsg(e))
   }
 }
 
@@ -111,67 +108,38 @@ async function runFinancials(all: boolean) {
     ElMessage.success(`财报作业 #${jobId} 已提交${all ? '（全量约 41 分钟）' : ''}`)
     await refreshStatus()
   } catch (e) {
-    ElMessage.error(String(e))
+    ElMessage.error(errMsg(e))
   }
 }
 
-onMounted(async () => {
-  await refreshStatus()
-  await load()
-  timer = setInterval(refreshStatus, 5000)
-})
-
-onBeforeUnmount(() => {
-  if (timer) clearInterval(timer)
-})
+useAutoRefresh(refreshStatus, 5000)
+load()
 </script>
 
 <template>
   <div class="page">
-    <div class="page__title">
-      <h2>基本面</h2>
-      <span class="muted">估值快照每交易日全量刷新；财报只对池与持仓每周刷新，可手动全量回补</span>
-    </div>
+    <PageHeader title="基本面" hint="估值快照每交易日全量刷新；财报只对池与持仓每周刷新，可手动全量回补" />
 
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
 
     <el-row v-if="coverage" :gutter="12">
-      <el-col :span="6">
-        <el-card shadow="never">
-          <div class="stat">
-            <div class="stat__v">{{ coverage.withValuationOnDate }} / {{ coverage.targets }}</div>
-            <div class="stat__l">当日有估值快照</div>
-            <div class="stat__s">最新 {{ coverage.latestDate ?? '—' }}</div>
-          </div>
-        </el-card>
+      <el-col :xs="24" :sm="12" :lg="6">
+        <StatCard :value="`${coverage.withValuationOnDate} / ${coverage.targets}`" label="当日有估值快照"
+                  :sub="`最新 ${coverage.latestDate ?? '—'}`" />
       </el-col>
-      <el-col :span="6">
-        <el-card shadow="never">
-          <div class="stat">
-            <div class="stat__v">{{ coverage.reports.toLocaleString() }}</div>
-            <div class="stat__l">财报期数</div>
-            <div class="stat__s">四类报表合计</div>
-          </div>
-        </el-card>
+      <el-col :xs="24" :sm="12" :lg="6">
+        <StatCard :value="coverage.reports.toLocaleString()" label="财报期数" sub="四类报表合计" />
       </el-col>
-      <el-col :span="6">
-        <el-card shadow="never">
-          <div class="stat">
-            <div class="stat__v">{{ coverage.poolWithReports }} / {{ coverage.poolSize }}</div>
-            <div class="stat__l">池与持仓有财报</div>
-            <div class="stat__s">基金没有财报，属正常</div>
-          </div>
-        </el-card>
+      <el-col :xs="24" :sm="12" :lg="6">
+        <StatCard :value="`${coverage.poolWithReports} / ${coverage.poolSize}`" label="池与持仓有财报" sub="基金没有财报，属正常" />
       </el-col>
-      <el-col :span="6">
-        <el-card shadow="never">
-          <div class="stat">
-            <div class="actions">
-              <el-button size="small" :disabled="!!running" @click="runValuation">刷新估值</el-button>
-              <el-button size="small" :disabled="!!running" @click="runFinancials(false)">刷新财报（池）</el-button>
-            </div>
-            <el-button size="small" text :disabled="!!running" @click="runFinancials(true)">全量回补财报（约 41 分钟）</el-button>
+      <el-col :xs="24" :sm="12" :lg="6">
+        <el-card shadow="never" class="ops">
+          <div class="actions">
+            <el-button size="small" :disabled="!!running" @click="runValuation">刷新估值</el-button>
+            <el-button size="small" :disabled="!!running" @click="runFinancials(false)">刷新财报（池）</el-button>
           </div>
+          <el-button size="small" text :disabled="!!running" @click="runFinancials(true)">全量回补财报（约 41 分钟）</el-button>
         </el-card>
       </el-col>
     </el-row>
@@ -185,8 +153,8 @@ onBeforeUnmount(() => {
     />
 
     <el-card shadow="never">
-      <div class="actions">
-        <el-input v-model="symbol" placeholder="代码，如 NVDA" style="width: 160px" @keyup.enter="load" />
+      <div class="actions query">
+        <el-input v-model="symbol" size="small" placeholder="代码，如 NVDA" style="width: 160px" @keyup.enter="load" />
         <el-button type="primary" size="small" :loading="loading" @click="load">查询</el-button>
         <span v-if="overview?.name" class="muted">{{ overview.name }}</span>
       </div>
@@ -196,28 +164,28 @@ onBeforeUnmount(() => {
           <el-descriptions-item label="总市值">{{ big(overview.valuation.marketCap) }}</el-descriptions-item>
           <el-descriptions-item label="流通市值">{{ big(overview.valuation.floatMarketCap) }}</el-descriptions-item>
           <el-descriptions-item label="市盈率">
-            <span :class="ratioClass(overview.valuation.pe)">{{ num(overview.valuation.pe) }}</span>
+            <span :class="negative(overview.valuation.pe)">{{ numMax(overview.valuation.pe) }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="市盈率 TTM">
-            <span :class="ratioClass(overview.valuation.peTtm)">{{ num(overview.valuation.peTtm) }}</span>
+            <span :class="negative(overview.valuation.peTtm)">{{ numMax(overview.valuation.peTtm) }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="市净率">
-            <span :class="ratioClass(overview.valuation.pb)">{{ num(overview.valuation.pb) }}</span>
+            <span :class="negative(overview.valuation.pb)">{{ numMax(overview.valuation.pb) }}</span>
           </el-descriptions-item>
-          <el-descriptions-item label="每股收益">{{ num(overview.valuation.eps) }}</el-descriptions-item>
-          <el-descriptions-item label="每股净资产">{{ num(overview.valuation.netAssetPerShare) }}</el-descriptions-item>
-          <el-descriptions-item label="换手率">{{ num(overview.valuation.turnoverRate) }}%</el-descriptions-item>
+          <el-descriptions-item label="每股收益">{{ numMax(overview.valuation.eps) }}</el-descriptions-item>
+          <el-descriptions-item label="每股净资产">{{ numMax(overview.valuation.netAssetPerShare) }}</el-descriptions-item>
+          <el-descriptions-item label="换手率">{{ numMax(overview.valuation.turnoverRate) }}%</el-descriptions-item>
           <el-descriptions-item label="净资产">{{ big(overview.valuation.netAsset) }}</el-descriptions-item>
           <el-descriptions-item label="净利润">
-            <span :class="ratioClass(overview.valuation.netProfit)">{{ big(overview.valuation.netProfit) }}</span>
+            <span :class="negative(overview.valuation.netProfit)">{{ big(overview.valuation.netProfit) }}</span>
           </el-descriptions-item>
-          <el-descriptions-item label="股息 TTM">{{ num(overview.valuation.dividendTtm) }}</el-descriptions-item>
-          <el-descriptions-item label="股息率 TTM">{{ num(overview.valuation.dividendYieldTtm) }}%</el-descriptions-item>
+          <el-descriptions-item label="股息 TTM">{{ numMax(overview.valuation.dividendTtm) }}</el-descriptions-item>
+          <el-descriptions-item label="股息率 TTM">{{ numMax(overview.valuation.dividendYieldTtm) }}%</el-descriptions-item>
           <el-descriptions-item v-if="overview.valuation.navPerShare !== null" label="净值">
-            {{ num(overview.valuation.navPerShare) }}
+            {{ numMax(overview.valuation.navPerShare) }}
           </el-descriptions-item>
           <el-descriptions-item v-if="overview.valuation.premium !== null" label="溢价">
-            <span :class="ratioClass(overview.valuation.premium)">{{ num(overview.valuation.premium) }}%</span>
+            <span :class="negative(overview.valuation.premium)">{{ numMax(overview.valuation.premium) }}%</span>
           </el-descriptions-item>
         </el-descriptions>
         <div class="muted hint">
@@ -238,26 +206,26 @@ onBeforeUnmount(() => {
         </el-table-column>
         <el-table-column label="市盈率" width="110">
           <template #default="{ row }: { row: ValuationSnapshot }">
-            <span :class="ratioClass(row.pe)">{{ num(row.pe) }}</span>
+            <span :class="negative(row.pe)">{{ numMax(row.pe) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="市盈率 TTM" width="120">
           <template #default="{ row }: { row: ValuationSnapshot }">
-            <span :class="ratioClass(row.peTtm)">{{ num(row.peTtm) }}</span>
+            <span :class="negative(row.peTtm)">{{ numMax(row.peTtm) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="市净率" width="110">
           <template #default="{ row }: { row: ValuationSnapshot }">
-            <span :class="ratioClass(row.pb)">{{ num(row.pb) }}</span>
+            <span :class="negative(row.pb)">{{ numMax(row.pb) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="每股收益" width="110">
-          <template #default="{ row }: { row: ValuationSnapshot }">{{ num(row.eps) }}</template>
+          <template #default="{ row }: { row: ValuationSnapshot }">{{ numMax(row.eps) }}</template>
         </el-table-column>
         <el-table-column label="换手率" width="100">
-          <template #default="{ row }: { row: ValuationSnapshot }">{{ num(row.turnoverRate) }}%</template>
+          <template #default="{ row }: { row: ValuationSnapshot }">{{ numMax(row.turnoverRate) }}%</template>
         </el-table-column>
-        <el-table-column label="停牌" width="80">
+        <el-table-column label="停牌" min-width="80">
           <template #default="{ row }: { row: ValuationSnapshot }">{{ row.suspended ? '是' : '—' }}</template>
         </el-table-column>
       </el-table>
@@ -280,7 +248,7 @@ onBeforeUnmount(() => {
           </el-table-column>
           <el-table-column v-for="(r, idx) in reports" :key="r.periodText" :label="r.periodText" min-width="130">
             <template #default="{ row }">
-              <span v-if="row.values[idx]">{{ num(row.values[idx].value, 4) }}</span>
+              <span v-if="row.values[idx]">{{ numMax(row.values[idx].value, 4) }}</span>
               <span v-else>—</span>
             </template>
           </el-table-column>
@@ -302,14 +270,12 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.page { display: flex; flex-direction: column; gap: 16px; }
-.page__title { display: flex; align-items: center; gap: 12px; }
-.page__title h2 { margin: 0; font-size: 18px; }
-.muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .hint { margin-top: 8px; }
-.actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.stat__v { font-size: 22px; font-weight: 600; }
-.stat__l { color: var(--el-text-color-regular); font-size: 13px; margin-top: 2px; }
-.stat__s { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; }
-.down { color: #26a69a; }
+.query { margin-bottom: 12px; }
+.ops {
+  height: 100%;
+}
+.ops .actions {
+  margin-bottom: 8px;
+}
 </style>
