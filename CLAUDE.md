@@ -122,8 +122,9 @@ storage → common ；ai → common
 
 **生产跑 3.0.0**（2026-09-17 美东 05:40 部署；第 3 期见 ARCHITECTURE §16，2.0.2 全量审查后的修复见 §17）。
 **第 4 期「入场信号」3.0.0（ARCHITECTURE §18）**：判定引擎、对账与回放统计、每日评估与纸面账本、AI 否决、前端信号页；首次实盘评估为美东 2026-09-17 18:10。
+**3.0.1 已发布，待部署到生产（ARCHITECTURE §19）**：AI 额度按持仓 → 池 → 池外分配、账本 AI 分组按裁决、信号抽屉的手工分析按钮，加前端改造第 1、2 期（T-Signal 品牌、满宽、暗色、仪表盘）；无迁移、无配置与接口变更。
 每一期的设计决策、实测结论与已知边界都在
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~17 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~19 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
 
 - 数据规模：521 只标的、58.8 万根日 K（池/持仓/基准 20 年深度）、3.7 万条复权因子、
   5052 天交易日历（2006 起）、2.5 万期财报、逐日估值快照。
