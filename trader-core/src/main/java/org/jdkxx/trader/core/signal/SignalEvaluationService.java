@@ -34,7 +34,9 @@ import org.slf4j.LoggerFactory;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -90,13 +92,32 @@ public class SignalEvaluationService {
         this.ai = ai;
     }
 
-    /** 评估目标：全量成分股 ∪ 池与持仓，去掉基准。 */
+    /**
+     * 评估目标：全量成分股 ∪ 池与持仓，去掉基准。
+     *
+     * <p>顺序就是 AI 额度的分配顺序：作业里边评估边调模型，每日上限与作业时长先到先得。
+     * 所以持仓在前、池其次、池外最后，同一角色内按代码。3.0.0 时成分股按代码在前、池与持仓多半已在其中
+     * 而保留原位，额度按字母发放——四巫日（2026-09-18）51 条候选，额度在 G 开头用完，持仓 IBKR 被预算跳过。
+     */
     Map<Long, InstrumentRow> targets() {
-        Map<Long, InstrumentRow> targets = new LinkedHashMap<>();
-        scope.universe().forEach(r -> targets.put(r.id(), r));
-        scope.candidates().forEach(r -> targets.put(r.id(), r));
-        scope.benchmarks().forEach(r -> targets.remove(r.id()));
-        return targets;
+        Map<Long, InstrumentRow> byId = new HashMap<>();
+        scope.universe().forEach(r -> byId.put(r.id(), r));
+        scope.candidates().forEach(r -> byId.put(r.id(), r));
+        scope.benchmarks().forEach(r -> byId.remove(r.id()));
+        Map<Long, PoolRole> roles = scope.roles();
+        Map<Long, InstrumentRow> ordered = new LinkedHashMap<>();
+        byId.values().stream()
+                .sorted(Comparator.comparingInt((InstrumentRow r) -> aiPriority(roles.get(r.id()))).thenComparing(InstrumentRow::symbol))
+                .forEach(r -> ordered.put(r.id(), r));
+        return ordered;
+    }
+
+    /** 持仓 0、池 1、池外 2。 */
+    static int aiPriority(PoolRole role) {
+        if (role == PoolRole.HOLDING) {
+            return 0;
+        }
+        return role == PoolRole.POOL ? 1 : 2;
     }
 
     public String run(JobContext ctx, LocalDate asOf) {

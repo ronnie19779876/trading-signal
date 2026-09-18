@@ -85,8 +85,8 @@ public class SignalConfiguration {
     public SignalFacade signalFacade(JobService jobs, SignalEvaluationService evaluation, SentinelService sentinel,
                                      SignalEvaluationRepository evaluations, EntrySignalRepository signals,
                                      SignalTrackRepository tracks, InstrumentDirectory directory, TradingDayRepository days,
-                                     SettledCutoff cutoff) {
-        return new SignalFacade(jobs, evaluation, sentinel, evaluations, signals, tracks, directory, days, cutoff);
+                                     SettledCutoff cutoff, org.jdkxx.trader.storage.signal.AiAnalysisRepository analyses) {
+        return new SignalFacade(jobs, evaluation, sentinel, evaluations, signals, tracks, directory, days, cutoff, analyses);
     }
 
     @Bean

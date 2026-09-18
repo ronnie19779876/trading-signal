@@ -2,12 +2,13 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { signalsApi, type SentinelEvaluation, type SignalDetail } from '../../api/signals'
-import { aiApi, type AiAnalysis } from '../../api/ai'
+import { aiApi, type AiAnalysis, type AiSettings } from '../../api/ai'
 import JudgementView from './JudgementView.vue'
 import SignalChart from './SignalChart.vue'
 import AiOpinion from './AiOpinion.vue'
 import {
-  EXIT_LABEL, ROLE_LABEL, SIGNAL_STATUS_LABEL, SIGNAL_STATUS_TYPE, TRACK_LABEL, errMsg, iso, num, pct, signedR, trend,
+  AI_STATUS_LABEL, EXIT_LABEL, ROLE_LABEL, SIGNAL_STATUS_LABEL, SIGNAL_STATUS_TYPE, TRACK_LABEL, errMsg, iso, num, pct, signedR,
+  todayEt, trend,
 } from './format'
 
 /** 一条信号的全部信息：价位与图、四门判据、指纹核对、AI 第二意见、两个出场变体的纸面账本。 */
@@ -16,7 +17,12 @@ const visible = defineModel<boolean>({ default: false })
 const emit = defineEmits<{ changed: [] }>()
 
 const detail = ref<SignalDetail | null>(null)
+/** 展示的模型意见：只放有结论（OK）的那次。 */
 const ai = ref<AiAnalysis | null>(null)
+/** 挂在信号上、但没有结论的那次（预算跳过、失败、拒答、截断）：说明评估作业当晚为什么没有意见。 */
+const absent = ref<AiAnalysis | null>(null)
+const aiSettings = ref<AiSettings | null>(null)
+const callsToday = ref(0)
 const loading = ref(false)
 const analyzing = ref(false)
 const error = ref<string | null>(null)
@@ -32,16 +38,21 @@ async function load() {
   loading.value = true
   error.value = null
   ai.value = null
+  absent.value = null
   try {
     detail.value = await signalsApi.detail(props.signalId)
     const sig = detail.value.signal
-    if (sig.aiAnalysisId) {
-      ai.value = await aiApi.find(sig.aiAnalysisId)
+    const linked = sig.aiAnalysisId ? await aiApi.find(sig.aiAnalysisId) : null
+    if (linked?.status === 'OK') {
+      ai.value = linked
     } else {
-      // 手工分析不挂在信号上：找同一只同一判定日最近一次成功的
-      const list = await aiApi.list({ symbol: sig.symbol, from: sig.tradeDate, to: iso(new Date()), limit: 50 })
-      ai.value = list.find((a) => a.tradeDate === sig.tradeDate && a.status === 'OK') ?? null
+      // 挂着的那次没有结论（或根本没挂）：手工分析不挂在信号上，找同一只同一判定日最近一次成功的。
+      // 3.0.0 只要挂着分析就不再找、也不给"手工分析"按钮——预算跳过的信号因此没法在界面上补一次意见。
+      absent.value = linked
+      const list = await aiApi.list({ symbol: sig.symbol, status: 'OK', from: sig.tradeDate, to: iso(new Date()), limit: 50 })
+      ai.value = list.find((a) => a.tradeDate === sig.tradeDate) ?? null
     }
+    if (!ai.value) await loadUsage()
   } catch (e) {
     error.value = errMsg(e)
   } finally {
@@ -74,11 +85,23 @@ async function changeStatus(to: 'ACKNOWLEDGED' | 'DISMISSED') {
   }
 }
 
+/** 手工分析与评估作业共用每日上限（按美东自然日），额度用完时按钮置灰。 */
+async function loadUsage() {
+  const today = todayEt()
+  const u = await aiApi.usage(today, today)
+  aiSettings.value = u.settings
+  callsToday.value = u.days.find((d) => d.day === today)?.calls ?? 0
+}
+
+const budgetLeft = computed(() => (aiSettings.value ? aiSettings.value.dailyCallLimit - callsToday.value : null))
+
 async function analyze() {
   if (!s.value) return
   try {
     await ElMessageBox.confirm(
-      `对 ${s.value.symbol} ${s.value.tradeDate} 调用模型做第二意见：会计费，约 15~30 秒，计入每日上限；同一输入已有结论会直接复用。`,
+      `对 ${s.value.symbol} ${s.value.tradeDate} 调用模型做第二意见：会计费，约 15~30 秒，计入每日上限（今天已调用 ` +
+        `${callsToday.value} / ${aiSettings.value?.dailyCallLimit ?? '—'}）；同一输入已有结论会直接复用。` +
+        `事后的意见只供参考，不改信号状态，也不改账本的 AI 分组。`,
       '手工分析',
       { type: 'warning', confirmButtonText: '调用', cancelButtonText: '取消' },
     )
@@ -87,12 +110,14 @@ async function analyze() {
   }
   analyzing.value = true
   try {
-    ai.value = await aiApi.analyze(s.value.symbol, s.value.tradeDate)
-    if (ai.value.status !== 'OK') ElMessage.warning(`没有结论：${ai.value.error ?? ai.value.status}`)
+    const r = await aiApi.analyze(s.value.symbol, s.value.tradeDate)
+    if (r.status === 'OK') ai.value = r
+    else ElMessage.warning(`没有结论：${r.error ?? r.status}`)
   } catch (e) {
     ElMessage.error(errMsg(e))
   } finally {
     analyzing.value = false
+    if (!ai.value) await loadUsage().catch(() => {})
   }
 }
 </script>
@@ -135,12 +160,26 @@ async function analyze() {
         </el-card>
 
         <el-card shadow="never" header="AI 第二意见">
-          <AiOpinion v-if="ai" :analysis="ai" />
+          <template v-if="ai">
+            <el-alert v-if="ai.purpose === 'MANUAL' && s.status !== 'VETOED'" type="info" :closable="false" show-icon class="ai-note"
+                      :title="absent ? `评估作业当晚没有结论（${AI_STATUS_LABEL[absent.status]}）；下面是事后的手工分析，不影响信号状态与账本分组`
+                        : '下面是手工分析，不影响信号状态与账本分组'" />
+            <AiOpinion :analysis="ai" />
+          </template>
           <div v-else class="empty">
-            <span class="muted">
-              没有模型结论（补跑不调模型；实盘信号在评估作业里调用，未开启、失败或预算用尽时也没有）。
+            <span v-if="absent" class="muted">
+              评估作业当晚没有结论：{{ AI_STATUS_LABEL[absent.status] }}<template v-if="absent.error">——{{ absent.error }}</template>
             </span>
-            <el-button size="small" type="warning" plain :loading="analyzing" @click="analyze">手工分析（计费）</el-button>
+            <span v-else class="muted">
+              没有模型结论（补跑不调模型；实盘信号在评估作业里调用，未开启时也没有）。
+            </span>
+            <el-button size="small" type="warning" plain :loading="analyzing" :disabled="budgetLeft !== null && budgetLeft <= 0"
+                       @click="analyze">
+              手工分析（计费）
+            </el-button>
+            <span v-if="aiSettings" class="muted">
+              今天已调用 {{ callsToday }} / {{ aiSettings.dailyCallLimit }}<template v-if="budgetLeft !== null && budgetLeft <= 0">，额度用完，美东 0 点重置</template>
+            </span>
           </div>
         </el-card>
 
@@ -186,4 +225,5 @@ async function analyze() {
 .head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .spacer { flex: 1; }
 .empty { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.ai-note { margin-bottom: 8px; }
 </style>

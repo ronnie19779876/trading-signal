@@ -8,6 +8,7 @@ import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.signal.SentinelThresholds;
 import org.jdkxx.trader.storage.marketdata.InstrumentRow;
 import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
+import org.jdkxx.trader.storage.signal.AiAnalysisRepository;
 import org.jdkxx.trader.storage.signal.EntrySignalRepository;
 import org.jdkxx.trader.storage.signal.EntrySignalRow;
 import org.jdkxx.trader.storage.signal.SignalEvaluationRepository;
@@ -38,11 +39,13 @@ public class SignalFacade {
     private final InstrumentDirectory directory;
     private final TradingDayRepository days;
     private final SettledCutoff cutoff;
+    private final AiAnalysisRepository analyses;
     private final String version = SentinelThresholds.V1.version();
 
     public SignalFacade(JobService jobs, SignalEvaluationService evaluation, SentinelService sentinel,
                         SignalEvaluationRepository evaluations, EntrySignalRepository signals, SignalTrackRepository tracks,
-                        InstrumentDirectory directory, TradingDayRepository days, SettledCutoff cutoff) {
+                        InstrumentDirectory directory, TradingDayRepository days, SettledCutoff cutoff,
+                        AiAnalysisRepository analyses) {
         this.jobs = jobs;
         this.evaluation = evaluation;
         this.sentinel = sentinel;
@@ -52,6 +55,7 @@ public class SignalFacade {
         this.directory = directory;
         this.days = days;
         this.cutoff = cutoff;
+        this.analyses = analyses;
     }
 
     /** 提交评估作业。date 缺省取收盘落定日；晚于它 409、非交易日 400，都在提交前拦下。 */
@@ -154,10 +158,12 @@ public class SignalFacade {
         Map<Long, EntrySignalRow> signalById = new HashMap<>();
         signals.findAll(all.stream().map(SignalTrackRow::signalId).distinct().toList())
                 .forEach(s -> signalById.put(s.id(), s));
+        Map<Long, String> verdicts = analyses.verdicts(signalById.values().stream().map(EntrySignalRow::aiAnalysisId)
+                .filter(java.util.Objects::nonNull).distinct().toList());
         List<LedgerStats> stats = new ArrayList<>();
         Map<List<String>, List<SignalTrackRow>> grouped = all.stream().collect(Collectors.groupingBy(t -> {
             EntrySignalRow sig = signalById.get(t.signalId());
-            return List.of(t.variant(), sig.origin(), aiGroup(sig));
+            return List.of(t.variant(), sig.origin(), aiGroup(sig, verdicts));
         }, () -> new java.util.TreeMap<>(java.util.Comparator.comparing((List<String> k) -> String.join("|", k))), Collectors.toList()));
         grouped.forEach((key, rows) -> {
             List<SignalTrackRow> closed = rows.stream().filter(t -> "CLOSED".equals(t.status())).toList();
@@ -179,8 +185,15 @@ public class SignalFacade {
         return new Ledger(stats, diffs.size(), mean(diffs), entries);
     }
 
-    static String aiGroup(EntrySignalRow s) {
-        return "VETOED".equals(s.status()) ? "VETO" : s.aiAnalysisId() == null ? "NONE" : "ALLOW";
+    /**
+     * 按挂在信号上的那次分析的裁决分组。预算跳过、失败、拒答、截断也会写一行分析并挂到信号上（裁决 ABSENT），
+     * 3.0.0 只看 aiAnalysisId 是否为空，把它们全算成了 ALLOW——四巫日（2026-09-18）31 条无结论被算成放行。
+     */
+    static String aiGroup(EntrySignalRow s, Map<Long, String> verdicts) {
+        if ("VETOED".equals(s.status())) {
+            return "VETO";
+        }
+        return s.aiAnalysisId() != null && "ALLOW".equals(verdicts.get(s.aiAnalysisId())) ? "ALLOW" : "NONE";
     }
 
     private static int count(List<SignalTrackRow> rows, String status) {

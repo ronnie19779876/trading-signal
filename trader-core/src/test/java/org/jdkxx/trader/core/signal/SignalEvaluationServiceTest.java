@@ -128,6 +128,33 @@ class SignalEvaluationServiceTest {
         org.mockito.Mockito.verifyNoInteractions(ai);
     }
 
+    /**
+     * 守护：评估顺序就是 AI 额度的分配顺序（边评估边调模型，每日上限先到先得）。
+     * 持仓 → 池 → 池外，同一角色内按代码；基准不评估。3.0.0 按成分股的字母序发额度，四巫日持仓 IBKR 被预算跳过。
+     */
+    @Test
+    void 评估目标按持仓池池外排序且排除基准() {
+        org.jdkxx.trader.core.marketdata.universe.UniverseScope scope =
+                org.mockito.Mockito.mock(org.jdkxx.trader.core.marketdata.universe.UniverseScope.class);
+        // 成分股按代码返回（instrument 表 ORDER BY symbol），持仓 IBKR 与池成员 AMZN 夹在中间，基准 SPY 也混在里面
+        org.mockito.Mockito.when(scope.universe()).thenReturn(List.of(row(1, "AAA"), row(2, "AMZN"), row(3, "BBB"),
+                row(4, "IBKR"), row(5, "SPY"), row(6, "ZZZ")));
+        // 池与持仓（已去掉基准）：另有不在成分股里的池成员 TSM 与持仓 BRK.B
+        org.mockito.Mockito.when(scope.candidates()).thenReturn(List.of(row(2, "AMZN"), row(4, "IBKR"), row(7, "TSM"), row(8, "BRK.B")));
+        org.mockito.Mockito.when(scope.benchmarks()).thenReturn(List.of(row(5, "SPY"), row(9, "QQQ")));
+        org.mockito.Mockito.when(scope.roles()).thenReturn(java.util.Map.of(2L, PoolRole.POOL, 4L, PoolRole.HOLDING,
+                7L, PoolRole.POOL, 8L, PoolRole.HOLDING, 5L, PoolRole.BENCHMARK, 9L, PoolRole.BENCHMARK));
+        SignalEvaluationService svc = new SignalEvaluationService(scope, null, null, null, null, null, null, null, null, null, null);
+
+        assertThat(svc.targets().values()).extracting(org.jdkxx.trader.storage.marketdata.InstrumentRow::symbol)
+                .containsExactly("BRK.B", "IBKR", "AMZN", "TSM", "AAA", "BBB", "ZZZ");
+    }
+
+    private static org.jdkxx.trader.storage.marketdata.InstrumentRow row(long id, String symbol) {
+        return new org.jdkxx.trader.storage.marketdata.InstrumentRow(id, org.jdkxx.trader.domain.Market.US, symbol, symbol, null,
+                org.jdkxx.trader.domain.SecurityType.STOCK, 1, null, false, null, null, "RESOLVED");
+    }
+
     record Series(List<DailyBar> raw, List<LocalDate> days, LocalDate last) {
     }
 

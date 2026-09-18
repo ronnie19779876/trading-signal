@@ -10,7 +10,10 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
@@ -73,6 +76,19 @@ public class AiAnalysisRepository {
 
     public Optional<AiAnalysisRow> find(long id) {
         return jdbc.query(SELECT + " WHERE a.id = ?", MAPPER, id).stream().findFirst();
+    }
+
+    /** 一批分析的裁决（VETO / ALLOW / ABSENT），按 id。账本按模型裁决分组用，不取整行。 */
+    public Map<Long, String> verdicts(Collection<Long> ids) {
+        Map<Long, String> out = new HashMap<>();
+        if (ids.isEmpty()) {
+            return out;
+        }
+        jdbc.query("SELECT id, verdict FROM ai_analysis WHERE id = ANY (?)",
+                rs -> {
+                    out.put(rs.getLong("id"), rs.getString("verdict"));
+                }, (Object) ids.toArray(Long[]::new));
+        return out;
     }
 
     /** 按创建时间倒序；status / symbol 可空。 */
