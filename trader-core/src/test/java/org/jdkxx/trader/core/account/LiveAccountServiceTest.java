@@ -103,7 +103,7 @@ class LiveAccountServiceTest {
         service.onPositions(List.of(pos("208813720", "GOOG", "62", "346.81"), pos("424099317", "SGOV", "2366", "100.67")));
         service.onPositionPnl(single("208813720", "62", "45.26", "-148.58", "21353.42"));   // 21353.42 / 62 = 344.41
         service.onPositionPnl(single("424099317", "2366", "82.81", "-177.45", "237994.94"));
-        service.onPositionPrice(new PositionPrice(Broker.IBKR, "208813720", T, new BigDecimal("346.08"), false));
+        service.onPositionPrice(new PositionPrice(Broker.IBKR, "208813720", T, new BigDecimal("346.08"), null, false));
 
         LiveAccountService.LiveView v = service.snapshotView();
         assertThat(v.status()).isEqualTo(LiveAccountService.Status.LIVE);
@@ -135,7 +135,7 @@ class LiveAccountServiceTest {
         service.onSummary(summary());
         service.onPositions(List.of(pos("756733", "SPY", "210", "668.43")));
         service.onPositionPnl(single("756733", "210", "476.45", "19656.12", "160225.80"));
-        service.onPositionPrice(new PositionPrice(Broker.IBKR, "756733", T, new BigDecimal("762.98"), false));
+        service.onPositionPrice(new PositionPrice(Broker.IBKR, "756733", T, new BigDecimal("762.98"), null, false));
         service.onPositions(List.of());
         service.onPositions(List.of(pos("756733", "SPY", "10", "700")));   // 又买回来：旧的市值与现价不能沿用
 
@@ -166,5 +166,38 @@ class LiveAccountServiceTest {
         assertThat(v.status()).isEqualTo(LiveAccountService.Status.UNAVAILABLE);
         assertThat(v.detail()).contains("未连接");
         verify(live, never()).startLive(any(), any());
+    }
+
+    /**
+     * 守护：与盈透 App 同口径的派生项，数字取自 2026-09-19 用户给的 GOOG 截图——
+     * 涨跌 +2.40 / +0.70%、Cost Basis 21,502、% of Portfolio 4.20%，盈透原值 Today 45.26、Unrealized -148.58。
+     */
+    @Test
+    void 派生项与盈透App截图一致() {
+        service.onSummary(summary());   // 净值 508,769.74
+        service.onPositions(List.of(pos("208813720", "GOOG", "62", "346.80645485")));
+        service.onPositionPnl(single("208813720", "62", "45.26", "-148.58", "21353.42"));
+        service.onPositionPrice(new PositionPrice(Broker.IBKR, "208813720", T, new BigDecimal("346.082"), new BigDecimal("343.68"), false));
+
+        LiveAccountService.LivePosition g = service.snapshotView().positions().get(0);
+        assertThat(g.change()).isEqualByComparingTo("2.40");
+        assertThat(g.changePct()).isEqualByComparingTo("0.70");
+        assertThat(g.costBasis()).isEqualByComparingTo("21502.00");
+        assertThat(g.portfolioPct()).isEqualByComparingTo("4.20");
+        assertThat(g.dailyPnl()).isEqualByComparingTo("45.26");
+        assertThat(g.unrealizedPnl()).isEqualByComparingTo("-148.58");
+    }
+
+    /** 前收还没到时涨跌为空，不拿别的数凑。 */
+    @Test
+    void 前收没到时涨跌为空() {
+        service.onSummary(summary());
+        service.onPositions(List.of(pos("208813720", "GOOG", "62", "346.80645485")));
+        service.onPositionPrice(new PositionPrice(Broker.IBKR, "208813720", T, new BigDecimal("346.082"), null, false));
+
+        LiveAccountService.LivePosition g = service.snapshotView().positions().get(0);
+        assertThat(g.change()).isNull();
+        assertThat(g.changePct()).isNull();
+        assertThat(g.portfolioPct()).isNull();   // 市值（逐只盈亏）也还没到
     }
 }

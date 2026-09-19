@@ -137,8 +137,15 @@ export interface LivePosition {
   currency: string | null
   quantity: number
   averageCost: number | null
+  /** 成本（App 的 Cost Basis）= 成本价 × 数量 */
+  costBasis: number | null
   /** 盈透行情最新价（与 App「最新价」同源）；行情还没到时为 null */
   last: number | null
+  /** 盈透行情前收（与 App「PRIOR CLOSE」同值） */
+  priorClose: number | null
+  /** 涨跌 = 最新价 − 前收；涨跌 % 两位小数（与 App 同口径） */
+  change: number | null
+  changePct: number | null
   lastAt: string | null
   /** true = 盈透降级成了延迟行情 */
   lastDelayed: boolean
@@ -146,6 +153,8 @@ export interface LivePosition {
   marketValue: number | null
   dailyPnl: number | null
   unrealizedPnl: number | null
+  /** 占组合（App 的 % of Portfolio）= 市值 ÷ 净值 × 100 */
+  portfolioPct: number | null
   cashEquivalent: boolean
   updatedAt: string | null
 }

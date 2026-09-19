@@ -145,7 +145,8 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 - `accountMask`、`currency`、`startedAt`（本次订阅开始时间）、`lastError`（订阅被券商拒绝时的说明，例如账户汇总超出每客户端 2 个的上限 322）。
 - `money`：盈透账户汇总——`netLiquidation`（净值）、`totalCash`、`availableFunds`、`buyingPower`、`excessLiquidity`、`grossPositionValue`、`stockMarketValue`、`accruedDividend`、`updatedAt`。**约 3 分钟才推一次**（实测），可能比盈透 App 晚几分钟。
 - `pnl`：盈透账户盈亏 `daily`（当日）、`unrealized`（浮动）、`realized`（当日已实现）、`updatedAt`；按变化秒级推送，盘前盘后盈透用扩展时段价重算。**还没收到有效推送时整个为 null**（首条推送不对、被丢弃；10 秒没有有效值网关会重订，最多 3 次）。
-- `positions[]`：`symbol`（类别股已换成点，如 `BRK.B`）、`conId`、`securityType`、`quantity`、`averageCost`；`last` / `lastAt` / `lastDelayed` 为盈透行情最新价（与 App「最新价」同源，行情未到时为 null，`lastDelayed=true` 表示降级成延迟行情）；
+- `positions[]`：`symbol`（类别股已换成点，如 `BRK.B`）、`conId`、`securityType`、`quantity`、`averageCost`；`last` / `lastAt` / `lastDelayed` 为盈透行情最新价（与 App「最新价」同源，行情未到时为 null，`lastDelayed=true` 表示降级成延迟行情）；`priorClose` 为行情前收（与 App「PRIOR CLOSE」同值）；
+  与 App 同口径的派生项（3.0.4）：`change` = last − priorClose、`changePct`、`costBasis` = averageCost × quantity（App 的 Cost Basis）、`portfolioPct` = marketValue ÷ money.netLiquidation × 100（App 的 % of Portfolio），缺输入时为 null，均两位小数；
   `marketValue`、`dailyPnl`、`unrealizedPnl`、`updatedAt` 来自盈透逐只盈亏。盈透的市值按它自己的估值价算，**不一定等于 last × quantity**（实测 GOOG 估值 344.41、最新价 346.08）。
   `cashEquivalent`；`positionsUpdatedAt` 为持仓列表最近一次变化。金额保留两位小数（格式化，不是计算）。
 

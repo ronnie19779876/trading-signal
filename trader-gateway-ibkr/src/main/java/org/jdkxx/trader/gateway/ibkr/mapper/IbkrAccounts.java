@@ -70,23 +70,28 @@ public final class IbkrAccounts {
     public record MarketDataTypeRow(int type) {
     }
 
-    /** 最新价的 tick 类型：LAST = 4，延迟行情下是 DELAYED_LAST = 68。 */
+    /** 最新价的 tick 类型：LAST = 4，延迟行情下是 DELAYED_LAST = 68；前收：CLOSE = 9，延迟下 DELAYED_CLOSE = 75。 */
     public static final int TICK_LAST = 4;
     public static final int TICK_DELAYED_LAST = 68;
+    public static final int TICK_CLOSE = 9;
+    public static final int TICK_DELAYED_CLOSE = 75;
 
     private IbkrAccounts() {
     }
 
-    /** 最新价；不是最新价的 tick、或价格无效（收盘后买卖价为 -1，实测）时返回 null。 */
-    public static PositionPrice lastPrice(String conId, TickRow r, boolean delayed, Instant receivedAt) {
-        if (r.field() != TICK_LAST && r.field() != TICK_DELAYED_LAST) {
-            return null;
-        }
-        BigDecimal price = amount(r.price());
-        if (price == null || price.signum() <= 0) {
-            return null;
-        }
-        return new PositionPrice(Broker.IBKR, conId, receivedAt, price, delayed || r.field() == TICK_DELAYED_LAST);
+    /** 这条 tick 是不是最新价 / 前收。 */
+    public static boolean isLast(int field) {
+        return field == TICK_LAST || field == TICK_DELAYED_LAST;
+    }
+
+    public static boolean isClose(int field) {
+        return field == TICK_CLOSE || field == TICK_DELAYED_CLOSE;
+    }
+
+    /** 有效价格；收盘后买卖价为 -1（实测）等无效值返回 null。 */
+    public static BigDecimal price(double v) {
+        BigDecimal p = amount(v);
+        return p == null || p.signum() <= 0 ? null : p;
     }
 
     public static AccountPnl pnl(PnlRow r, Instant receivedAt) {

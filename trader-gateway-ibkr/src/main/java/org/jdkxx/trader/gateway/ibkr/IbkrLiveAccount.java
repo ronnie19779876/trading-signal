@@ -27,10 +27,13 @@ import java.util.function.Consumer;
  * <p>实测依据（2026-09-19 只读探针）：
  * <ul>
  *   <li>账户汇总首批约 0.3 秒回齐，之后<b>逐条</b>推送、不再有 End，约 3 分钟一批 → 逐条攒起来、静默 {@value #SUMMARY_DEBOUNCE_MS} ms 后发一次；</li>
- *   <li>reqPnL <b>首条不对</b>（新会话只含一只持仓；同一会话退订再订给出的也不对），约 1 秒后第二条才对 → 丢掉首条。
- *       但第二条不一定来：生产 09-18 20:37 订上后 20 分钟没再推（盘后结束、价格静止）→ {@value #PNL_WATCHDOG_SECONDS} 秒还没有有效值就重订，
- *       最多 {@value #PNL_MAX_RETRIES} 次（重订时逐只盈亏已在跑，探针里第二条 1 秒就到）；</li>
- *   <li>持仓标的行情（reqMktData）取 lastPrice：账户有实时权限；收盘后买卖价为 -1；最新价不等于"市值 ÷ 数量"（GOOG 346.08 对 344.41）；</li>
+ *   <li>reqPnL 的推送<b>对不对不能按第几条判断</b>（09-19 三次实测）：刚连上时首条只含一只持仓、1 秒后第二条才对；
+ *       逐只盈亏订上十几秒内退订再订，首条也是错的；逐只盈亏稳定运行后再订，<b>只推一条而且是对的</b>，价格静止时不再有第二条。
+ *       对的推送与逐只当日 / 浮盈之和精确相等，错的差得很远 → <b>用逐只之和核对</b>：对得上才采用（只用来判断完整与否，显示的仍是 reqPnL 原值），
+ *       采用过一次后后续推送直接放行；逐只还没到齐的先挂起，到齐再核。{@value #PNL_WATCHDOG_SECONDS} 秒还没有通过核对的就重订，
+ *       最多 {@value #PNL_MAX_RETRIES} 次；</li>
+ *   <li>持仓标的行情（reqMktData）取 lastPrice 与前收（CLOSE）：账户有实时权限；收盘后买卖价为 -1；最新价不等于"市值 ÷ 数量"（GOOG 346.08 对 344.41）；
+ *       与盈透 App 截图对照（09-19）：最新价 346.08、前收 343.68 一致；</li>
  *   <li>持仓 End 之后成交会再推变动行，数量为 0 表示清仓 → 维护完整列表，每次变动发一次全量，并同步逐只盈亏的订阅。</li>
  * </ul>
  * 1101（连接恢复、订阅数据丢失）时会话不变，旧订阅还挂在网关上：先取消再重订，否则账户汇总会撞上每客户端 2 个的上限（322）。
@@ -41,6 +44,8 @@ final class IbkrLiveAccount {
     static final long SUMMARY_DEBOUNCE_MS = 300;
     static final long PNL_WATCHDOG_SECONDS = 10;
     static final int PNL_MAX_RETRIES = 3;
+    /** 核对容差：对的推送实测与逐只之和精确相等，错的差几十到上千；留一点余量给盘中两边不在同一时刻的抖动。 */
+    static final double PNL_TOLERANCE = 1.0;
 
     /** 与连接之间的接缝：生产用 {@link IbkrConnection}，单测用替身。 */
     interface Wire {
@@ -77,13 +82,18 @@ final class IbkrLiveAccount {
     private final Map<String, Sub> singles = new LinkedHashMap<>();
     private final Map<String, Sub> quotes = new LinkedHashMap<>();
     private final Map<String, Boolean> delayed = new LinkedHashMap<>();
+    /** 每只持仓最近收到的最新价与前收：两者分两条 tick 到，合在一起发。 */
+    private final Map<String, java.math.BigDecimal[]> lastAndClose = new LinkedHashMap<>();
 
     private final Map<String, IbkrAccounts.PositionRow> positions = new LinkedHashMap<>();
     private boolean positionsReady;
     private final Map<String, IbkrAccounts.SummaryRow> summaryRows = new LinkedHashMap<>();
     private Runnable summaryFlush;
-    private boolean pnlFirstSeen;
     private boolean pnlValid;
+    /** 还没通过核对的最近一条账户盈亏推送 */
+    private IbkrAccounts.PnlRow pnlPending;
+    /** 每只持仓最近一次逐只盈亏：核对账户盈亏用 */
+    private final Map<String, IbkrAccounts.PnlSingleRow> singleRows = new LinkedHashMap<>();
     private int pnlRetries;
     private Runnable pnlWatchdog;
 
@@ -111,8 +121,8 @@ final class IbkrLiveAccount {
         }
         bound = current;
         positionsReady = false;
-        pnlFirstSeen = false;
         pnlValid = false;
+        pnlPending = null;
         pnlRetries = 0;
 
         positionsSub = open("实时持仓", positionsHandler(),
@@ -130,7 +140,7 @@ final class IbkrLiveAccount {
     }
 
     private Sub openPnl() {
-        pnlFirstSeen = false;
+        pnlPending = null;
         return open("实时账户盈亏", pnlHandler(), id -> c -> c.reqPnL(id, accountId, ""), id -> c -> c.cancelPnL(id));
     }
 
@@ -222,6 +232,9 @@ final class IbkrLiveAccount {
         singles.clear();
         quotes.clear();
         delayed.clear();
+        lastAndClose.clear();
+        singleRows.clear();
+        pnlPending = null;
         if (pnlWatchdog != null) {
             pnlWatchdog.run();   // 取消
             pnlWatchdog = null;
@@ -288,12 +301,14 @@ final class IbkrLiveAccount {
         for (String conId : new ArrayList<>(singles.keySet())) {
             if (!positions.containsKey(conId)) {
                 cancel(singles.remove(conId));
+                singleRows.remove(conId);
             }
         }
         for (String conId : new ArrayList<>(quotes.keySet())) {
             if (!positions.containsKey(conId)) {
                 cancel(quotes.remove(conId));
                 delayed.remove(conId);
+                lastAndClose.remove(conId);
             }
         }
         for (Map.Entry<String, IbkrAccounts.PositionRow> e : positions.entrySet()) {
@@ -329,10 +344,20 @@ final class IbkrLiveAccount {
                 if (item instanceof IbkrAccounts.MarketDataTypeRow t) {
                     delayed.put(conId, t.type() == 3 || t.type() == 4);
                 } else if (item instanceof IbkrAccounts.TickRow t) {
-                    var p = IbkrAccounts.lastPrice(conId, t, delayed.getOrDefault(conId, false), wire.now());
-                    if (p != null) {
-                        listener.onPositionPrice(p);
+                    boolean last = IbkrAccounts.isLast(t.field());
+                    if (!last && !IbkrAccounts.isClose(t.field())) {
+                        return;   // 买卖价、开高低等不关心
                     }
+                    java.math.BigDecimal price = IbkrAccounts.price(t.price());
+                    if (price == null) {
+                        return;
+                    }
+                    java.math.BigDecimal[] lc = lastAndClose.computeIfAbsent(conId, k -> new java.math.BigDecimal[2]);
+                    lc[last ? 0 : 1] = price;
+                    boolean isDelayed = delayed.getOrDefault(conId, false)
+                            || t.field() == IbkrAccounts.TICK_DELAYED_LAST || t.field() == IbkrAccounts.TICK_DELAYED_CLOSE;
+                    listener.onPositionPrice(new org.jdkxx.trader.domain.PositionPrice(org.jdkxx.trader.domain.Broker.IBKR,
+                            conId, wire.now(), lc[0], lc[1], isDelayed));
                 }
             }
 
@@ -347,7 +372,12 @@ final class IbkrLiveAccount {
         return new IbkrSubscriptions.Handler() {
             @Override
             public void item(Object item) {
-                listener.onPositionPnl(IbkrAccounts.positionPnl(conId, (IbkrAccounts.PnlSingleRow) item, wire.now()));
+                IbkrAccounts.PnlSingleRow row = (IbkrAccounts.PnlSingleRow) item;
+                singleRows.put(conId, row);
+                listener.onPositionPnl(IbkrAccounts.positionPnl(conId, row, wire.now()));
+                if (!pnlValid && pnlPending != null) {
+                    verifyPnl();   // 账户盈亏先到、逐只后到：到齐了再核
+                }
             }
 
             @Override
@@ -407,12 +437,13 @@ final class IbkrLiveAccount {
         return new IbkrSubscriptions.Handler() {
             @Override
             public void item(Object item) {
-                if (!pnlFirstSeen) {
-                    pnlFirstSeen = true;   // 首条不对（实测只含一只持仓，或给出一个错的数），丢掉
+                IbkrAccounts.PnlRow row = (IbkrAccounts.PnlRow) item;
+                if (pnlValid) {
+                    listener.onPnl(IbkrAccounts.pnl(row, wire.now()));
                     return;
                 }
-                pnlValid = true;
-                listener.onPnl(IbkrAccounts.pnl((IbkrAccounts.PnlRow) item, wire.now()));
+                pnlPending = row;
+                verifyPnl();
             }
 
             @Override
@@ -420,6 +451,32 @@ final class IbkrLiveAccount {
                 listener.onLiveError("实时账户盈亏", e);
             }
         };
+    }
+
+    /**
+     * 核对挂起的账户盈亏：逐只盈亏覆盖了全部持仓、且当日与浮盈之和都对得上（容差 {@value #PNL_TOLERANCE}）才采用。
+     * 逐只之和只用来判断这条推送完整与否，发出去的仍是账户盈亏的原值。
+     */
+    private void verifyPnl() {
+        IbkrAccounts.PnlRow row = pnlPending;
+        if (row == null || !positionsReady || !singleRows.keySet().containsAll(positions.keySet())) {
+            return;
+        }
+        double daily = 0;
+        double unreal = 0;
+        for (String conId : positions.keySet()) {
+            IbkrAccounts.PnlSingleRow r = singleRows.get(conId);
+            if (IbkrAccounts.amount(r.daily()) == null || IbkrAccounts.amount(r.unrealized()) == null) {
+                return;
+            }
+            daily += r.daily();
+            unreal += r.unrealized();
+        }
+        if (Math.abs(row.daily() - daily) <= PNL_TOLERANCE && Math.abs(row.unrealized() - unreal) <= PNL_TOLERANCE) {
+            pnlValid = true;
+            pnlPending = null;
+            listener.onPnl(IbkrAccounts.pnl(row, wire.now()));
+        }
     }
 
     @Override

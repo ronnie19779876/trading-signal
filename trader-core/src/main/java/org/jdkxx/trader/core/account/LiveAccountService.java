@@ -32,9 +32,11 @@ import java.util.stream.Collectors;
 /**
  * 实时账户（3.0.2 起）：按需订阅盈透的资金、盈亏、持仓与持仓标的行情，给仪表盘读。只在内存里，不落库、不进快照。
  *
- * <p><b>只给盈透原值，不做任何折算</b>（2026-09-19 用户要求：与盈透 App 一致，不因计算产生误解）：
- * 净值、现金等取账户汇总（约 3 分钟一推），当日 / 浮动 / 已实现盈亏取账户盈亏，逐只市值与盈亏取逐只盈亏，
- * 现价取行情最新价。金额只保留到分（盈透推的是 double，带浮点尾巴），这是格式化，不是计算。
+ * <p><b>与盈透 App 一致</b>（2026-09-19 用户要求，并对照 App 截图逐项核过）：净值、现金等取账户汇总（约 3 分钟一推），
+ * 当日 / 浮动 / 已实现盈亏取账户盈亏，逐只市值与盈亏取逐只盈亏，现价与前收取行情。不用本系统的估算替代盈透的数。
+ * App 界面上另有三项是它自己用盈透原值算的，这里按同一口径给出：涨跌（最新价 − 前收）与涨跌 %、
+ * 成本（Cost Basis = 成本价 × 数量）、占组合（% of Portfolio = 市值 ÷ 净值）——对照截图 GOOG 分别为
+ * +2.40 / +0.70%、21,502、4.20%，逐一相等。金额与百分比保留两位（盈透推的是 double，带浮点尾巴）。
  *
  * <p><b>按需</b>：有人来读才订阅，{@value #IDLE_MINUTES} 分钟没人读就退订——这个网关同时在给真正下单的系统服务，能少占就少占。
  * 刚订上的几秒里数据陆续到齐，状态是 WARMING。
@@ -68,13 +70,16 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
     }
 
     /**
-     * 持仓一行，全是盈透原值：数量与成本来自持仓，市值 / 当日 / 浮盈来自逐只盈亏（updatedAt），
-     * 最新价来自行情（lastAt；lastDelayed 表示降级成了延迟行情）。
+     * 持仓一行。盈透原值：数量与成本价来自持仓，市值 / 当日 / 浮盈来自逐只盈亏（updatedAt），
+     * 最新价与前收来自行情（lastAt；lastDelayed 表示降级成了延迟行情）。
+     * 与 App 同口径的派生项：change / changePct（最新价 − 前收）、costBasis（成本价 × 数量）、portfolioPct（市值 ÷ 净值 × 100），
+     * 缺任一输入时为 null。
      */
     public record LivePosition(String symbol, String conId, String securityType, String currency, BigDecimal quantity,
-                               BigDecimal averageCost, BigDecimal last, Instant lastAt, boolean lastDelayed,
-                               BigDecimal marketValue, BigDecimal dailyPnl, BigDecimal unrealizedPnl, boolean cashEquivalent,
-                               Instant updatedAt) {
+                               BigDecimal averageCost, BigDecimal costBasis, BigDecimal last, BigDecimal priorClose,
+                               BigDecimal change, BigDecimal changePct, Instant lastAt, boolean lastDelayed,
+                               BigDecimal marketValue, BigDecimal dailyPnl, BigDecimal unrealizedPnl, BigDecimal portfolioPct,
+                               boolean cashEquivalent, Instant updatedAt) {
     }
 
     public record LiveView(Status status, String detail, String accountMask, String currency, Instant startedAt,
@@ -187,24 +192,36 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
             case WARMING -> "刚订阅，数据陆续到齐（通常 2 秒内）";
             default -> null;
         };
-        List<LivePosition> rows = ps == null ? List.of() : positionRows(ps);
+        List<LivePosition> rows = ps == null ? List.of() : positionRows(ps, s == null ? null : s.netLiquidation());
         return new LiveView(status, detail, accountId == null ? null : AccountKeys.mask(accountId),
                 s == null ? null : s.currency(), startedAt, money(s), pnl(p), rows, positionsAt, lastError);
     }
 
-    private List<LivePosition> positionRows(List<Position> ps) {
+    private List<LivePosition> positionRows(List<Position> ps, BigDecimal netLiquidation) {
         Set<String> cash = props.cashEquivalents().stream().map(AccountPositions::normalize).collect(Collectors.toSet());
         List<LivePosition> out = new ArrayList<>();
         for (Position q : ps) {
             PositionPnl v = singles.get(q.brokerRef());
             PositionPrice px = prices.get(q.brokerRef());
             String symbol = AccountPositions.normalize(q.symbol());
+            BigDecimal last = px == null ? null : px.last();
+            BigDecimal prior = px == null ? null : px.priorClose();
+            BigDecimal value = v == null ? null : cents(v.marketValue());
+            BigDecimal change = last == null || prior == null ? null : last.subtract(prior);
             out.add(new LivePosition(symbol, q.brokerRef(), q.securityType(), q.currency(), q.quantity(), q.averageCost(),
-                    px == null ? null : px.last(), px == null ? null : px.receivedAt(), px != null && px.delayed(),
-                    v == null ? null : cents(v.marketValue()), v == null ? null : cents(v.daily()),
-                    v == null ? null : cents(v.unrealized()), cash.contains(symbol), v == null ? null : v.receivedAt()));
+                    q.averageCost() == null ? null : cents(q.averageCost().multiply(q.quantity())),
+                    last, prior, cents(change), change == null ? null : percent(change, prior),
+                    px == null ? null : px.receivedAt(), px != null && px.delayed(),
+                    value, v == null ? null : cents(v.daily()), v == null ? null : cents(v.unrealized()),
+                    value == null || netLiquidation == null ? null : percent(value, netLiquidation),
+                    cash.contains(symbol), v == null ? null : v.receivedAt()));
         }
         return out;
+    }
+
+    /** part ÷ whole × 100，两位小数；分母为 0 时为 null。 */
+    static BigDecimal percent(BigDecimal part, BigDecimal whole) {
+        return whole.signum() == 0 ? null : part.multiply(BigDecimal.valueOf(100)).divide(whole, 2, RoundingMode.HALF_UP);
     }
 
     /** 盈透推送的是 double，转成 BigDecimal 会带出浮点尾巴（238007.7728881836）；金额只留到分。格式化，不是计算。 */

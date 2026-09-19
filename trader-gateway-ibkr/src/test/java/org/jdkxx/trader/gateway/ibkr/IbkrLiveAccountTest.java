@@ -106,15 +106,57 @@ class IbkrLiveAccountTest {
         return new IbkrAccounts.PositionRow(ACCT, c, Decimal.get(qty), 100.0);
     }
 
-    /** 守护：reqPnL 首条不完整（实测只含一只持仓），必须丢掉，否则当日盈亏开头会闪一个错的数。 */
-    @Test
-    void 账户盈亏首条丢弃() {
-        live.subscribe();
-        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(26.67, 184.65, 0));
-        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(946.95, 22359.71, 0));
+    // 两只持仓：positions.end() 后依次开 IBKR 逐只 103、IBKR 行情 104、SPY 逐只 105、SPY 行情 106
+    private static final int SINGLE_IBKR = 103, SINGLE_SPY = 105;
 
+    /** 持仓到齐（IBKR + SPY），逐只盈亏：当日之和 915.99、浮盈之和 22,328.76（09-19 生产账户的数拆成两只）。 */
+    private void positionsAndSingles(boolean withSingles) {
+        live.subscribe();
+        wire.handlers.get(POS).item(pos(43645865, "IBKR", 11.1142));
+        wire.handlers.get(POS).item(pos(756733, "SPY", 210));
+        wire.handlers.get(POS).end();
+        if (withSingles) {
+            wire.handlers.get(SINGLE_IBKR).item(new IbkrAccounts.PnlSingleRow(Decimal.get(11.1142), 25.67, 183.65, Double.MAX_VALUE, 1007.95));
+            wire.handlers.get(SINGLE_SPY).item(new IbkrAccounts.PnlSingleRow(Decimal.get(210), 890.32, 22145.11, Double.MAX_VALUE, 160225.80));
+        }
+    }
+
+    /** 守护：刚连上时账户盈亏首条只含一只持仓（25.67），与逐只之和对不上，不采用；随后对得上的那条采用。 */
+    @Test
+    void 与逐只之和对不上的账户盈亏不采用() {
+        positionsAndSingles(true);
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(25.67, 183.65, 0));
+        assertThat(rec.pnls).isEmpty();
+
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(915.99, 22328.76, 0));
+        assertThat(rec.pnls).extracting(x -> x.daily().toPlainString()).containsExactly("915.99");
+    }
+
+    /**
+     * 守护：逐只盈亏稳定运行后再订，账户盈亏只推一条而且是对的、价格静止时不再有第二条（09-19 实测）——
+     * 这一条必须采用。3.0.3 一律丢首条，结果当日盈亏一直"等待盈透推送"。
+     */
+    @Test
+    void 唯一一条正确推送直接采用() {
+        positionsAndSingles(true);
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(915.99, 22328.76, 0));
         assertThat(rec.pnls).hasSize(1);
-        assertThat(rec.pnls.get(0).daily()).isEqualByComparingTo("946.95");
+    }
+
+    /** 账户盈亏先到、逐只后到：先挂起，逐只到齐后核对通过再发；采用过一次后后续推送直接放行。 */
+    @Test
+    void 账户盈亏先到时等逐只到齐再核() {
+        positionsAndSingles(false);
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(915.99, 22328.76, 0));
+        assertThat(rec.pnls).isEmpty();
+
+        wire.handlers.get(SINGLE_IBKR).item(new IbkrAccounts.PnlSingleRow(Decimal.get(11.1142), 25.67, 183.65, Double.MAX_VALUE, 1007.95));
+        assertThat(rec.pnls).isEmpty();   // 还缺 SPY
+        wire.handlers.get(SINGLE_SPY).item(new IbkrAccounts.PnlSingleRow(Decimal.get(210), 890.32, 22145.11, Double.MAX_VALUE, 160225.80));
+        assertThat(rec.pnls).hasSize(1);
+
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(920.00, 22332.77, 0));   // 盘中变了：已通过核对，直接放行
+        assertThat(rec.pnls).hasSize(2);
     }
 
     /** 守护：逐只盈亏跟着持仓走——End 后按持仓逐只订，清仓（数量 0）的退订并从列表里拿掉。 */
@@ -223,40 +265,44 @@ class IbkrLiveAccountTest {
         assertThat(live.quoteCount()).isZero();
     }
 
-    /** 现价只认最新价（LAST / 延迟 LAST），收盘后的 -1 买卖价与其他 tick 不当现价；延迟行情要标出来。 */
+    /** 只收最新价（LAST）与前收（CLOSE），收盘后的 -1 买卖价与其他 tick 忽略；两者合在一起发；延迟行情要标出来。 */
     @Test
-    void 现价只取最新价() {
+    void 现价只取最新价与前收() {
         live.subscribe();
         wire.handlers.get(POS).item(pos(208813720, "GOOG", 62));
         wire.handlers.get(POS).end();
         IbkrSubscriptions.Handler quote = wire.handlers.entrySet().stream()
                 .filter(e -> e.getKey() > PNL).reduce((a, b) -> b).orElseThrow().getValue();   // 最后开的是行情
 
-        quote.item(new IbkrAccounts.TickRow(1, -1.0));      // 收盘后买价 -1
-        quote.item(new IbkrAccounts.TickRow(9, 343.68));    // 昨收，不是最新价
+        quote.item(new IbkrAccounts.TickRow(1, -1.0));      // 收盘后买价 -1：忽略
+        quote.item(new IbkrAccounts.TickRow(14, 351.35));   // 开盘价：不关心
+        quote.item(new IbkrAccounts.TickRow(9, 343.68));    // 前收
         quote.item(new IbkrAccounts.TickRow(4, 346.08));    // 最新价
-        assertThat(rec.prices).hasSize(1);
-        assertThat(rec.prices.get(0).last()).isEqualByComparingTo("346.08");
-        assertThat(rec.prices.get(0).delayed()).isFalse();
+        assertThat(rec.prices).hasSize(2);
+        assertThat(rec.prices.get(0).last()).isNull();
+        assertThat(rec.prices.get(0).priorClose()).isEqualByComparingTo("343.68");
+        assertThat(rec.prices.get(1).last()).isEqualByComparingTo("346.08");
+        assertThat(rec.prices.get(1).priorClose()).isEqualByComparingTo("343.68");
+        assertThat(rec.prices.get(1).delayed()).isFalse();
 
         quote.item(new IbkrAccounts.MarketDataTypeRow(3));   // 降级成延迟行情
         quote.item(new IbkrAccounts.TickRow(68, 346.10));
-        assertThat(rec.prices.get(1).delayed()).isTrue();
+        assertThat(rec.prices.get(2).delayed()).isTrue();
     }
 
-    /** 守护：账户盈亏首条丢掉后第二条迟迟不来（生产 09-18 实测 20 分钟），10 秒后重订；收到有效值就不再重订。 */
+    /** 守护：一直没有通过核对的推送（只来了错的那条、第二条不来）：10 秒后重订；通过核对后不再重订。 */
     @Test
     void 账户盈亏没有有效值时重订() {
-        live.subscribe();
-        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(25.67, 183.65, 0));   // 首条，丢掉
+        positionsAndSingles(true);
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(25.67, 183.65, 0));   // 错的，不采用
         assertThat(rec.pnls).isEmpty();
 
         wire.fire(WATCHDOG);
         verify(wire.client).cancelPnL(PNL);
         int second = wire.handlers.keySet().stream().max(Integer::compare).orElseThrow();
-        wire.handlers.get(second).item(new IbkrAccounts.PnlRow(991.93, 23308.54, 0));   // 重订后的首条也不对，照丢
+        wire.handlers.get(second).item(new IbkrAccounts.PnlRow(991.93, 23308.54, 0));   // 重订后的首条也可能是错的
         wire.handlers.get(second).item(new IbkrAccounts.PnlRow(915.99, 22328.76, 0));
-        assertThat(rec.pnls).extracting(p -> p.daily().toPlainString()).containsExactly("915.99");
+        assertThat(rec.pnls).extracting(x -> x.daily().toPlainString()).containsExactly("915.99");
 
         wire.fire(WATCHDOG);   // 已有有效值：不再重订
         verify(wire.client, org.mockito.Mockito.times(1)).cancelPnL(anyInt());

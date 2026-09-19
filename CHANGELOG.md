@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 3.0.4（未发布）
+
+- 仪表盘持仓表与盈透 App 对齐（对照 App 截图逐项核过，见 ARCHITECTURE §20.6）：加回涨跌（最新价 − 前收，前收取盈透行情）与涨跌 %、成本（Cost Basis）、占组合（% of Portfolio），
+  按 App 同口径计算；最新价显示两位小数。`/api/account/live` 的 `positions[]` 新增 `priorClose`、`change`、`changePct`、`costBasis`、`portfolioPct`。
+- 不切换 reqAccountUpdates：实测不比账户汇总快，且持仓市值与 App 对不上。
+- 修复：当日盈亏可能一直显示"等待盈透推送"。3.0.3 一律丢弃 reqPnL 首条，而逐只盈亏稳定后再订时 reqPnL 只推一条且是对的；
+  改为用盈透逐只当日 / 浮盈之和核对推送是否完整，对得上即采用（显示仍是 reqPnL 原值）。
+
 ## 3.0.3（2026-09-19 发布）
 
 - 实时账户**只给盈透原值、不做折算**（用户核对后要求与盈透 App 一致），见 ARCHITECTURE §20.5：净值取盈透 NetLiquidation（去掉估算）；
