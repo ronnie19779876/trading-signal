@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { ValuationSnapshot } from '../../api/fundamentals'
 import type { InstrumentView } from '../../api/marketdata'
 import { big, negative, numMax } from '../../lib/format'
@@ -7,7 +7,7 @@ import { sectorCn } from '../../lib/sector'
 
 /**
  * 全市场估值筛选表：某一天全部标的的估值（/api/fundamentals/valuations），名称、行业、指数、池角色从标的列表合并。
- * 全是券商原值：亏损股的市盈率为负是真实数据，照常显示、排序时按数值排。
+ * 全是券商原值：亏损股的市盈率为负是真实数据，照常显示、排序时按数值排。分页显示，筛选与排序作用于全部标的。
  */
 const props = defineProps<{
   date: string | null
@@ -66,6 +66,12 @@ const filtered = computed(() => {
     return dir * (x - y)
   })
 })
+
+// ---- 分页：默认每页 20 只；筛选或排序一变回到第 1 页 ----
+const page = ref(1)
+const pageSize = ref(20)
+const paged = computed(() => filtered.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
+watch([scope, sector, keyword, sortKey, sortDesc, pageSize], () => (page.value = 1))
 
 function sortBy(key: SortKey) {
   if (sortKey.value === key) sortDesc.value = !sortDesc.value
@@ -127,7 +133,7 @@ function cell(key: SortKey, v: ValuationSnapshot): string {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="r in filtered" :key="r.symbol" class="clickable" :class="{ picked: r.symbol === selected }" @click="emit('select', r.symbol)">
+          <tr v-for="r in paged" :key="r.symbol" class="clickable" :class="{ picked: r.symbol === selected }" @click="emit('select', r.symbol)">
             <td>
               <b>{{ r.symbol }}</b>
               <span v-if="r.name" class="name">{{ r.name }}</span>
@@ -145,13 +151,16 @@ function cell(key: SortKey, v: ValuationSnapshot): string {
         </tbody>
       </table>
     </div>
+    <div v-if="filtered.length > pageSize" class="pager">
+      <el-pagination v-model:current-page="page" v-model:page-size="pageSize" :total="filtered.length"
+                     :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next, jumper" size="small" background />
+    </div>
   </section>
 </template>
 
 <style scoped>
 .filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
-.screen { max-height: 440px; overflow-y: auto; }
-.screen thead th { position: sticky; top: 0; z-index: 1; background: var(--el-bg-color); }
+.pager { display: flex; justify-content: flex-end; margin-top: 10px; }
 .sortable { cursor: pointer; user-select: none; }
 .sortable:hover { color: var(--el-color-primary); }
 .dtable { font-size: 13px; }
