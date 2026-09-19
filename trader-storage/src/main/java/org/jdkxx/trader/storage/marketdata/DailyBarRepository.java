@@ -286,6 +286,14 @@ public class DailyBarRepository {
                              java.math.BigDecimal turnover) {
     }
 
+    /** 单只的真实覆盖（条数与区间）；一根都没有时为空。 */
+    public Optional<InstrumentCoverage> coverage(long instrumentId) {
+        return jdbc.query("SELECT count(*) AS rows, min(trade_date) AS mn, max(trade_date) AS mx FROM daily_bar WHERE instrument_id = ?",
+                (rs, i) -> rs.getLong("rows") == 0 ? null
+                        : new InstrumentCoverage(instrumentId, rs.getLong("rows"), rs.getDate("mn").toLocalDate(), rs.getDate("mx").toLocalDate()),
+                instrumentId).stream().filter(java.util.Objects::nonNull).findFirst();
+    }
+
     public List<InstrumentCoverage> coverageByInstrument() {
         return jdbc.query("SELECT instrument_id, count(*) AS rows, min(trade_date) AS mn, max(trade_date) AS mx FROM daily_bar GROUP BY instrument_id",
                 (rs, i) -> new InstrumentCoverage(rs.getLong("instrument_id"), rs.getLong("rows"),

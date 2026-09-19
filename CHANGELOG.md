@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## 3.0.7（未发布）
+
+- 修复：标的列表（`GET /api/universe`、`GET /api/universe/{symbol}`、`GET /api/pool`）的 `barCount` 恒为 6。
+  它原先取 `bar_sync_state.bar_count`，那是**最近一次同步写入的条数**（每次覆盖写），而每日增量固定每只回拉 6 根
+  （实测 3126 ÷ 521 只 = 6，历次增量都一样），于是所有标的都显示 6（实测 AAPL 显示 6、实际 5051 根）。
+  改为取 `daily_bar` 的真实统计，覆盖区间 `earliest` / `latest` 一并同源（幽灵 K 线订正后会跟着缩）；深度与最近错误仍来自同步状态。
+  聚合查询实测 33 毫秒（521 只、59 万行）。`InstrumentViewCoverageTest` 守住（已反证）。
+  影响面：只是这三个接口的字段与系统页「行情数据」标签的覆盖列；审计、深度回补判断、覆盖统计都不用它，数据本身从未受影响。
+
 ## 3.0.6（2026-09-19 发布）
 
 **前端逐页改版**（仪表盘、持仓、账户、基本面、入场信号、系统六页），另有一个新接口 `GET /api/fundamentals/valuations`（Postman 集合要重新导入）。

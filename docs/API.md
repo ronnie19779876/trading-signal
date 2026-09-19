@@ -84,7 +84,7 @@
 | --- | --- |
 | `POST /api/universe/sync` | 成分股同步作业：Wikipedia 标普 500 + 纳指 100 → instrument / index_constituent（since/until），SPY 交叉核对，富途静态信息解析 |
 | `POST /api/universe/import`（`text/plain`，每行 `index_code,symbol[,name]`） | CSV 导入兜底，同步返回各指数的新增/退出计数。**按指数整体替换**：清单里没有的现任成分股记为退出，所以要给该指数的完整清单 |
-| `GET /api/universe?index=SP500|NDX100&role=POOL|HOLDING|BENCHMARK` | 标的列表（含所属指数、行业、池角色、K 线覆盖与深度、最近错误） |
+| `GET /api/universe?index=SP500|NDX100&role=POOL|HOLDING|BENCHMARK` | 标的列表（含所属指数、行业、池角色、K 线覆盖与深度、最近错误）。`barCount` 与 `earliest` / `latest` 取自 `daily_bar` 的真实统计（3.0.7 修；此前取同步状态里的最近一次写入条数，所有标的恒为 6） |
 | `GET /api/universe/{symbol}` | 单个标的；不存在 → 404 |
 | `GET /api/pool` / `POST /api/pool/{symbol}?role=POOL|BENCHMARK&note=` / `DELETE /api/pool/{symbol}` | 标的池；库里没有的代码（ETF、非成分股 ADR）先向富途解析并建档，富途不认识 → 404；加入后自动排深度回补作业（无法自动时返回提示）；池满 → 409；`role=HOLDING` → 409（HOLDING 由盈透持仓自动维护，见"账户与持仓"） |
 | `POST /api/bars/refresh/universe?count=1000` | 全量轮转拉 K 线（零历史额度；1000 首拉 / 10 增量） |

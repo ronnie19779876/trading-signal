@@ -169,6 +169,8 @@ public class MarketDataFacade {
                 .collect(Collectors.groupingBy(ConstituentRow::instrumentId));
         Map<Long, PoolRole> roles = scope.roles();
         Map<Long, BarSyncState> st = states.findAll().stream().collect(Collectors.toMap(BarSyncState::instrumentId, s -> s));
+        Map<Long, DailyBarRepository.InstrumentCoverage> cov = bars.coverageByInstrument().stream()
+                .collect(Collectors.toMap(DailyBarRepository.InstrumentCoverage::instrumentId, c -> c));
         List<InstrumentView> out = new ArrayList<>();
         for (InstrumentRow r : instruments.findAll()) {
             List<ConstituentRow> cons = byInstrument.getOrDefault(r.id(), List.of());
@@ -182,7 +184,7 @@ public class MarketDataFacade {
             if (index == null && role == null && cons.isEmpty() && pr == null) {
                 continue;   // 既不在指数也不在池的历史标的默认不列
             }
-            out.add(view(r, cons, pr, st.get(r.id())));
+            out.add(view(r, cons, pr, st.get(r.id()), cov.get(r.id())));
         }
         return out;
     }
@@ -190,17 +192,24 @@ public class MarketDataFacade {
     public InstrumentView instrument(String symbol) {
         InstrumentRow r = directory.require(symbol);
         List<ConstituentRow> cons = constituents.currentAll().stream().filter(c -> c.instrumentId() == r.id()).toList();
-        return view(r, cons, scope.roles().get(r.id()), states.find(r.id()).orElse(null));
+        return view(r, cons, scope.roles().get(r.id()), states.find(r.id()).orElse(null), bars.coverage(r.id()).orElse(null));
     }
 
-    private static InstrumentView view(InstrumentRow r, List<ConstituentRow> cons, PoolRole role, BarSyncState s) {
+    /**
+     * 覆盖区间与条数取自 {@code daily_bar} 的真实统计，不用 {@code bar_sync_state}：那里的 bar_count 是
+     * <b>最近一次同步写入的条数</b>（每次覆盖写），每日增量固定每只回拉 6 根，所有标的因此都显示 6
+     * （2026-09-19 实测 AAPL 显示 6、实际 5051）。同理区间也同源取真实值，幽灵 K 线订正后才跟着缩。
+     * 深度与最近错误仍来自同步状态。
+     */
+    private static InstrumentView view(InstrumentRow r, List<ConstituentRow> cons, PoolRole role, BarSyncState s,
+                                       DailyBarRepository.InstrumentCoverage c) {
         ConstituentRow first = cons.isEmpty() ? null : cons.get(0);
         return new InstrumentView(r.symbol(), r.name(), r.nameCn(), r.type().name(), r.resolveStatus(), r.delisted(),
-                cons.stream().map(c -> c.index().name()).sorted().toList(),
+                cons.stream().map(x -> x.index().name()).sorted().toList(),
                 first == null ? null : first.sector(), first == null ? null : first.subIndustry(),
                 role == null ? null : role.name(),
-                s == null ? null : s.depth(), s == null ? null : s.earliest(), s == null ? null : s.latest(),
-                s == null ? 0 : s.barCount(), s == null ? null : s.lastError());
+                s == null ? null : s.depth(), c == null ? null : c.earliest(), c == null ? null : c.latest(),
+                c == null ? 0 : (int) c.rows(), s == null ? null : s.lastError());
     }
 
     public record CoverageView(long rows, long instruments, java.time.LocalDate earliest, java.time.LocalDate latest,

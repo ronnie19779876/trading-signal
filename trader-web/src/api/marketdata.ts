@@ -15,6 +15,7 @@ export interface InstrumentView {
   depth: string | null
   earliest: string | null
   latest: string | null
+  /** 日 K 真实条数（3.0.7 起取自 daily_bar；此前取的是同步状态里的最近一次写入条数，所有标的恒为 6） */
   barCount: number
   lastError: string | null
 }

@@ -236,7 +236,7 @@ const ROLE_LABEL: Record<string, string> = { POOL: '池', HOLDING: '持仓', BEN
         <el-table-column label="角色" width="80"><template #default="{ row }: { row: InstrumentView }">{{ row.role ? ROLE_LABEL[row.role] ?? row.role : '—' }}</template></el-table-column>
         <el-table-column label="指数" width="130"><template #default="{ row }: { row: InstrumentView }">{{ row.indexes.join(' ') || '—' }}</template></el-table-column>
         <el-table-column prop="depth" label="深度" width="90" />
-        <el-table-column label="覆盖" width="260"><template #default="{ row }: { row: InstrumentView }">{{ row.earliest ?? '—' }} ～ {{ row.latest ?? '—' }}（{{ row.barCount }}）</template></el-table-column>
+        <el-table-column label="覆盖" width="260"><template #default="{ row }: { row: InstrumentView }">{{ row.earliest ?? '—' }} ～ {{ row.latest ?? '—' }}（{{ row.barCount.toLocaleString() }} 根）</template></el-table-column>
         <el-table-column prop="lastError" label="最近错误" min-width="200" show-overflow-tooltip />
         <el-table-column label="操作" width="90"><template #default="{ row }: { row: InstrumentView }"><el-button size="small" text type="danger" @click="remove(row)">移出</el-button></template></el-table-column>
       </el-table>
