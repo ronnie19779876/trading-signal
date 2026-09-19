@@ -9,7 +9,7 @@ import { money, num, signed, timeEt } from '../../lib/format'
  *       涨跌、成本（Cost Basis）、占组合（% of Portfolio）是 App 界面上的派生项，后端按同一口径给出；</li>
  *   <li>实时不可用时：最近一份收盘快照（收盘价与市值是快照当晚的估值）。</li>
  * </ul>
- * 默认按市值降序。价格显示两位小数，与 App 一致。
+ * 成本（Cost Basis）与市值两列不显示（09-19 用户要求，表格更清爽），但仍按市值降序排。价格显示两位小数，与 App 一致。
  */
 export interface HoldingRow {
   symbol: string
@@ -42,10 +42,9 @@ const emit = defineEmits<{ open: [symbol: string] }>()
 
 const sorted = computed(() => [...props.rows].sort((a, b) => (b.marketValue ?? 0) - (a.marketValue ?? 0)))
 
-function changeText(r: HoldingRow): string {
-  if (r.change === null) return '—'
-  const sign = r.change > 0 ? '+' : ''
-  return `${sign}${num(r.change)}` + (r.changePct === null ? '' : `  ${sign}${num(r.changePct)}%`)
+/** 带正号、两位小数（+2.40 / -0.55）。 */
+function signedNum(v: number | null): string {
+  return v === null ? '—' : (v > 0 ? '+' : '') + num(v)
 }
 
 function trendOf(v: number | null): string {
@@ -66,9 +65,8 @@ function trendOf(v: number | null): string {
       <table class="dtable">
         <thead>
           <tr>
-            <th>代码</th><th class="r">数量</th><th class="r">成本价</th><th v-if="source === 'LIVE'" class="r">成本</th>
-            <th class="r">{{ source === 'LIVE' ? '最新价' : '收盘价' }}</th><th v-if="source === 'LIVE'" class="r">涨跌</th>
-            <th class="r">市值</th>
+            <th>代码</th><th class="r">数量</th><th class="r">成本价</th>
+            <th class="r">{{ source === 'LIVE' ? '最新价' : '收盘价' }}</th><th v-if="source === 'LIVE'" class="r">涨跌</th><th v-if="source === 'LIVE'" class="r">涨跌 %</th>
             <th v-if="source === 'LIVE'" class="r">当日盈亏</th><th class="r">浮动盈亏</th>
             <th v-if="source === 'LIVE'" class="r">占组合</th>
           </tr>
@@ -86,9 +84,8 @@ function trendOf(v: number | null): string {
                 </el-tag>
               </el-tooltip>
             </td>
-            <td class="r num">{{ r.quantity.toLocaleString() }}</td>
+            <td class="r num">{{ r.quantity.toLocaleString(undefined, { maximumFractionDigits: 4 }) }}</td>
             <td class="r num">{{ money(r.averageCost) }}</td>
-            <td v-if="source === 'LIVE'" class="r num">{{ money(r.costBasis) }}</td>
             <td class="r num">
               <el-tooltip v-if="r.priceAt" :content="`盈透行情 · ${timeEt(r.priceAt)}${r.priceDelayed ? '（延迟行情）' : ''}`" placement="top">
                 <span>{{ num(r.price) }}</span>
@@ -96,21 +93,20 @@ function trendOf(v: number | null): string {
               <span v-else>{{ num(r.price) }}</span>
               <span v-if="r.priceDelayed" class="stamp">延迟</span>
             </td>
-            <td v-if="source === 'LIVE'" class="r num" :class="trendOf(r.change)">{{ changeText(r) }}</td>
-            <td class="r num">{{ money(r.marketValue) }}</td>
+            <td v-if="source === 'LIVE'" class="r num" :class="trendOf(r.change)">{{ signedNum(r.change) }}</td>
+            <td v-if="source === 'LIVE'" class="r num" :class="trendOf(r.changePct)">{{ r.changePct === null ? '—' : signedNum(r.changePct) + '%' }}</td>
             <td v-if="source === 'LIVE'" class="r num" :class="trendOf(r.dailyPnl)">{{ signed(r.dailyPnl) }}</td>
             <td class="r num" :class="trendOf(r.unrealizedPnl)">{{ signed(r.unrealizedPnl) }}</td>
             <td v-if="source === 'LIVE'" class="r num">{{ r.portfolioPct === null ? '—' : num(r.portfolioPct) + '%' }}</td>
           </tr>
           <tr v-if="!rows.length">
-            <td :colspan="source === 'LIVE' ? 10 : 6" class="empty">{{ loaded ? '无持仓' : '加载中…' }}</td>
+            <td :colspan="source === 'LIVE' ? 9 : 5" class="empty">{{ loaded ? '无持仓' : '加载中…' }}</td>
           </tr>
         </tbody>
       </table>
     </div>
     <p v-if="source === 'LIVE'" class="panel__foot">
-      与盈透 App 一致：最新价与前收来自盈透行情，市值、当日盈亏、浮动盈亏来自盈透逐只盈亏；涨跌 = 最新价 − 前收，成本 = 成本价 × 数量，
-      占组合 = 市值 ÷ 净值，与 App 同口径。盈透的持仓市值按它自己的估值价算，不一定等于"最新价 × 数量"。
+      与盈透 App 一致：最新价与前收来自盈透行情，当日盈亏、浮动盈亏来自盈透逐只盈亏；涨跌 = 最新价 − 前收，占组合 = 市值 ÷ 净值，与 App 同口径。按市值从大到小排。
     </p>
     <p v-else class="panel__foot">盈透实时暂不可用，显示最近一份收盘快照。持仓也在每日评估范围里，出信号的标在代码旁。</p>
   </section>
