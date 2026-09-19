@@ -128,6 +128,7 @@ storage → common ；ai → common
 **3.0.2（ARCHITECTURE §19、§20）已在生产**：AI 额度按角色、账本 AI 分组、手工分析按钮、前端第 1、2 期，仪表盘改版与实时账户（`GET /api/account/live`，盈透按需订阅）。
 **3.0.3（ARCHITECTURE §20.5）已在生产**：实时账户只给盈透原值（净值 NetLiquidation、盈亏 reqPnL、现价盈透行情 lastPrice），不做折算。
 **3.0.4（ARCHITECTURE §20.6）已在生产**：持仓与盈透 App 对齐（涨跌、成本、占组合），修当日盈亏可能一直空着。
+**3.0.5 已发布，待部署到生产**：仪表盘持仓表精简（去掉成本、市值，涨跌拆成金额与百分比），碎股数量显示到 4 位。
 每一期的设计决策、实测结论与已知边界都在
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~19 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
 
