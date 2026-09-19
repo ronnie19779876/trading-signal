@@ -88,6 +88,10 @@ docs/                    ARCHITECTURE / API / OPERATIONS
 git push origin v<版本>        # 或 git push origin --tags
 ```
 
+**预发布版**：一个版本要分几轮在生产上审核时（如前端逐页改版），每轮部署 `<版本>-rc.<n>`（如 `3.0.6-rc.1`），
+同样打 tag、同样走上面的流程，部署后递增回 `<版本>-SNAPSHOT`；全部审完再发正式版 `<版本>`。
+rc 不是 SNAPSHOT，可以上生产；但同一个版本号发出去以后不再换内容，要改就发下一个 rc。
+
 递增规则：
 
 | 变更类型 | 示例 |

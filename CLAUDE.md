@@ -129,6 +129,7 @@ storage → common ；ai → common
 **3.0.3（ARCHITECTURE §20.5）已在生产**：实时账户只给盈透原值（净值 NetLiquidation、盈亏 reqPnL、现价盈透行情 lastPrice），不做折算。
 **3.0.4（ARCHITECTURE §20.6）已在生产**：持仓与盈透 App 对齐（涨跌、成本、占组合），修当日盈亏可能一直空着。
 **3.0.5 已在生产**：仪表盘持仓表精简（去掉成本、市值，涨跌拆成金额与百分比），碎股数量显示到 4 位。
+**3.0.6-rc.1 已发布，待部署到生产**：前端逐页改版（持仓页、账户页）都进 3.0.6，每轮审核部署一个 rc，全部审完发正式版。
 每一期的设计决策、实测结论与已知边界都在
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~19 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
 
