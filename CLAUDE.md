@@ -125,6 +125,7 @@ storage → common ；ai → common
 **生产跑 3.0.2**（2026-09-18 美东 20:36 部署，含未单独部署的 3.0.1；第 3 期见 ARCHITECTURE §16，2.0.2 全量审查后的修复见 §17）。
 **第 4 期「入场信号」3.0.0（ARCHITECTURE §18）**：判定引擎、对账与回放统计、每日评估与纸面账本、AI 否决、前端信号页；首次实盘评估为美东 2026-09-17 18:10。
 **3.0.2（ARCHITECTURE §19、§20）已在生产**：AI 额度按角色、账本 AI 分组、手工分析按钮、前端第 1、2 期，仪表盘改版与实时账户（`GET /api/account/live`，盈透按需订阅）。
+**3.0.3 已发布，待部署到生产（ARCHITECTURE §20.5）**：实时账户只给盈透原值（净值 NetLiquidation、盈亏 reqPnL、现价盈透行情 lastPrice），不做折算。
 每一期的设计决策、实测结论与已知边界都在
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~19 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
 
