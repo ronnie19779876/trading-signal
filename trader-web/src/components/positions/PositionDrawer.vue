@@ -8,7 +8,7 @@ import { sectorCn } from '../../lib/sector'
 import { big, daysAgoEt, errMsg, isoEt, money, negative, num, numMax, signed, timeEt, trend } from '../../lib/format'
 
 /**
- * 单只持仓的详情抽屉：头部数据（跟着列表一起刷新）、一年日 K 加成本线、基本面摘要。
+ * 单只持仓的详情抽屉：头部数据（跟着列表一起刷新）、一年日 K 加成本线与均线、基本面摘要。
  *
  * K 线用前复权：前复权保持最新价不动、只调历史价，与盈透的成本价是同一个价格尺度，成本线才画得对。
  * 现金工具（SGOV）不在标的库里，没有日 K 和基本面。
@@ -55,6 +55,10 @@ const KEY_METRICS: { name: string; percent: boolean }[] = [
 ]
 const squash = (s: string | null) => (s ?? '').replace(/\s+/g, '')
 
+/** 美股日线常用的三条均线 */
+const MA = [20, 50, 200]
+const visibleFrom = daysAgoEt(365)
+
 const bars = ref<DailyBar[]>([])
 const overview = ref<FundamentalsOverview | null>(null)
 const reports = ref<FinancialReport[]>([])
@@ -62,7 +66,6 @@ const loadingBars = ref(false)
 const loadingFund = ref(false)
 const barsError = ref<string | null>(null)
 const fundError = ref<string | null>(null)
-const profileOpen = ref<string[]>([])
 
 const symbol = computed(() => props.row?.symbol ?? null)
 /** 标的库里有才有日 K 与基本面 */
@@ -72,7 +75,8 @@ async function loadBars(s: string) {
   loadingBars.value = true
   barsError.value = null
   try {
-    bars.value = await getBars(s, daysAgoEt(365), isoEt(), 'forward')
+    // 多取 300 天给 MA200 预热（约 200 个交易日），图上只显示最近一年
+    bars.value = await getBars(s, daysAgoEt(365 + 300), isoEt(), 'forward')
   } catch (e) {
     bars.value = []
     barsError.value = errMsg(e)
@@ -108,7 +112,6 @@ watch([symbol, visible, known], ([s, v, k], old) => {
   bars.value = []
   overview.value = null
   reports.value = []
-  profileOpen.value = []
   if (!k) return
   void loadBars(s)
   void loadFundamentals(s)
@@ -131,7 +134,6 @@ const metricRows = computed(() =>
   })).filter((m) => m.cells.some((c) => c?.value !== null && c?.value !== undefined)),
 )
 
-const intro = computed(() => overview.value?.profile['公司简介'] ?? null)
 const title = computed(() => {
   const i = props.instrument
   const name = i?.nameCn ?? i?.name ?? overview.value?.name ?? null
@@ -184,7 +186,7 @@ const title = computed(() => {
           </div>
           <el-alert v-if="barsError" :title="'日 K 取数失败：' + barsError" type="error" :closable="false" />
           <div v-loading="loadingBars">
-            <KlineChart v-if="bars.length" :bars="bars" :price-lines="priceLines" :height="340" />
+            <KlineChart v-if="bars.length" :bars="bars" :price-lines="priceLines" :height="340" :ma="MA" :visible-from="visibleFrom" />
             <el-empty v-else-if="!loadingBars && !barsError" description="没有日 K" :image-size="60" />
           </div>
         </section>
@@ -223,9 +225,6 @@ const title = computed(() => {
             </table>
           </div>
 
-          <el-collapse v-if="intro" v-model="profileOpen" class="intro">
-            <el-collapse-item title="公司简介" name="intro"><p class="intro__text">{{ intro }}</p></el-collapse-item>
-          </el-collapse>
 
           <el-empty v-if="!loadingFund && !fundError && !overview?.valuation && !metricRows.length" :image-size="60"
                     description="没有基本面数据（基金没有财报）" />
@@ -241,7 +240,5 @@ const title = computed(() => {
 .quote { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .quote__price { font-size: 26px; font-weight: 600; color: var(--el-text-color-primary); }
 .metrics { margin-top: 10px; }
-.intro { margin-top: 8px; }
-.intro__text { margin: 0; font-size: 12px; line-height: 1.7; color: var(--el-text-color-regular); white-space: pre-wrap; }
 .link { font-size: 12px; color: var(--el-color-primary); text-decoration: none; }
 </style>

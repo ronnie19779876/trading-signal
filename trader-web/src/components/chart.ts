@@ -71,3 +71,18 @@ export function chartLayout(t: ChartTheme) {
     timeScale: { borderColor: t.border },
   }
 }
+
+/** 均线配色：固定三色，避开涨跌红绿与成本线的主题蓝。 */
+export const MA_COLORS = ['#e6a23c', '#b37feb', '#13c2c2', '#f56c9f']
+
+/** 收盘价简单均线；前 period−1 根没有值（不画，不补）。 */
+export function movingAverage(bars: KlineBar[], period: number): { time: string; value: number }[] {
+  const out: { time: string; value: number }[] = []
+  let sum = 0
+  for (let i = 0; i < bars.length; i++) {
+    sum += bars[i].close
+    if (i >= period) sum -= bars[i - period].close
+    if (i >= period - 1) out.push({ time: bars[i].tradeDate, value: sum / period })
+  }
+  return out
+}

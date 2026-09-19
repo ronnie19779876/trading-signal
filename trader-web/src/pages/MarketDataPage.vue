@@ -305,7 +305,7 @@ const rehabHint = computed(
         <el-button size="small" type="primary" :loading="barsLoading" @click="loadBars">查询</el-button>
         <span class="muted">{{ bars.length }} 根（点实时报价表的行可切换标的）</span>
       </div>
-      <KlineChart v-if="bars.length" :bars="bars" :title="barSymbol.toUpperCase() + ' 日 K（' + (barAdjust === 'none' ? '不复权' : barAdjust === 'forward' ? '前复权' : '后复权') + '）'" />
+      <KlineChart v-if="bars.length" :bars="bars" :ma="[20, 50, 200]" :title="barSymbol.toUpperCase() + ' 日 K（' + (barAdjust === 'none' ? '不复权' : barAdjust === 'forward' ? '前复权' : '后复权') + '）'" />
       <el-table :data="bars" size="small" max-height="420" empty-text="—">
         <el-table-column prop="tradeDate" label="交易日" width="110" />
         <el-table-column label="开" width="100"><template #default="{ row }: { row: DailyBar }">{{ num(row.open) }}</template></el-table-column>

@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   CandlestickSeries,
   HistogramSeries,
+  LineSeries,
   LineStyle,
   createChart,
   createSeriesMarkers,
@@ -13,7 +14,7 @@ import {
   type SeriesMarker,
   type Time,
 } from 'lightweight-charts'
-import { chartLayout, chartTheme, type ChartMarker, type ChartPriceLine, type ChartZone, type KlineBar } from './chart'
+import { MA_COLORS, chartLayout, chartTheme, movingAverage, type ChartMarker, type ChartPriceLine, type ChartZone, type KlineBar } from './chart'
 import { useTheme } from '../composables/useTheme'
 
 const props = withDefaults(
@@ -24,8 +25,12 @@ const props = withDefaults(
     markers?: ChartMarker[]
     priceLines?: ChartPriceLine[]
     zones?: ChartZone[]
+    /** 均线周期（收盘价简单均线），空 = 不画；图上有开关，隐藏哪几条记在本机浏览器 */
+    ma?: number[]
+    /** 只显示这天及以后；更早的 K 线只用来给均线预热（MA200 要 200 根） */
+    visibleFrom?: string
   }>(),
-  { height: 380, markers: () => [], priceLines: () => [], zones: () => [] },
+  { height: 380, markers: () => [], priceLines: () => [], zones: () => [], ma: () => [], visibleFrom: '' },
 )
 
 const { isDark } = useTheme()
@@ -36,16 +41,69 @@ let candles: ISeriesApi<'Candlestick'> | null = null
 let volume: ISeriesApi<'Histogram'> | null = null
 let markerApi: ISeriesMarkersPluginApi<Time> | null = null
 let lines: IPriceLine[] = []
+let maSeries = new Map<number, ISeriesApi<'Line'>>()
+
+// ---- 均线开关：隐藏的周期记在本机（取不到存储就按全部显示） ----
+const MA_KEY = 'kline.ma.hidden'
+function readHidden(): number[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(MA_KEY) ?? '[]')
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'number') : []
+  } catch {
+    return []
+  }
+}
+const hidden = ref<number[]>(readHidden())
+function toggleMa(period: number) {
+  hidden.value = hidden.value.includes(period) ? hidden.value.filter((p) => p !== period) : [...hidden.value, period]
+  try {
+    localStorage.setItem(MA_KEY, JSON.stringify(hidden.value))
+  } catch {
+    // 存不了就只在本次页面里生效
+  }
+  maSeries.get(period)?.applyOptions({ visible: !hidden.value.includes(period) })
+}
+const maColor = (i: number) => MA_COLORS[i % MA_COLORS.length]
+/** 图例上显示每条均线最后一天的值 */
+const maLast = ref<Map<number, number | null>>(new Map())
 let observer: ResizeObserver | null = null
 
 function render() {
   if (!candles || !volume) return
   const t = chartTheme()
-  const sorted = [...props.bars].sort((a, b) => (a.tradeDate < b.tradeDate ? -1 : 1))
+  const all = [...props.bars].sort((a, b) => (a.tradeDate < b.tradeDate ? -1 : 1))
+  const sorted = props.visibleFrom ? all.filter((b) => b.tradeDate >= props.visibleFrom) : all
   candles.setData(sorted.map((b) => ({ time: b.tradeDate, open: b.open, high: b.high, low: b.low, close: b.close })))
   volume.setData(sorted.map((b) => ({ time: b.tradeDate, value: b.volume, color: b.close >= b.open ? t.upFill : t.downFill })))
+  renderMa(all)
   renderOverlays()
   chart?.timeScale().fitContent()
+}
+
+/** 均线用全部 K 线算（含预热段），只画可见段。 */
+function renderMa(all: KlineBar[]) {
+  if (!chart) return
+  for (const [period, series] of maSeries) {
+    if (!props.ma.includes(period)) {
+      chart.removeSeries(series)
+      maSeries.delete(period)
+    }
+  }
+  const last = new Map<number, number | null>()
+  props.ma.forEach((period, i) => {
+    let series = maSeries.get(period)
+    if (!series) {
+      series = chart!.addSeries(LineSeries, {
+        color: maColor(i), lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        visible: !hidden.value.includes(period),
+      })
+      maSeries.set(period, series)
+    }
+    const points = movingAverage(all, period).filter((p) => !props.visibleFrom || p.time >= props.visibleFrom)
+    series.setData(points)
+    last.set(period, points.at(-1)?.value ?? null)
+  })
+  maLast.value = last
 }
 
 function renderOverlays() {
@@ -85,7 +143,13 @@ function applyTheme() {
 onMounted(() => {
   if (!el.value) return
   const t = chartTheme()
-  chart = createChart(el.value, { height: props.height, ...chartLayout(t) })
+  chart = createChart(el.value, {
+    height: props.height,
+    ...chartLayout(t),
+    // 滚轮留给页面滚动：在图上滚动不再缩放、平移图表（拖动与触控板捏合照常）
+    handleScroll: { mouseWheel: false },
+    handleScale: { mouseWheel: false },
+  })
   // 涨跌色来自 tokens.css（美股口径绿涨红跌）
   candles = chart.addSeries(CandlestickSeries, { upColor: t.up, downColor: t.down, borderVisible: false, wickUpColor: t.up, wickDownColor: t.down })
   volume = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'volume' })
@@ -97,7 +161,7 @@ onMounted(() => {
   render()
 })
 
-watch(() => props.bars, render)
+watch(() => [props.bars, props.ma, props.visibleFrom], render)
 watch(() => [props.markers, props.priceLines, props.zones], renderOverlays, { deep: true })
 watch(isDark, applyTheme)
 
@@ -108,12 +172,20 @@ onBeforeUnmount(() => {
   candles = null
   markerApi = null
   lines = []
+  maSeries = new Map()
 })
 </script>
 
 <template>
   <div>
     <div v-if="title" class="kline__title">{{ title }}</div>
+    <div v-if="ma.length" class="kline__ma">
+      <button v-for="(p, i) in ma" :key="p" type="button" class="ma-chip" :class="{ off: hidden.includes(p) }"
+              :title="hidden.includes(p) ? '点击显示' : '点击隐藏'" @click="toggleMa(p)">
+        <i :style="{ background: maColor(i) }" />MA{{ p }}
+        <span class="num">{{ maLast.get(p) == null ? '—' : maLast.get(p)!.toFixed(2) }}</span>
+      </button>
+    </div>
     <div ref="el" class="kline"></div>
   </div>
 </template>
@@ -121,4 +193,12 @@ onBeforeUnmount(() => {
 <style scoped>
 .kline { width: 100%; }
 .kline__title { font-size: 13px; color: var(--el-text-color-regular); margin-bottom: 6px; }
+.kline__ma { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.ma-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border-radius: 10px; cursor: pointer;
+  font-size: 11px; line-height: 18px; color: var(--el-text-color-regular);
+  background: var(--el-fill-color-lighter); border: 1px solid var(--el-border-color-lighter);
+}
+.ma-chip i { display: inline-block; width: 10px; height: 2px; border-radius: 1px; }
+.ma-chip.off { opacity: 0.45; text-decoration: line-through; }
 </style>
