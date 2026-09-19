@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## 3.0.4（未发布）
+## 3.0.4（2026-09-19 发布）
 
 - 仪表盘持仓表与盈透 App 对齐（对照 App 截图逐项核过，见 ARCHITECTURE §20.6）：加回涨跌（最新价 − 前收，前收取盈透行情）与涨跌 %、成本（Cost Basis）、占组合（% of Portfolio），
   按 App 同口径计算；最新价显示两位小数。`/api/account/live` 的 `positions[]` 新增 `priorClose`、`change`、`changePct`、`costBasis`、`portfolioPct`。
