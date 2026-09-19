@@ -9,6 +9,7 @@ import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.gateway.AccountGateway;
 import org.jdkxx.trader.gateway.BrokerGateway;
 import org.jdkxx.trader.gateway.GatewayState;
+import org.jdkxx.trader.gateway.LiveAccountGateway;
 import org.jdkxx.trader.gateway.MarketDataGateway;
 import org.jdkxx.trader.storage.account.AccountSnapshotRepository;
 import org.jdkxx.trader.storage.marketdata.DailyBarRepository;
@@ -52,6 +53,14 @@ public class AccountConfiguration {
                                                          HoldingSyncService holdingSync) {
         return new AccountSnapshotService(props, env.getProperty("trader.ibkr.account"), gateways.require(Broker.IBKR), accounts,
                 market, instruments, bars, pool, days, snapshots, holdingSync, Clock.systemUTC(), ZoneId.of(marketData.zone()));
+    }
+
+    /** 实时账户（3.0.2）：按需订阅，开发与生产实例都装配（订阅按客户端计，互不干扰，2026-09-19 实测）。 */
+    @Bean(destroyMethod = "close")
+    public LiveAccountService liveAccountService(AccountProperties props, Environment env, GatewayRegistry gateways,
+                                                 LiveAccountGateway live) {
+        return new LiveAccountService(props, env.getProperty("trader.ibkr.account"), gateways.require(Broker.IBKR), live,
+                Clock.systemUTC());
     }
 
     @Bean

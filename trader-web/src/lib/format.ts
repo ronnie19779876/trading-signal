@@ -47,7 +47,7 @@ export function big(v: number | null | undefined): string {
   return Math.abs(yi) >= 10000 ? `${(yi / 10000).toFixed(2)} 万亿` : `${yi.toFixed(2)} 亿`
 }
 
-/** 中国习惯：红涨绿跌。返回 tokens.css 里的全局类名。 */
+/** 涨跌方向的类名（颜色在 tokens.css：美股口径绿涨红跌）。 */
 export function trend(v: number | null | undefined): string {
   if (v === null || v === undefined || v === 0) return ''
   return v > 0 ? 'up' : 'down'

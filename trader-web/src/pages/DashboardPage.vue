@@ -1,315 +1,304 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import PageHeader from '../components/PageHeader.vue'
-import StatCard from '../components/StatCard.vue'
-import NavChart from '../components/NavChart.vue'
-import SignalDetailDrawer from '../components/signals/SignalDetailDrawer.vue'
-import { ROLE_LABEL, SIGNAL_STATUS_LABEL, SIGNAL_STATUS_TYPE, STANCE_LABEL } from '../components/signals/format'
-import { useAppStore } from '../stores/app'
-import { useAutoRefresh } from '../composables/useAutoRefresh'
-import { daysAgoEt, errMsg, fmtEt, isoEt, money, num, pct, signed, signedR, todayEt, trend } from '../lib/format'
-import { signalsApi, type SignalStatus, type SignalView } from '../api/signals'
-import { accountApi, type AccountSnapshot, type AuditReport, type SnapshotView } from '../api/account'
-import { getCoverage, getJobs, type CoverageView, type JobRun } from '../api/marketdata'
-import { fundamentalsApi, type FundamentalsCoverage } from '../api/fundamentals'
-import type { GatewayView } from '../api/gateways'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import MoneyTiles from '../components/dash/MoneyTiles.vue'
+import EquityPanel from '../components/dash/EquityPanel.vue'
+import CandidatePanel, { type CandidateRow } from '../components/dash/CandidatePanel.vue'
+import HoldingsPanel, { type HoldingRow } from '../components/dash/HoldingsPanel.vue'
+import EvaluationDrawer from '../components/signals/EvaluationDrawer.vue'
+import { useMarketClock } from '../composables/useMarketClock'
+import { daysAgoEt, errMsg, isoEt } from '../lib/format'
+import { accountApi, type AccountSnapshot, type AuditReport, type LiveView, type SnapshotView } from '../api/account'
+import { signalsApi, type EvaluationRow } from '../api/signals'
+import { getBars, getPool, type DailyBar, type InstrumentView } from '../api/marketdata'
+import { getQuotes, type Quote } from '../api/quotes'
 
 /**
- * 首页：一屏看完"今天系统干了什么、账户怎么样、有没有出问题"。
- * 全部复用既有接口并行拉取，不新增后端接口。
+ * 仪表盘：一屏看清"我现在怎么样"。布局参考 futu-trader：上面账户资金，中间净值走势，下面左候选、右持仓。
+ *
+ * 账户与持仓优先用盈透实时（3.0.2，/api/account/live，按需订阅）；拿不到时退回收盘快照，
+ * 此时有富途实时报价（生产订阅了池与持仓）就按实时价估算持仓现价与涨跌。
+ *
+ * 刷新分三档：实时账户 5 秒一轮（预热中 1.5 秒）；日级数据（快照、评估、日 K）5 分钟一轮；
+ * 报价在开市时段 5 秒一轮、休市 60 秒。
+ * 页面切到后台即暂停。
  */
-const RECENT_DAYS = 7
 const NAV_DAYS = 180
-/** 数据超过这么多自然日没动就标黄。只是提醒，不判交易日。 */
-const STALE_DAYS = 3
 
-const app = useAppStore()
-
+const view = ref<SnapshotView | null>(null)
+const live = ref<LiveView | null>(null)
+const series = ref<AccountSnapshot[]>([])
+const pool = ref<InstrumentView[]>([])
+const evaluations = ref<EvaluationRow[]>([])
+const evalDate = ref<string | null>(null)
+const barsBySymbol = ref<Map<string, DailyBar[]>>(new Map())
+const quotes = ref<Map<string, Quote>>(new Map())
 const signalAudit = ref<AuditReport | null>(null)
 const accountAudit = ref<AuditReport | null>(null)
-const recent = ref<SignalView[]>([])
-const latest = ref<SnapshotView | null>(null)
-const navSeries = ref<AccountSnapshot[]>([])
-const jobs = ref<JobRun[]>([])
-const barCoverage = ref<CoverageView | null>(null)
-const fundCoverage = ref<FundamentalsCoverage | null>(null)
-const loading = ref(false)
+const loaded = ref(false)
 const error = ref<string | null>(null)
 
 const drawer = ref(false)
-const pickedId = ref<number | null>(null)
+const pickedSymbol = ref<string | null>(null)
 
-/** 定时刷新不打转圈：每分钟盖一次全页遮罩太晃眼，只有手点刷新和首次加载才转。 */
-async function load(showSpinner = false) {
-  if (showSpinner) loading.value = true
+const { session } = useMarketClock()
+
+/** 盈透的类别股带空格（BRK B），富途与库里是点（BRK.B）。 */
+const norm = (s: string) => s.replace(' ', '.')
+
+async function loadDaily() {
   error.value = null
   try {
-    const [sa, aa, list, series, j, bc, fc] = await Promise.all([
+    const [latest, snaps, poolRows, sa, aa] = await Promise.all([
+      accountApi.latest().catch((e) => {
+        if ((e as { response?: { status?: number } }).response?.status === 404) return null // 还没拍过快照
+        throw e
+      }),
+      accountApi.snapshots(daysAgoEt(NAV_DAYS), isoEt()),
+      getPool(),
       signalsApi.audit(),
       accountApi.audit(),
-      signalsApi.list({ from: daysAgoEt(RECENT_DAYS), to: todayEt(), scope: 'all' }),
-      accountApi.snapshots(daysAgoEt(NAV_DAYS), isoEt()),
-      getJobs(8),
-      getCoverage(),
-      fundamentalsApi.coverage(),
     ])
+    view.value = latest
+    series.value = snaps
+    pool.value = poolRows
     signalAudit.value = sa
     accountAudit.value = aa
-    recent.value = [...list].sort((a, b) => (a.signal.tradeDate < b.signal.tradeDate ? 1 : -1))
-    navSeries.value = series
-    jobs.value = j.recent
-    barCoverage.value = bc
-    fundCoverage.value = fc
-    // 还没拍过快照时是 404，不当错误。
-    try {
-      latest.value = await accountApi.latest()
-    } catch (e) {
-      if ((e as { response?: { status?: number } }).response?.status === 404) latest.value = null
-      else throw e
-    }
+    await Promise.all([loadEvaluations(sa.date), loadBars()])
   } catch (e) {
     error.value = errMsg(e)
   } finally {
-    loading.value = false
+    loaded.value = true
   }
 }
 
-useAutoRefresh(() => load(), 60_000, { immediate: false })
-load(true)
+/**
+ * 审计日有评估就用审计日（哪怕全是"数据过期"，那也是要看到的事实）。
+ * 审计日一行都没有（当晚跑批前、或测试库没跑）时，退回最近一个真正判定过的日子，并在标题上写明评估日。
+ */
+async function loadEvaluations(auditDate: string) {
+  let rows = await signalsApi.evaluations({ date: auditDate, scope: 'pool' })
+  let date: string | null = auditDate
+  if (!rows.length) {
+    const probe = pool.value.find((p) => p.role === 'POOL' || p.role === 'HOLDING')
+    const history = probe ? await signalsApi.history(probe.symbol) : []
+    date = history.find((h) => h.status === 'EVALUATED')?.tradeDate ?? null
+    rows = date ? await signalsApi.evaluations({ date, scope: 'pool' }) : []
+  }
+  evaluations.value = rows
+  evalDate.value = rows.length ? date : null
+}
 
-const summary = computed(() => signalAudit.value?.summary ?? {})
-const snapshot = computed(() => latest.value?.snapshot ?? null)
-const navPoints = computed(() =>
-  navSeries.value.filter((s) => s.netLiquidation !== null).map((s) => ({ time: s.asOfDate, value: s.netLiquidation as number })),
-)
-const lastJob = computed(() => jobs.value[0] ?? null)
+/** 近一年日 K（前复权，拆股不断崖）：候选的迷你走势与持仓的当日涨跌都用它。 */
+async function loadBars() {
+  // 只取池里有的：持仓里的现金工具（SGOV）不进池、库里没有日 K，请求它只会 404
+  const inPool = new Set(pool.value.map((p) => p.symbol))
+  const symbols = [...new Set([
+    ...pool.value.filter((p) => p.role === 'POOL' || p.role === 'HOLDING').map((p) => p.symbol),
+    ...(view.value?.positions ?? []).map((p) => norm(p.symbol)).filter((s) => inPool.has(s)),
+  ])]
+  const from = daysAgoEt(365)
+  const to = isoEt()
+  const pairs = await Promise.all(
+    symbols.map((s) => getBars(s, from, to, 'forward').then((b) => [s, b] as const).catch(() => [s, [] as DailyBar[]] as const)),
+  )
+  barsBySymbol.value = new Map(pairs)
+}
 
-/** 两份审计里没通过的项合起来看，关键的排前面。 */
-const problems = computed(() => {
-  const rows = [
-    ...(signalAudit.value?.checks ?? []).filter((c) => !c.ok).map((c) => ({ ...c, from: '信号' })),
-    ...(accountAudit.value?.checks ?? []).filter((c) => !c.ok).map((c) => ({ ...c, from: '账户' })),
-  ]
-  return rows.sort((a, b) => Number(b.critical) - Number(a.critical))
+/** 实时账户：后端只读内存，第一次读发起订阅（WARMING），5 分钟没人读自动退订。 */
+async function loadLive() {
+  try {
+    live.value = await accountApi.live()
+  } catch {
+    live.value = null   // 接口不可达：退回收盘快照
+  }
+}
+
+async function loadQuotes() {
+  try {
+    const list = await getQuotes()
+    quotes.value = new Map(list.map((q) => [q.instrument.symbol, q]))
+  } catch {
+    // 报价是锦上添花：取不到就按收盘口径显示
+  }
+}
+
+const lastBar = (symbol: string) => barsBySymbol.value.get(symbol)?.at(-1) ?? null
+
+const candidates = computed<CandidateRow[]>(() => {
+  const evalBySymbol = new Map(evaluations.value.map((e) => [e.symbol, e]))
+  return pool.value
+    .filter((p) => p.role === 'POOL')
+    .map((p) => {
+      const bars = barsBySymbol.value.get(p.symbol) ?? []
+      const q = quotes.value.get(p.symbol)
+      const bar = bars.at(-1) ?? null
+      return {
+        symbol: p.symbol,
+        name: p.nameCn ?? p.name,
+        spark: bars.map((b) => b.close),
+        price: q?.price ?? bar?.close ?? null,
+        changeRate: q ? q.changeRate : bar?.changeRate ?? null,
+        live: !!q?.price,
+        session: q?.session ?? null,
+        priceDate: bar?.tradeDate ?? null,
+        evaluation: evalBySymbol.get(p.symbol) ?? null,
+      }
+    })
 })
 
-function daysSince(date: string | null | undefined): number | null {
-  if (!date) return null
-  return Math.round((new Date(todayEt()).getTime() - new Date(date).getTime()) / 86_400_000)
+/** 有盈透实时持仓（LIVE，或断线但留着最后的数据）就用它，否则用收盘快照。 */
+const liveHoldings = computed(() => {
+  const l = live.value
+  return !!l && (l.status === 'LIVE' || l.status === 'DISCONNECTED') && l.positionsUpdatedAt !== null
+})
+const liveNav = computed(() => live.value?.nav?.estimate ?? live.value?.nav?.summary ?? null)
+
+const holdings = computed<HoldingRow[]>(() => {
+  const evalBySymbol = new Map(evaluations.value.map((e) => [e.symbol, e]))
+  if (liveHoldings.value) {
+    const nav = liveNav.value
+    return live.value!.positions.map((p) => {
+      const cost = p.averageCost !== null ? p.averageCost * p.quantity : null
+      const yesterday = p.marketValue !== null && p.dailyPnl !== null ? p.marketValue - p.dailyPnl : null
+      return {
+        symbol: p.symbol,
+        quantity: p.quantity,
+        averageCost: p.averageCost,
+        price: p.price,
+        live: true,
+        session: null,
+        outcome: evalBySymbol.get(p.symbol)?.outcome ?? null,
+        dailyPnl: p.dailyPnl,
+        dayChange: yesterday ? (p.dailyPnl! / yesterday) * 100 : null,
+        dayChangeDate: null,
+        marketValue: p.marketValue,
+        unrealizedPnl: p.unrealizedPnl,
+        unrealizedPct: p.unrealizedPnl !== null && cost ? (p.unrealizedPnl / cost) * 100 : null,
+        weight: p.marketValue !== null && nav ? (p.marketValue / nav) * 100 : null,
+        cashEquivalent: p.cashEquivalent,
+      }
+    })
+  }
+  const nav = view.value?.snapshot.netLiquidation ?? null
+  return (view.value?.positions ?? []).map((p) => {
+    const symbol = norm(p.symbol)
+    const q = quotes.value.get(symbol)
+    const live = !!q?.price
+    const price = live ? (q!.price as number) : p.price
+    const bar = lastBar(symbol)
+    const marketValue = live ? p.quantity * price! : p.marketValue
+    const cost = p.averageCost !== null ? p.averageCost * p.quantity : null
+    const unrealized = live && cost !== null ? marketValue! - cost : p.unrealizedPnl
+    return {
+      symbol,
+      quantity: p.quantity,
+      averageCost: p.averageCost,
+      price,
+      live,
+      session: q?.session ?? null,
+      outcome: evalBySymbol.get(symbol)?.outcome ?? null,
+      dailyPnl: null,
+      dayChange: live ? q!.changeRate : bar?.changeRate ?? null,
+      dayChangeDate: live ? null : bar?.tradeDate ?? null,
+      marketValue,
+      unrealizedPnl: unrealized,
+      unrealizedPct: unrealized !== null && cost ? (unrealized / cost) * 100 : null,
+      weight: marketValue !== null && nav ? (marketValue / nav) * 100 : null,
+      cashEquivalent: p.cashEquivalent,
+    }
+  })
+})
+
+/** 两份审计里没通过的项：只在有问题时出现，关键项排前。 */
+const problems = computed(() =>
+  [
+    ...(signalAudit.value?.checks ?? []).filter((c) => !c.ok).map((c) => ({ ...c, from: '信号' })),
+    ...(accountAudit.value?.checks ?? []).filter((c) => !c.ok).map((c) => ({ ...c, from: '账户' })),
+  ].sort((a, b) => Number(b.critical) - Number(a.critical)),
+)
+
+// ---- 刷新节奏：页面切到后台即暂停 ----
+let dailyTimer = 0
+let quoteTimer = 0
+let liveTimer = 0
+/** 预热中 1.5 秒一轮等数据到齐，之后 5 秒一轮（读的是后端内存，不打网关）。 */
+function scheduleLive() {
+  window.clearTimeout(liveTimer)
+  liveTimer = window.setTimeout(async () => {
+    await loadLive()
+    scheduleLive()
+  }, live.value?.status === 'WARMING' ? 1_500 : 5_000)
 }
-
-/** 数据新鲜度：几条时间线放一起，一眼看出哪条停了。 */
-const freshness = computed(() => [
-  { name: '日 K 线', date: barCoverage.value?.latest ?? null, hint: `${barCoverage.value?.rows.toLocaleString() ?? '—'} 行` },
-  { name: '估值快照', date: fundCoverage.value?.latestDate ?? null, hint: `${fundCoverage.value?.withValuationOnDate ?? '—'} / ${fundCoverage.value?.targets ?? '—'} 只` },
-  { name: '账户快照', date: snapshot.value?.asOfDate ?? null, hint: snapshot.value ? `${snapshot.value.positions} 条持仓` : '还没拍过' },
-  { name: '信号评估', date: signalAudit.value?.date ?? null, hint: summary.value.tradingDay === false ? '休市' : `${summary.value.evaluations ?? 0} 只` },
-].map((f) => ({ ...f, age: daysSince(f.date) })))
-
-const gatewayTag = (g: GatewayView) => (g.state === 'CONNECTED' ? 'success' : g.state === 'DISABLED' ? 'info' : 'warning')
-
-function jobTag(s: JobRun['status']): 'success' | 'warning' | 'danger' | 'info' {
-  return s === 'OK' ? 'success' : s === 'PARTIAL' ? 'warning' : s === 'FAILED' ? 'danger' : 'info'
+function scheduleQuotes() {
+  window.clearTimeout(quoteTimer)
+  const active = session.value !== 'CLOSED' && quotes.value.size > 0
+  quoteTimer = window.setTimeout(async () => {
+    await loadQuotes()
+    scheduleQuotes()
+  }, active ? 5_000 : 60_000)
 }
+function start() {
+  void loadDaily()
+  void loadLive().then(scheduleLive)
+  void loadQuotes().then(scheduleQuotes)
+  dailyTimer = window.setInterval(loadDaily, 5 * 60_000)
+}
+function stop() {
+  window.clearInterval(dailyTimer)
+  window.clearTimeout(quoteTimer)
+  window.clearTimeout(liveTimer)
+  dailyTimer = quoteTimer = liveTimer = 0
+}
+function onVisibility() {
+  if (document.hidden) stop()
+  else if (!dailyTimer) start()
+}
+onMounted(() => {
+  start()
+  document.addEventListener('visibilitychange', onVisibility)
+})
+onBeforeUnmount(() => {
+  stop()
+  document.removeEventListener('visibilitychange', onVisibility)
+})
 
-function open(row: SignalView) {
-  pickedId.value = row.signal.id
+function openCandidate(symbol: string) {
+  pickedSymbol.value = symbol
   drawer.value = true
 }
 </script>
 
 <template>
-  <div v-loading="loading" class="page">
-    <PageHeader title="仪表盘" :hint="`今天美东 ${todayEt()}；每分钟自动刷新`">
-      <template #actions>
-        <el-button size="small" :loading="loading" @click="load(true)">刷新</el-button>
-      </template>
-    </PageHeader>
+  <div class="dash">
+    <el-alert v-if="error" :title="'取数失败：' + error" type="error" show-icon :closable="false" />
 
-    <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
+    <div v-if="problems.length" class="banner">
+      <b>需要处理</b>
+      <span v-for="c in problems" :key="c.from + c.name" class="banner__item" :class="{ 'banner__item--critical': c.critical }">
+        {{ c.from }} · {{ c.name }}：{{ c.detail }}
+      </span>
+    </div>
 
-    <el-row :gutter="12">
-      <el-col :xs="24" :sm="12" :lg="6">
-        <StatCard :label="summary.tradingDay === false ? '今日休市' : '今日新信号'">
-          <template #value>
-            <router-link to="/signals" class="link">{{ summary.tradingDay === false ? '—' : (summary.signals ?? 0) }}</router-link>
-          </template>
-          <template #sub>
-            <template v-if="summary.tradingDay !== false">
-              评估 {{ summary.evaluations ?? 0 }} / {{ summary.targets ?? '—' }} · 池与持仓 {{ summary.poolSignals ?? 0 }} ·
-              AI 否决 {{ summary.aiVetoes ?? 0 }}
-            </template>
-            <template v-else>非交易日不评估</template>
-          </template>
-        </StatCard>
-      </el-col>
+    <MoneyTiles :view="view" :live="live" :session="session" :loaded="loaded" />
+    <EquityPanel :series="series" :days="NAV_DAYS" :live-nav="liveNav" />
+    <div class="two-col">
+      <CandidatePanel :rows="candidates" :eval-date="evalDate" :loaded="loaded" @open="openCandidate" />
+      <HoldingsPanel :rows="holdings" :source="liveHoldings ? 'LIVE' : 'SNAPSHOT'" :as-of="view?.snapshot.asOfDate ?? null"
+                     :eval-date="evalDate" :loaded="loaded"
+                     @open="openCandidate" />
+    </div>
 
-      <el-col :xs="24" :sm="12" :lg="6">
-        <StatCard :label="`净值（${snapshot?.currency ?? '—'}）`" :value-class="trend(latest?.change?.netLiquidationChange)">
-          <template #value>
-            <router-link to="/account" class="link">{{ money(snapshot?.netLiquidation) }}</router-link>
-          </template>
-          <template #sub>
-            <template v-if="snapshot">
-              {{ snapshot.asOfDate }} 收盘
-              <template v-if="latest?.change">
-                · 较上一份
-                <span :class="trend(latest.change.netLiquidationChange)">{{ signed(latest.change.netLiquidationChange) }}</span>
-              </template>
-            </template>
-            <template v-else>还没有账户快照</template>
-          </template>
-        </StatCard>
-      </el-col>
-
-      <el-col :xs="24" :sm="12" :lg="6">
-        <StatCard label="跑批">
-          <template #value>
-            <el-tag v-if="app.running" type="warning" effect="plain">运行中</el-tag>
-            <el-tag v-else-if="lastJob" :type="jobTag(lastJob.status)" effect="plain">{{ lastJob.status }}</el-tag>
-            <span v-else>—</span>
-          </template>
-          <template #sub>
-            <template v-if="app.running">#{{ app.running.id }} {{ app.running.job }}：{{ app.running.progress || '…' }}</template>
-            <template v-else-if="lastJob">最近 #{{ lastJob.id }} {{ lastJob.job }} · {{ fmtEt(lastJob.finishedAt ?? lastJob.startedAt) }}</template>
-            <template v-else>暂无作业记录</template>
-          </template>
-        </StatCard>
-      </el-col>
-
-      <el-col :xs="24" :sm="12" :lg="6">
-        <StatCard label="券商网关">
-          <template #value>
-            <span class="gateways">
-              <el-tag v-for="g in app.info?.gateways ?? []" :key="g.broker" size="small" :type="gatewayTag(g)" effect="plain">
-                {{ g.broker }}
-              </el-tag>
-              <span v-if="!app.info">—</span>
-            </span>
-          </template>
-          <template #sub>
-            健康 {{ app.health }} ·
-            <router-link to="/system" class="link">系统信息</router-link>
-          </template>
-        </StatCard>
-      </el-col>
-    </el-row>
-
-    <el-card v-if="problems.length" shadow="never" header="需要处理">
-      <div v-for="c in problems" :key="c.from + c.name" class="problem" :class="{ 'problem--critical': c.critical }">
-        <el-tag size="small" :type="c.critical ? 'danger' : 'warning'" effect="plain">{{ c.critical ? '关键' : '提示' }}</el-tag>
-        <span class="problem__from">{{ c.from }}</span>
-        <b>{{ c.name }}</b>
-        <span>{{ c.detail }}</span>
-        <span v-if="c.samples.length" class="muted">（{{ c.samples.slice(0, 8).join('、') }}）</span>
-      </div>
-    </el-card>
-    <el-alert v-else-if="signalAudit && accountAudit" type="success" show-icon :closable="false"
-              :title="`信号与账户审计都通过（${signalAudit.date}）`" />
-
-    <el-card shadow="never" header="数据新鲜度">
-      <div class="fresh">
-        <div v-for="f in freshness" :key="f.name" class="fresh__item">
-          <div class="fresh__name">{{ f.name }}</div>
-          <div class="fresh__date" :class="{ stale: f.age !== null && f.age > STALE_DAYS }">
-            {{ f.date ?? '—' }}
-            <span v-if="f.age !== null && f.age > 0" class="muted">（{{ f.age }} 天前）</span>
-          </div>
-          <div class="muted">{{ f.hint }}</div>
-        </div>
-      </div>
-    </el-card>
-
-    <el-row :gutter="12">
-      <el-col :xs="24" :lg="14">
-        <el-card shadow="never" :header="`最近 ${RECENT_DAYS} 天的信号（${recent.length} 条，点一行看详情）`">
-          <el-table :data="recent" size="small" max-height="360" empty-text="这几天没有信号" @row-click="open">
-            <el-table-column label="判定日" width="100"><template #default="{ row }">{{ row.signal.tradeDate }}</template></el-table-column>
-            <el-table-column label="代码" width="80"><template #default="{ row }"><b>{{ row.signal.symbol }}</b></template></el-table-column>
-            <el-table-column label="角色" width="60">
-              <template #default="{ row }">{{ ROLE_LABEL[row.signal.role as keyof typeof ROLE_LABEL] }}</template>
-            </el-table-column>
-            <el-table-column label="状态" width="90">
-              <template #default="{ row }">
-                <el-tag size="small" :type="SIGNAL_STATUS_TYPE[row.signal.status as SignalStatus]">
-                  {{ SIGNAL_STATUS_LABEL[row.signal.status as SignalStatus] }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="收盘" width="85" align="right"><template #default="{ row }">{{ num(row.signal.close) }}</template></el-table-column>
-            <el-table-column label="止损距离" width="90" align="right">
-              <template #default="{ row }">{{ pct(row.signal.stopDistance, 1) }}</template>
-            </el-table-column>
-            <el-table-column label="AI" width="60">
-              <template #default="{ row }">
-                {{ row.signal.aiStance ? STANCE_LABEL[row.signal.aiStance as keyof typeof STANCE_LABEL] ?? row.signal.aiStance : '—' }}
-              </template>
-            </el-table-column>
-            <el-table-column label="账本 R" min-width="80" align="right">
-              <template #default="{ row }">
-                <span v-if="row.base" :class="trend(row.base.rMultiple)">{{ signedR(row.base.rMultiple) }}</span>
-                <span v-else>—</span>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-      </el-col>
-
-      <el-col :xs="24" :lg="10">
-        <el-card shadow="never" :header="`净值走势（最近 ${NAV_DAYS} 天，含出入金）`">
-          <NavChart v-if="navPoints.length > 1" :points="navPoints" />
-          <el-empty v-else :image-size="60"
-                    :description="navPoints.length === 1 ? '只有一份快照，攒够两天才画得出走势' : '还没有账户快照'" />
-        </el-card>
-      </el-col>
-    </el-row>
-
-    <SignalDetailDrawer v-model="drawer" :signal-id="pickedId" @changed="load()" />
+    <EvaluationDrawer v-model="drawer" :symbol="pickedSymbol" :date="evalDate" />
   </div>
 </template>
 
 <style scoped>
-.link {
-  color: inherit;
-  text-decoration: none;
+.dash { display: flex; flex-direction: column; gap: 12px; }
+.two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+@media (max-width: 1180px) { .two-col { grid-template-columns: minmax(0, 1fr); } }
+.banner {
+  display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-radius: 8px; font-size: 12px;
+  background: var(--el-color-warning-light-9); border: 1px solid var(--el-color-warning-light-5); color: var(--el-color-warning-dark-2);
 }
-.link:hover {
-  color: var(--el-color-primary);
-}
-.gateways {
-  display: inline-flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.problem {
-  font-size: 13px;
-  line-height: 1.9;
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  flex-wrap: wrap;
-}
-.problem--critical b {
-  color: var(--el-color-danger);
-}
-.problem__from {
-  color: var(--el-text-color-secondary);
-}
-.fresh {
-  display: flex;
-  gap: 32px;
-  flex-wrap: wrap;
-}
-.fresh__name {
-  color: var(--el-text-color-regular);
-  font-size: 13px;
-}
-.fresh__date {
-  font-size: 18px;
-  font-weight: 600;
-  margin: 2px 0;
-}
-.fresh__date.stale {
-  color: var(--el-color-warning);
-}
+.banner__item--critical { color: var(--el-color-danger); }
 </style>

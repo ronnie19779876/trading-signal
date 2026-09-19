@@ -2,6 +2,6 @@
   <!-- 页面图标：红底白字 TS 单字标。设计语言沿用 ib-auto-trader 的圆角红块，字母换成 TS，
        两个项目一眼是一家，标签页又分得清。ico 版本由 scripts/make-favicon.py 用 PIL 栅格化。 -->
   <rect width="64" height="64" rx="14" fill="#D81E2C"/>
-  <text x="32" y="46" text-anchor="middle" font-family="Arial Black, Arial, Helvetica, sans-serif"
-        font-weight="900" font-size="38" fill="#fff" letter-spacing="-1">TS</text>
+  <text x="32" y="44" text-anchor="middle" font-family="Helvetica Neue, Arial, Helvetica, sans-serif"
+        font-weight="700" font-size="32" fill="#fff" letter-spacing="0.5">TS</text>
 </svg>

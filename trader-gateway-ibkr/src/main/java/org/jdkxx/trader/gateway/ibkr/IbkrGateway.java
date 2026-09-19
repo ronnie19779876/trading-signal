@@ -14,6 +14,8 @@ import org.jdkxx.trader.gateway.BrokerGateway;
 import org.jdkxx.trader.gateway.GatewayException;
 import org.jdkxx.trader.gateway.GatewayListener;
 import org.jdkxx.trader.gateway.GatewayStatus;
+import org.jdkxx.trader.gateway.LiveAccountGateway;
+import org.jdkxx.trader.gateway.LiveAccountListener;
 import org.jdkxx.trader.gateway.NotConnectedException;
 import org.jdkxx.trader.gateway.ReferenceDataGateway;
 import org.jdkxx.trader.gateway.RequestRejectedException;
@@ -38,9 +40,9 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * 盈透网关适配器的对外入口：生命周期由 {@link ConnectionSupervisor} 驱动，会话由 {@link IbkrConnection} 持有。
- * 能力：连接 / 重连 / 心跳、受管账户、合约查询；第 3 期起加持仓与账户汇总（只读）。
+ * 能力：连接 / 重连 / 心跳、受管账户、合约查询；第 3 期起加持仓与账户汇总（只读）；3.0.2 起加实时账户订阅。
  */
-public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, AccountGateway, AutoCloseable {
+public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, AccountGateway, LiveAccountGateway, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(IbkrGateway.class);
 
@@ -51,7 +53,11 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
     private final ExecutorService dispatch;
     private final IbkrFacts facts = new IbkrFacts();
     private final IbkrConnection connection;
+    private final IbkrSubscriptions subscriptions;
     private final ConnectionSupervisor supervisor;
+    /** 实时账户订阅：只在 dispatch 线程上读写。 */
+    private IbkrLiveAccount live;
+    private volatile boolean liveIntent;
 
     public IbkrGateway(IbkrProperties props) {
         props.validate();
@@ -60,13 +66,15 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
             scheduler = null;
             dispatch = null;
             connection = null;
+            subscriptions = null;
             supervisor = null;
             return;
         }
         scheduler = Executors.newScheduledThreadPool(2, named("ibkr-scheduler"));
         dispatch = Executors.newSingleThreadExecutor(named("ibkr-dispatch"));
         IbkrRequestRegistry registry = new IbkrRequestRegistry(scheduler, dispatch, props.requestTimeout());
-        connection = new IbkrConnection(props, registry, facts, dispatch,
+        subscriptions = new IbkrSubscriptions(dispatch);
+        connection = new IbkrConnection(props, registry, subscriptions, facts, dispatch,
                 new TokenBucketRateLimiter("ibkr-messages", props.messageRatePerSecond(),
                         props.messageRatePerSecond(), Duration.ofSeconds(30)));
         supervisor = new ConnectionSupervisor(Broker.IBKR, "盈透网关", connection, props.supervisorSettings(), scheduler);
@@ -76,6 +84,12 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
             @Override
             public void onConnected(Broker broker, boolean reconnected) {
                 verifyConfiguredAccount();
+                // 首次连上、断线重连、1101 数据丢失都走这里：有订阅意图就（重）订
+                dispatch.execute(() -> {
+                    if (live != null) {
+                        live.subscribe();
+                    }
+                });
             }
         });
     }
@@ -226,6 +240,97 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
                     }
                 });
         return mine.copy();
+    }
+
+    // ------------------------------------------------------------------ 实时账户
+
+    @Override
+    public void startLive(String accountId, LiveAccountListener listener) {
+        requireAccountId(accountId);
+        if (!props.enabled()) {
+            return;
+        }
+        liveIntent = true;
+        dispatch.execute(() -> {
+            if (live != null && live.accountId.equals(accountId)) {
+                live.listener(listener);
+                if (!live.subscribed() && isConnected()) {
+                    live.subscribe();
+                }
+                return;
+            }
+            if (live != null) {
+                live.stop();
+            }
+            live = new IbkrLiveAccount(accountId, listener, new LiveWire());
+            if (isConnected()) {
+                live.subscribe();
+            }
+        });
+    }
+
+    @Override
+    public void stopLive() {
+        if (!props.enabled()) {
+            return;
+        }
+        liveIntent = false;
+        dispatch.execute(() -> {
+            if (live != null) {
+                live.stop();
+                live = null;
+            }
+        });
+    }
+
+    @Override
+    public boolean liveActive() {
+        return liveIntent;
+    }
+
+    /** {@link IbkrLiveAccount} 与连接之间的接缝。 */
+    private final class LiveWire implements IbkrLiveAccount.Wire {
+        @Override
+        public Object sessionToken() {
+            return connection.sessionToken();
+        }
+
+        @Override
+        public int nextId() {
+            return connection.nextId();
+        }
+
+        @Override
+        public boolean subscribe(String what, java.util.function.Consumer<com.ib.client.EClientSocket> request) {
+            return connection.subscribe(what, request);
+        }
+
+        @Override
+        public void unsubscribe(String what, java.util.function.Consumer<com.ib.client.EClientSocket> cancel) {
+            connection.unsubscribe(what, cancel);
+        }
+
+        @Override
+        public void open(int id, IbkrSubscriptions.Handler handler) {
+            subscriptions.open(id, handler);
+        }
+
+        @Override
+        public void close(int id) {
+            subscriptions.close(id);
+        }
+
+        @Override
+        public Runnable later(Duration delay, Runnable task) {
+            java.util.concurrent.ScheduledFuture<?> f = scheduler.schedule(() -> dispatch.execute(task),
+                    delay.toMillis(), TimeUnit.MILLISECONDS);
+            return () -> f.cancel(false);
+        }
+
+        @Override
+        public Instant now() {
+            return Instant.now();
+        }
     }
 
     private static void requireAccountId(String accountId) {

@@ -273,11 +273,17 @@ ENDPOINTS = [
         ],
     },
     {
-        "folder": "账户与持仓（第 3 期）",
+        "folder": "账户与持仓（第 3 期；实时账户 3.0.2）",
         "items": [
             {"name": "账户审计（收盘后必查）", "method": "GET", "path": "/api/account/audit",
              "desc": "当天快照是否存在（美东 18:30 前缺快照只提示）、对账状态（FAIL 为关键项，WARN 只提示）、缺价、最近一次快照作业。休市日直接判过。",
              "tests": T_200 + T_JSON + ['pm.test("审计通过 ok=true（失败时看 checks）", () => pm.expect(body.ok, JSON.stringify(body.checks.filter(c => !c.ok))).to.eql(true));']},
+            {"name": "实时账户（按需订阅）", "method": "GET", "path": "/api/account/live",
+             "desc": "3.0.2：盈透常驻订阅的资金、盈亏、持仓，只读内存。第一次读发起订阅（status=WARMING，约 2 秒到齐），5 分钟没人读自动退订。"
+                     "nav.estimate = 现金 + 应计股息 + 逐只市值之和（秒级），nav.summary 为盈透汇总（约 3 分钟一推）。网关未启用 / 未连接时 status=UNAVAILABLE。",
+             "tests": T_200 + T_JSON + ['pm.test("status 是四种之一", () => pm.expect(body.status).to.be.oneOf(["LIVE", "WARMING", "DISCONNECTED", "UNAVAILABLE"]));',
+                                        'pm.test("账户号只给脱敏形式", () => pm.expect(String(body.accountMask ?? "")).to.not.match(/U\\d{5,}/));',
+                                        'pm.test("positions 是数组", () => pm.expect(body.positions).to.be.an("array"));']},
             {"name": "最新账户快照", "method": "GET", "path": "/api/account/snapshots/latest",
              "desc": "资金、本系统估值、对账明细与持仓（priceSource：BAR/SNAPSHOT/NONE）。账户号只给脱敏形式。还没有快照 → 404。",
              "tests": ['pm.test("HTTP 200 或 404（还没有快照）", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));']},

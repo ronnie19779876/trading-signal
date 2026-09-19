@@ -2273,7 +2273,7 @@
       ]
     },
     {
-      "name": "账户与持仓（第 3 期）",
+      "name": "账户与持仓（第 3 期；实时账户 3.0.2）",
       "item": [
         {
           "name": "账户审计（收盘后必查）",
@@ -2311,6 +2311,50 @@
                   "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
                   "pm.test(\"审计通过 ok=true（失败时看 checks）\", () => pm.expect(body.ok, JSON.stringify(body.checks.filter(c => !c.ok))).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "实时账户（按需订阅）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/account/live",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "account",
+                "live"
+              ]
+            },
+            "description": "3.0.2：盈透常驻订阅的资金、盈亏、持仓，只读内存。第一次读发起订阅（status=WARMING，约 2 秒到齐），5 分钟没人读自动退订。nav.estimate = 现金 + 应计股息 + 逐只市值之和（秒级），nav.summary 为盈透汇总（约 3 分钟一推）。网关未启用 / 未连接时 status=UNAVAILABLE。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"status 是四种之一\", () => pm.expect(body.status).to.be.oneOf([\"LIVE\", \"WARMING\", \"DISCONNECTED\", \"UNAVAILABLE\"]));",
+                  "pm.test(\"账户号只给脱敏形式\", () => pm.expect(String(body.accountMask ?? \"\")).to.not.match(/U\\d{5,}/));",
+                  "pm.test(\"positions 是数组\", () => pm.expect(body.positions).to.be.an(\"array\"));"
                 ]
               }
             }

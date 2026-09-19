@@ -86,7 +86,7 @@ onMounted(() => {
   if (!el.value) return
   const t = chartTheme()
   chart = createChart(el.value, { height: props.height, ...chartLayout(t) })
-  // 中国习惯：红涨绿跌
+  // 涨跌色来自 tokens.css（美股口径绿涨红跌）
   candles = chart.addSeries(CandlestickSeries, { upColor: t.up, downColor: t.down, borderVisible: false, wickUpColor: t.up, wickDownColor: t.down })
   volume = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'volume' })
   chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })

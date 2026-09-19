@@ -54,6 +54,7 @@ final class IbkrConnection implements Transport {
 
     private final IbkrProperties props;
     private final IbkrRequestRegistry registry;
+    private final IbkrSubscriptions subscriptions;
     private final IbkrFacts facts;
     private final Executor dispatch;
     private final RateLimiter limiter;
@@ -77,10 +78,11 @@ final class IbkrConnection implements Transport {
         volatile boolean intentional;
     }
 
-    IbkrConnection(IbkrProperties props, IbkrRequestRegistry registry, IbkrFacts facts, Executor dispatch,
-                   RateLimiter limiter) {
+    IbkrConnection(IbkrProperties props, IbkrRequestRegistry registry, IbkrSubscriptions subscriptions, IbkrFacts facts,
+                   Executor dispatch, RateLimiter limiter) {
         this.props = props;
         this.registry = registry;
+        this.subscriptions = subscriptions;
         this.facts = facts;
         this.dispatch = dispatch;
         this.limiter = limiter;
@@ -110,7 +112,7 @@ final class IbkrConnection implements Transport {
             closeSession(old, "被新的连接取代");
         }
         Session s = new Session();
-        s.client = new EClientSocket(new IbkrWrapper(new SessionEvents(s), registry), s.signal);
+        s.client = new EClientSocket(new IbkrWrapper(new SessionEvents(s), registry, subscriptions), s.signal);
         session = s;
         facts.reset();
         connectExecutor.execute(() -> handshake(s));
@@ -224,6 +226,7 @@ final class IbkrConnection implements Transport {
         }
         NotConnectedException gone = new NotConnectedException(Broker.IBKR, reason);
         registry.failAll(gone);
+        subscriptions.clear();   // 订阅随会话失效；订阅方在重连后用新 reqId 重订
         failWaiters(gone);
         if (!s.ready.isDone()) {
             s.ready.completeExceptionally(new GatewayException(Broker.IBKR, 0, reason, true));
@@ -313,6 +316,37 @@ final class IbkrConnection implements Transport {
         f.whenComplete((rows, ex) -> cancelQuietly("账户汇总", c -> c.cancelAccountSummary(id)));
         sendWithId(id, c -> c.reqAccountSummary(id, "All", tags));
         return f;
+    }
+
+    // ------------------------------------------------------------------ 常驻订阅（实时账户）
+
+    /** 当前会话的标识：订阅方据此判断旧 reqId 是否还活着（1101 数据丢失时会话不变，要先取消再重订）。 */
+    Object sessionToken() {
+        return session;
+    }
+
+    int nextId() {
+        return registry.nextId();
+    }
+
+    /** 发一个常驻订阅。未连接或发送失败返回 false，由订阅方等重连后再订。 */
+    boolean subscribe(String what, Consumer<EClientSocket> action) {
+        Session s = session;
+        if (!isConnected()) {
+            return false;
+        }
+        try {
+            limiter.acquire();
+            action.accept(s.client);
+            return true;
+        } catch (RuntimeException e) {
+            log.warn("订阅{}失败：{}", what, e.toString());
+            return false;
+        }
+    }
+
+    void unsubscribe(String what, Consumer<EClientSocket> action) {
+        cancelQuietly(what, action);
     }
 
     /** 发送一个带 reqId 的请求；未连接或发送失败时让注册表里的请求失败。 */

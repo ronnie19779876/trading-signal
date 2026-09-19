@@ -39,7 +39,11 @@ final class AccountPositions {
 
     /** 选账户：配了 trader.ibkr.account 就用它（必须在受管列表里），没配且只有一个就用那一个。异常消息不带账户号。 */
     String chooseAccount() throws Exception {
-        List<String> ids = await(broker.accounts()).stream().map(AccountRef::accountId).toList();
+        return choose(configuredAccount, await(broker.accounts()).stream().map(AccountRef::accountId).toList());
+    }
+
+    /** 选账户的规则本身（实时账户与快照共用）。 */
+    static String choose(String configuredAccount, List<String> ids) {
         if (configuredAccount != null && !configuredAccount.isBlank()) {
             String c = configuredAccount.trim();
             if (!ids.contains(c)) {

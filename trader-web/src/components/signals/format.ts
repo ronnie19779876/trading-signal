@@ -27,7 +27,7 @@ export const SIGNAL_STATUS_TYPE: Record<SignalStatus, TagType> = {
 export const TRACK_LABEL: Record<TrackStatus, string> = { PENDING_ENTRY: '待入场', OPEN: '持有中', CLOSED: '已平仓' }
 export const EXIT_LABEL: Record<ExitReason, string> = { STOP: '止损', CHANDELIER: '吊灯止损', TIME: '时间止损', OPEN: '未平仓' }
 export const STANCE_LABEL: Record<Stance, string> = { BULLISH: '看多', NEUTRAL: '中性', BEARISH: '看空', AVOID: '回避' }
-export const STANCE_TYPE: Record<Stance, TagType> = { BULLISH: 'danger', NEUTRAL: 'info', BEARISH: 'success', AVOID: 'warning' }
+export const STANCE_TYPE: Record<Stance, TagType> = { BULLISH: 'success', NEUTRAL: 'info', BEARISH: 'danger', AVOID: 'warning' }
 export const CONFIDENCE_LABEL: Record<Confidence, string> = { HIGH: '把握高', MEDIUM: '把握中', LOW: '把握低' }
 export const AI_STATUS_LABEL: Record<AiStatus, string> = {
   OK: '成功', REFUSED: '拒答', TRUNCATED: '截断', INVALID: '结构非法', FAILED: '调用失败', SKIPPED_BUDGET: '预算跳过', FAILED_DATA: '输入构建失败',

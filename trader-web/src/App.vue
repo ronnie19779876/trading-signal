@@ -3,15 +3,23 @@ import { computed } from 'vue'
 import { useAppStore } from './stores/app'
 import { useAutoRefresh } from './composables/useAutoRefresh'
 import { useTheme, type ThemeMode } from './composables/useTheme'
+import MarketClock from './components/MarketClock.vue'
 
 const links = [
   { to: '/', label: '仪表盘' },
-  { to: '/marketdata', label: '行情' },
-  { to: '/fundamentals', label: '基本面' },
+  { to: '/positions', label: '持仓' },
   { to: '/account', label: '账户' },
-  { to: '/signals', label: '信号' },
+  { to: '/fundamentals', label: '基本面' },
+  { to: '/signals', label: '入场信号' },
+  { to: '/trades', label: '交易' },
   { to: '/system', label: '系统' },
 ]
+
+/**
+ * 绑定成普通 URL，让浏览器直接取 public/favicon.svg。写成静态 src 时 Vite 会把它内联成 base64，
+ * 开发时改了 SVG 页头还是旧图（资源缓存不跟着 public 文件失效，2026-09-19 实测）。
+ */
+const LOGO = '/favicon.svg'
 
 const THEME_LABEL: Record<ThemeMode, string> = { system: '跟随系统', light: '浅色', dark: '深色' }
 
@@ -27,7 +35,7 @@ const env = computed(() => app.info?.environment ?? null)
   <div class="shell">
     <header class="shell__header">
       <router-link to="/" class="shell__brand">
-        <img src="/favicon.svg" alt="" width="20" height="20" />
+        <img :src="LOGO" alt="" width="26" height="26" />
         <span>T-Signal</span>
       </router-link>
 
@@ -36,6 +44,8 @@ const env = computed(() => app.info?.environment ?? null)
       </nav>
 
       <span class="shell__spacer"></span>
+
+      <MarketClock />
 
       <!-- 生产实例红色标记：写操作按钮长得一样，别对着生产点。 -->
       <el-tag v-if="env" size="small" :type="env === 'PROD' ? 'danger' : 'success'" effect="plain">{{ env }}</el-tag>
@@ -86,21 +96,33 @@ const env = computed(() => app.info?.environment ?? null)
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-right: 8px;
   font-weight: 600;
-  font-size: 16px;
+  font-size: 14px;
   color: var(--el-text-color-primary);
   text-decoration: none;
 }
+/* 菜单：按钮效果（参考 futu-trader）——每项圆角块，悬停出底色，选中淡蓝底蓝字 */
 .shell__nav {
   display: flex;
-  gap: 16px;
+  gap: 2px;
 }
 .shell__nav a {
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 18px;
   color: var(--el-text-color-regular);
   text-decoration: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
-/* 用 exact-active：'/' 是所有路由的前缀，router-link-active 会让"系统"永远高亮。 */
+.shell__nav a:hover {
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
+}
+/* 用 exact-active：'/' 是所有路由的前缀，router-link-active 会让"仪表盘"永远高亮。 */
 .shell__nav a.router-link-exact-active {
+  background: var(--el-color-primary-light-9);
   color: var(--el-color-primary);
   font-weight: 600;
 }

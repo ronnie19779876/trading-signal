@@ -3,11 +3,12 @@
  * 明暗两套由 <html class="dark"> 切换（见 composables/useTheme.ts）。
  */
 :root {
-  /* 中国习惯：红涨绿跌。暗色下同一组色在深底上偏闷，各提亮一档。 */
-  --tr-up: #ef5350;
-  --tr-down: #26a69a;
-  --tr-up-fill: rgba(239, 83, 80, 0.5);
-  --tr-down-fill: rgba(38, 166, 154, 0.5);
+  /* 美股口径：绿涨红跌（2026-09-19 用户定，全站统一；此前是国内习惯的红涨绿跌）。
+     暗色下同一组色在深底上偏闷，各提亮一档。 */
+  --tr-up: #12805c;
+  --tr-down: #d92d20;
+  --tr-up-fill: rgba(18, 128, 92, 0.45);
+  --tr-down-fill: rgba(217, 45, 32, 0.45);
 
   /* 图表：lightweight-charts 只认具体颜色值，不认 CSS 变量，组件里 getComputedStyle 取。 */
   --tr-chart-text: #606266;
@@ -20,10 +21,10 @@
 }
 
 html.dark {
-  --tr-up: #ff6b68;
-  --tr-down: #3ecabc;
-  --tr-up-fill: rgba(255, 107, 104, 0.45);
-  --tr-down-fill: rgba(62, 202, 188, 0.45);
+  --tr-up: #3ccb8f;
+  --tr-down: #f97066;
+  --tr-up-fill: rgba(60, 203, 143, 0.4);
+  --tr-down-fill: rgba(249, 112, 102, 0.4);
 
   --tr-chart-text: #a3a6ad;
   --tr-chart-grid: #2b2b2d;
@@ -68,4 +69,88 @@ html.dark {
 .toolbar > *,
 .actions > * {
   flex: none;
+}
+
+/*
+ * 紧凑面板与表格（仪表盘起用，之后各页逐步改用）：信息密度高于 el-card + el-table，
+ * 颜色全部走 Element Plus 的变量，明暗两套不用各写一份。
+ */
+.panel {
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 10px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+.panel__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.panel__head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+.panel__src {
+  font-size: 11px;
+  color: var(--el-text-color-placeholder);
+}
+.panel__grow {
+  flex: 1;
+}
+.panel__foot {
+  margin: 6px 0 2px;
+  font-size: 11px;
+  color: var(--el-text-color-placeholder);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.dtable-wrap {
+  overflow-x: auto;
+}
+.dtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.dtable th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  white-space: nowrap;
+}
+.dtable td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--el-border-color-extra-light);
+  white-space: nowrap;
+}
+.dtable tr:last-child td {
+  border-bottom: 0;
+}
+.dtable .r {
+  text-align: right;
+}
+.dtable .c {
+  text-align: center;
+}
+.dtable tbody tr.clickable {
+  cursor: pointer;
+}
+.dtable tbody tr.clickable:hover td {
+  background: var(--el-fill-color-light);
+}
+.dtable .empty {
+  text-align: center;
+  color: var(--el-text-color-secondary);
+  padding: 20px;
 }

@@ -22,6 +22,7 @@ class IbkrWrapperTest {
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
     private final List<String> events = new ArrayList<>();
     private final IbkrRequestRegistry registry = new IbkrRequestRegistry(scheduler, Runnable::run, Duration.ofSeconds(5));
+    private final IbkrSubscriptions subscriptions = new IbkrSubscriptions(Runnable::run);
     private final IbkrWrapper wrapper = new IbkrWrapper(new IbkrWrapper.ConnectionEvents() {
         @Override
         public void onConnectAck() {
@@ -52,7 +53,7 @@ class IbkrWrapperTest {
         public void onSystemMessage(int code, String message) {
             events.add("sys=" + code);
         }
-    }, registry);
+    }, registry, subscriptions);
 
     @AfterEach
     void tearDown() {
@@ -110,5 +111,31 @@ class IbkrWrapperTest {
         wrapper.accountSummary(id2, "ACCT-A", "NetLiquidation", "1", "USD");
         wrapper.positionMulti(id, "ACCT-A", "", new Contract(), Decimal.get(1), 10.0);
         assertThat(events).isEmpty();
+    }
+
+    /** 守护：常驻订阅的拒绝（例如账户汇总超出每客户端 2 个的上限，322）转给订阅方，不当成系统消息吞掉。 */
+    @Test
+    void 常驻订阅的错误与推送转给订阅处理器() {
+        int id = registry.nextId();
+        List<String> got = new ArrayList<>();
+        subscriptions.open(id, new IbkrSubscriptions.Handler() {
+            @Override
+            public void item(Object item) {
+                got.add(item.getClass().getSimpleName());
+            }
+
+            @Override
+            public void error(RequestRejectedException e) {
+                got.add("error=" + e.code());
+            }
+        });
+
+        wrapper.pnl(id, 1.0, 2.0, 0.0);
+        wrapper.pnlSingle(id, Decimal.get(10), 1.0, 2.0, Double.MAX_VALUE, 100.0);
+        wrapper.error(id, 0, 322, "Maximum number of account summary requests exceeded", null);
+        wrapper.pnl(id + 1, 1.0, 2.0, 0.0);   // 不认识的 id 忽略
+
+        assertThat(got).containsExactly("PnlRow", "PnlSingleRow", "error=322");
+        assertThat(events).doesNotContain("sys=322");
     }
 }

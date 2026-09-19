@@ -138,6 +138,15 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | `GET /api/account/snapshots?from&to` | 快照序列（默认最近 90 天），不含持仓明细 |
 | `POST /api/account/holdings/sync?apply=false` | 按盈透持仓维护池里的 HOLDING。默认只返回计划（`plan.changes` 的 `ADD` / `PROMOTE` / `RETURN_TO_POOL` / `REMOVE`），`apply=true` 才改池，并触发实时订阅对账与深度回补；盈透返回空持仓而池里还有 HOLDING 时不执行（`plan.blocked`）；盈透未连接 → 503 |
 | `GET /api/account/audit?date=` | 账户审计（收盘巡检第三段），默认审最近一个已收盘交易日：当天快照是否存在（美东 18:30 前、或从来没有过快照即刚启用时，缺快照只提示）、对账状态（FAIL 为关键项，WARN 只提示）、缺价、最近一次快照作业；休市日直接判过 |
+| `GET /api/account/live` | **实时账户**（3.0.2）：盈透常驻订阅，只读内存、不落库。**按需**：第一次读发起订阅（`status=WARMING`，通常 2 秒内到齐），5 分钟没人读自动退订。字段见下 |
+
+实时账户 `GET /api/account/live` 的字段（各部分自带更新时间，本来就不同步）：
+- `status`：`LIVE` 数据在推送；`WARMING` 刚订阅；`DISCONNECTED` 网关断了，保留断线前最后收到的数据；`UNAVAILABLE` 取不到（网关未启用 / 未连接 / 选不出账户），`detail` 说明原因。
+- `accountMask`、`currency`、`startedAt`（本次订阅开始时间）、`lastError`（订阅被券商拒绝时的说明，例如账户汇总超出每客户端 2 个的上限 322）。
+- `money`：盈透账户汇总——`netLiquidation`、`totalCash`、`availableFunds`、`buyingPower`、`excessLiquidity`、`grossPositionValue`、`stockMarketValue`、`accruedDividend`、`updatedAt`。**约 3 分钟才推一次**（实测）。
+- `nav`：`estimate` 实时估算 = `totalCash` + `accruedDividend` + Σ 逐只市值，秒级；只对全是股票的账户估，缺任何一只的市值时为 null。`summary` 为盈透汇总净值原值（3 分钟一推）。实测同一时刻两者精确相等。
+- `pnl`：`daily`（当日）、`unrealized`（浮动）、`realized`（当日已实现）、`updatedAt`；`source=ACCOUNT` 来自盈透账户盈亏（按变化约 5 秒一推），`POSITIONS` 为账户盈亏还没到时由逐只加总（实测两者精确相等）。盘前盘后盈透用扩展时段价重算当日盈亏。
+- `positions[]`：`symbol`（类别股已换成点，如 `BRK.B`）、`conId`、`securityType`、`quantity`、`averageCost`、`price`（= 市值 ÷ 数量）、`marketValue`、`dailyPnl`、`unrealizedPnl`、`cashEquivalent`、`updatedAt`；`positionsUpdatedAt` 为持仓列表最近一次变化。金额保留两位小数。
 
 持仓同步规则：持有而池里没有的加为 HOLDING（库里也没有的先向富途解析建档）；池里是 POOL 的升为 HOLDING、清仓后回 POOL；
 池里是 BENCHMARK 的不动（基准不因买卖改变）；其余 HOLDING 清仓后移出池（K 线与基本面保留）；现金管理工具与非美股持仓不算。

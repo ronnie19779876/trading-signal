@@ -2,9 +2,11 @@ package org.jdkxx.trader.gateway.ibkr.mapper;
 
 import com.ib.client.Contract;
 import com.ib.client.Decimal;
+import org.jdkxx.trader.domain.AccountPnl;
 import org.jdkxx.trader.domain.AccountSummary;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.domain.Position;
+import org.jdkxx.trader.domain.PositionPnl;
 import org.jdkxx.trader.gateway.GatewayException;
 
 import java.math.BigDecimal;
@@ -51,7 +53,31 @@ public final class IbkrAccounts {
         }
     }
 
+    /** pnl 回调的原样数据（账户级，实时账户订阅用）。 */
+    public record PnlRow(double daily, double unrealized, double realized) {
+    }
+
+    /** pnlSingle 回调的原样数据（单个持仓）。 */
+    public record PnlSingleRow(Decimal position, double daily, double unrealized, double realized, double value) {
+    }
+
     private IbkrAccounts() {
+    }
+
+    public static AccountPnl pnl(PnlRow r, Instant receivedAt) {
+        return new AccountPnl(Broker.IBKR, receivedAt, amount(r.daily()), amount(r.unrealized()), amount(r.realized()));
+    }
+
+    /** 实测（2026-09-19）：realized 恒为 Double.MAX_VALUE（未设），映射成 null。 */
+    public static PositionPnl positionPnl(String conId, PnlSingleRow r, Instant receivedAt) {
+        BigDecimal qty = r.position() == null || !r.position().isValid() ? null : r.position().value();
+        return new PositionPnl(Broker.IBKR, conId, receivedAt, qty, amount(r.daily()), amount(r.unrealized()),
+                amount(r.realized()), amount(r.value()));
+    }
+
+    /** TWS 用 Double.MAX_VALUE 表示"未设"；NaN、无穷同样当作没有。 */
+    public static BigDecimal amount(double v) {
+        return Double.isNaN(v) || Double.isInfinite(v) || v == Double.MAX_VALUE ? null : BigDecimal.valueOf(v);
     }
 
     public static List<Position> positions(String accountId, List<PositionRow> rows) {

@@ -3,6 +3,7 @@ package org.jdkxx.trader.app.web;
 import org.jdkxx.trader.core.account.AccountAuditService;
 import org.jdkxx.trader.core.account.AccountFacade;
 import org.jdkxx.trader.core.account.HoldingSyncService;
+import org.jdkxx.trader.core.account.LiveAccountService;
 import org.jdkxx.trader.core.marketdata.audit.BarAuditService;
 import org.jdkxx.trader.storage.account.AccountSnapshotRow;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -18,7 +19,7 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 
 /**
- * 账户与持仓（第 3 期）：快照作业、快照查询、持仓同步、账户审计。账户号只以脱敏形式出现。只在存储启用时装配。
+ * 账户与持仓（第 3 期）：快照作业、快照查询、持仓同步、账户审计；3.0.2 起加实时账户。账户号只以脱敏形式出现。只在存储启用时装配。
  */
 @RestController
 @ConditionalOnProperty(name = "trader.storage.enabled", havingValue = "true")
@@ -27,11 +28,23 @@ public class AccountController {
     private final AccountFacade facade;
     private final HoldingSyncService holdingSync;
     private final AccountAuditService audit;
+    private final LiveAccountService live;
 
-    public AccountController(AccountFacade facade, HoldingSyncService holdingSync, AccountAuditService audit) {
+    public AccountController(AccountFacade facade, HoldingSyncService holdingSync, AccountAuditService audit,
+                             LiveAccountService live) {
         this.facade = facade;
         this.holdingSync = holdingSync;
         this.audit = audit;
+        this.live = live;
+    }
+
+    /**
+     * 实时账户：资金、盈亏、持仓（盈透常驻订阅，只读内存）。第一次读发起订阅（WARMING），5 分钟没人读自动退订。
+     * 各部分自带更新时间：资金约 3 分钟一推，盈亏与逐只市值按变化秒级推送。
+     */
+    @GetMapping("/api/account/live")
+    public LiveAccountService.LiveView live() {
+        return live.view();
     }
 
     /** 账户快照作业。只能在快照窗口内拍（窗口外 409）；force=true 只在开发环境可用。 */

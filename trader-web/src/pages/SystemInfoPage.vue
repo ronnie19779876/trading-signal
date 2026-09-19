@@ -109,6 +109,7 @@ function factsText(facts: Record<string, string>): string {
     <PageHeader title="系统信息" :hint="`每 ${REFRESH_MS / 1000} 秒自动刷新`">
       <template #actions>
         <el-button size="small" :loading="loading" @click="refresh(true)">刷新</el-button>
+        <router-link to="/marketdata"><el-button size="small" text type="primary">行情数据底座 →</el-button></router-link>
       </template>
     </PageHeader>
 

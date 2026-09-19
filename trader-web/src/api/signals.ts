@@ -242,6 +242,9 @@ export const signalsApi = {
   audit: async (date?: string) => (await http.get<AuditReport>('/api/signals/audit', { params: opt({ date }), timeout: 30_000 })).data,
   evaluations: async (p: { date?: string; outcome?: string; gate?: string; scope?: 'pool' | 'all' }) =>
     (await http.get<EvaluationRow[]>('/api/signals/evaluations', { params: opt(p) })).data,
+  /** 单只评估历史（倒序）；仪表盘用它找最近一个有评估的日子 */
+  history: async (symbol: string, p: { from?: string; to?: string } = {}) =>
+    (await http.get<EvaluationRow[]>(`/api/signals/evaluations/${encodeURIComponent(symbol)}`, { params: opt(p) })).data,
   evaluate: async (symbol: string, date?: string) =>
     (await http.get<Judgement>(`/api/signals/evaluate/${encodeURIComponent(symbol)}`, { params: opt({ date }) })).data,
   list: async (p: { from?: string; to?: string; status?: string; scope?: 'pool' | 'all'; origin?: string }) =>

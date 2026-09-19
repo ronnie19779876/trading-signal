@@ -106,7 +106,73 @@ export interface AuditReport {
   checks: AuditCheck[]
 }
 
+/** 实时账户（3.0.2，GET /api/account/live）：盈透常驻订阅，只读内存；各部分自带更新时间。 */
+export type LiveStatus = 'LIVE' | 'WARMING' | 'DISCONNECTED' | 'UNAVAILABLE'
+
+export interface LiveMoney {
+  netLiquidation: number | null
+  totalCash: number | null
+  availableFunds: number | null
+  buyingPower: number | null
+  excessLiquidity: number | null
+  grossPositionValue: number | null
+  stockMarketValue: number | null
+  accruedDividend: number | null
+  /** 盈透账户汇总约 3 分钟才推一次 */
+  updatedAt: string
+}
+
+export interface LiveNav {
+  /** 实时估算：现金 + 应计股息 + 逐只市值之和；缺数据时为 null */
+  estimate: number | null
+  estimateAt: string | null
+  /** 盈透汇总的净值原值（约 3 分钟一推） */
+  summary: number | null
+  summaryAt: string | null
+}
+
+export interface LivePnl {
+  daily: number | null
+  unrealized: number | null
+  realized: number | null
+  /** ACCOUNT = 盈透账户盈亏；POSITIONS = 账户盈亏还没到时由逐只加总 */
+  source: 'ACCOUNT' | 'POSITIONS'
+  updatedAt: string
+}
+
+export interface LivePosition {
+  symbol: string
+  conId: string
+  securityType: string | null
+  currency: string | null
+  quantity: number
+  averageCost: number | null
+  /** 市值 ÷ 数量 */
+  price: number | null
+  marketValue: number | null
+  dailyPnl: number | null
+  unrealizedPnl: number | null
+  cashEquivalent: boolean
+  updatedAt: string | null
+}
+
+export interface LiveView {
+  status: LiveStatus
+  detail: string | null
+  accountMask: string | null
+  currency: string | null
+  startedAt: string | null
+  nav: LiveNav | null
+  money: LiveMoney | null
+  pnl: LivePnl | null
+  positions: LivePosition[]
+  positionsUpdatedAt: string | null
+  lastError: string | null
+}
+
 export const accountApi = {
+  /** 第一次读会发起订阅（WARMING），5 分钟没人读自动退订。 */
+  live: async () => (await http.get<LiveView>('/api/account/live')).data,
   latest: async () => (await http.get<SnapshotView>('/api/account/snapshots/latest')).data,
   snapshots: async (from?: string, to?: string) =>
     (await http.get<AccountSnapshot[]>('/api/account/snapshots', {
