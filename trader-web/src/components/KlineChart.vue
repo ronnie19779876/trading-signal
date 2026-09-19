@@ -29,8 +29,15 @@ const props = withDefaults(
     ma?: number[]
     /** 只显示这天及以后；更早的 K 线只用来给均线预热（MA200 要 200 根） */
     visibleFrom?: string
+    /** 均线显隐记在本机的键；不同场景各记各的（信号图默认隐藏，持仓抽屉默认显示） */
+    maKey?: string
+    /** 本机没有记录时均线默认隐藏 */
+    maHiddenByDefault?: boolean
   }>(),
-  { height: 380, markers: () => [], priceLines: () => [], zones: () => [], ma: () => [], visibleFrom: '' },
+  {
+    height: 380, markers: () => [], priceLines: () => [], zones: () => [], ma: () => [], visibleFrom: '',
+    maKey: 'kline.ma.hidden', maHiddenByDefault: false,
+  },
 )
 
 const { isDark } = useTheme()
@@ -44,20 +51,22 @@ let lines: IPriceLine[] = []
 let maSeries = new Map<number, ISeriesApi<'Line'>>()
 
 // ---- 均线开关：隐藏的周期记在本机（取不到存储就按全部显示） ----
-const MA_KEY = 'kline.ma.hidden'
 function readHidden(): number[] {
+  const fallback = props.maHiddenByDefault ? [...props.ma] : []
   try {
-    const v = JSON.parse(localStorage.getItem(MA_KEY) ?? '[]')
-    return Array.isArray(v) ? v.filter((x) => typeof x === 'number') : []
+    const raw = localStorage.getItem(props.maKey)
+    if (raw === null) return fallback
+    const v = JSON.parse(raw)
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'number') : fallback
   } catch {
-    return []
+    return fallback
   }
 }
 const hidden = ref<number[]>(readHidden())
 function toggleMa(period: number) {
   hidden.value = hidden.value.includes(period) ? hidden.value.filter((p) => p !== period) : [...hidden.value, period]
   try {
-    localStorage.setItem(MA_KEY, JSON.stringify(hidden.value))
+    localStorage.setItem(props.maKey, JSON.stringify(hidden.value))
   } catch {
     // 存不了就只在本次页面里生效
   }
@@ -121,7 +130,8 @@ function renderOverlays() {
     lines.push(candles.createPriceLine({ price: z.top, color, title: `${z.title} 顶`, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false }))
     lines.push(candles.createPriceLine({ price: z.bottom, color, title: `${z.title} 底`, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false }))
   }
-  const dates = new Set(props.bars.map((b) => b.tradeDate))
+  // 只认可见段（visibleFrom 之前的 K 线只给均线预热，没画出来）
+  const dates = new Set(props.bars.filter((b) => !props.visibleFrom || b.tradeDate >= props.visibleFrom).map((b) => b.tradeDate))
   // 标记的日期必须在 K 线里，否则图表库报错；并且要按时间升序
   const markers: SeriesMarker<Time>[] = props.markers
     .filter((m) => dates.has(m.time))

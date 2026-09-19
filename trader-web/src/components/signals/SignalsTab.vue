@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { signalsApi, type SignalStatus, type SignalView } from '../../api/signals'
 import SignalDetailDrawer from './SignalDetailDrawer.vue'
+import type { InstrumentView } from '../../api/marketdata'
+import { usePager } from '../../composables/usePager'
 import {
   ROLE_LABEL, SIGNAL_STATUS_LABEL, SIGNAL_STATUS_TYPE, STANCE_LABEL, TRACK_LABEL, daysAgo, errMsg, iso, num, pct, signedR, trend,
 } from './format'
 
-/** 信号列表：状态、来源、范围过滤；已看过 / 不做；点一行看详情。 */
+/** 信号列表：状态、来源、范围过滤，分页；已看过 / 不做；点一行看详情。 */
+const props = defineProps<{ universe: InstrumentView[] }>()
 const range = ref<[string, string]>([daysAgo(30), iso(new Date())])
 const statuses = ref<SignalStatus[]>([])
 const origin = ref<string>('')
@@ -61,6 +64,9 @@ async function quick(row: SignalView, to: 'ACKNOWLEDGED' | 'DISMISSED') {
   }
 }
 
+const names = computed(() => new Map(props.universe.map((u) => [u.symbol, u.nameCn ?? u.name ?? null])))
+const { page, pageSize, paged, total } = usePager(rows)
+
 defineExpose({ load })
 </script>
 
@@ -80,47 +86,53 @@ defineExpose({ load })
         <el-radio-button value="pool">池与持仓</el-radio-button>
         <el-radio-button value="all">全部</el-radio-button>
       </el-radio-group>
-      <span class="muted">{{ rows.length }} 条 · 价位为判定日口径</span>
+      <span class="muted">{{ rows.length }} 条 · 价位为判定日口径 · 点一行看详情</span>
     </div>
 
-    <el-empty v-if="!loading && !rows.length && !error" description="这个范围内没有信号" />
-    <el-table v-else :data="rows" size="small" max-height="620" @row-click="open">
-      <el-table-column label="判定日" width="100"><template #default="{ row }">{{ row.signal.tradeDate }}</template></el-table-column>
-      <el-table-column label="代码" width="80" fixed><template #default="{ row }"><b>{{ row.signal.symbol }}</b></template></el-table-column>
-      <el-table-column label="角色" width="60"><template #default="{ row }">{{ ROLE_LABEL[row.signal.role as keyof typeof ROLE_LABEL] }}</template></el-table-column>
-      <el-table-column label="来源" width="60"><template #default="{ row }">{{ row.signal.origin === 'LIVE' ? '实盘' : '补跑' }}</template></el-table-column>
-      <el-table-column label="状态" width="90">
-        <template #default="{ row }">
-          <el-tag size="small" :type="SIGNAL_STATUS_TYPE[row.signal.status as SignalStatus]">{{ SIGNAL_STATUS_LABEL[row.signal.status as SignalStatus] }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="收盘" width="85" align="right"><template #default="{ row }">{{ num(row.signal.close) }}</template></el-table-column>
-      <el-table-column label="止损（距离）" width="135" align="right">
-        <template #default="{ row }">{{ num(row.signal.stop) }}（{{ pct(row.signal.stopDistance, 1) }}）</template>
-      </el-table-column>
-      <el-table-column label="+1R" width="80" align="right"><template #default="{ row }">{{ num(row.signal.plusOneR) }}</template></el-table-column>
-      <el-table-column label="目标 / 盈亏比" width="115" align="right">
-        <template #default="{ row }">{{ num(row.signal.target) }} / {{ num(row.signal.rewardRisk) }}</template>
-      </el-table-column>
-      <el-table-column label="AI" width="60">
-        <template #default="{ row }">{{ row.signal.aiStance ? STANCE_LABEL[row.signal.aiStance as keyof typeof STANCE_LABEL] ?? row.signal.aiStance : '—' }}</template>
-      </el-table-column>
-      <el-table-column label="账本（BASE）" min-width="130">
-        <template #default="{ row }">
-          <template v-if="row.base">
-            {{ TRACK_LABEL[row.base.status as keyof typeof TRACK_LABEL] }}
-            <span :class="trend(row.base.rMultiple)">{{ row.base.rMultiple === null ? '' : signedR(row.base.rMultiple) }}</span>
-          </template>
-          <template v-else>—</template>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="130" fixed="right">
-        <template #default="{ row }">
-          <el-button link size="small" :disabled="row.signal.status !== 'NEW'" @click.stop="quick(row, 'ACKNOWLEDGED')">已看过</el-button>
-          <el-button link size="small" :disabled="row.signal.status !== 'NEW' && row.signal.status !== 'ACKNOWLEDGED'" @click.stop="quick(row, 'DISMISSED')">不做</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+    <section class="panel">
+      <div class="dtable-wrap">
+        <table class="dtable">
+          <thead>
+            <tr>
+              <th>判定日</th><th>代码</th><th>角色</th><th>来源</th><th>状态</th><th class="r">收盘</th><th class="r">止损（距离）</th>
+              <th class="r">+1R</th><th class="r">目标 · 盈亏比</th><th>AI</th><th>账本（BASE）</th><th class="r">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in paged" :key="row.signal.id" class="clickable" @click="open(row)">
+              <td>{{ row.signal.tradeDate }}</td>
+              <td><b>{{ row.signal.symbol }}</b><span v-if="names.get(row.signal.symbol)" class="name">{{ names.get(row.signal.symbol) }}</span></td>
+              <td>{{ ROLE_LABEL[row.signal.role] }}</td>
+              <td>{{ row.signal.origin === 'LIVE' ? '实盘' : '补跑' }}</td>
+              <td><el-tag size="small" :type="SIGNAL_STATUS_TYPE[row.signal.status as SignalStatus]">{{ SIGNAL_STATUS_LABEL[row.signal.status as SignalStatus] }}</el-tag></td>
+              <td class="r num">{{ num(row.signal.close) }}</td>
+              <td class="r num">{{ num(row.signal.stop) }}<span class="muted-cell">（{{ pct(row.signal.stopDistance, 1) }}）</span></td>
+              <td class="r num">{{ num(row.signal.plusOneR) }}</td>
+              <td class="r num">{{ num(row.signal.target) }} · {{ num(row.signal.rewardRisk) }}</td>
+              <td>{{ row.signal.aiStance ? STANCE_LABEL[row.signal.aiStance as keyof typeof STANCE_LABEL] ?? row.signal.aiStance : '—' }}</td>
+              <td>
+                <template v-if="row.base">
+                  {{ TRACK_LABEL[row.base.status] }}
+                  <span :class="trend(row.base.rMultiple)">{{ row.base.rMultiple === null ? '' : signedR(row.base.rMultiple) }}</span>
+                </template>
+                <template v-else>—</template>
+              </td>
+              <td class="r">
+                <el-button link size="small" :disabled="row.signal.status !== 'NEW'" @click.stop="quick(row, 'ACKNOWLEDGED')">已看过</el-button>
+                <el-button link size="small" :disabled="row.signal.status !== 'NEW' && row.signal.status !== 'ACKNOWLEDGED'" @click.stop="quick(row, 'DISMISSED')">不做</el-button>
+              </td>
+            </tr>
+            <tr v-if="!rows.length">
+              <td colspan="12" class="empty">{{ loading ? '加载中…' : '这个范围内没有信号' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div v-if="total > pageSize" class="pager">
+        <el-pagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20, 50, 100]"
+                       layout="total, sizes, prev, pager, next, jumper" size="small" background />
+      </div>
+    </section>
 
     <SignalDetailDrawer v-model="drawer" :signal-id="pickedId" @changed="load" />
   </div>
@@ -129,4 +141,8 @@ defineExpose({ load })
 <style scoped>
 .tab { display: flex; flex-direction: column; gap: 12px; }
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.dtable { font-size: 13px; }
+.name { margin-left: 8px; font-size: 12px; color: var(--el-text-color-secondary); }
+.muted-cell { color: var(--el-text-color-secondary); }
+.pager { display: flex; justify-content: flex-end; margin-top: 10px; }
 </style>

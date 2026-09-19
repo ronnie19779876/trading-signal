@@ -29,7 +29,8 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const from = iso(new Date(new Date(props.asOf).getTime() - 300 * 86_400_000))
+    // 多取 300 天给 MA200 预热，图上仍从判定日前 300 天开始
+    const from = iso(new Date(new Date(props.asOf).getTime() - 600 * 86_400_000))
     bars.value = await signalsApi.bars(props.symbol, { asOf: props.asOf, from })
   } catch (e) {
     error.value = errMsg(e)
@@ -62,6 +63,9 @@ const priceLines = computed<ChartPriceLine[]>(() => {
   return l
 })
 
+const visibleFrom = computed(() => iso(new Date(new Date(props.asOf).getTime() - 300 * 86_400_000)))
+const MA = [20, 50, 200]
+
 const zones = computed<ChartZone[]>(() => (props.zone ? [{ ...props.zone, title: '支撑区', color: '#409eff' }] : []))
 </script>
 
@@ -69,6 +73,7 @@ const zones = computed<ChartZone[]>(() => (props.zone ? [{ ...props.zone, title:
   <div v-loading="loading">
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
     <KlineChart v-else-if="bars.length" :bars="bars" :height="340" :markers="markers" :price-lines="priceLines" :zones="zones"
+                :ma="MA" :visible-from="visibleFrom" ma-key="kline.ma.hidden.signal" ma-hidden-by-default
                 :title="`${symbol} 日 K（价格折回 ${asOf} 口径，与当天的价位对齐）`" />
   </div>
 </template>

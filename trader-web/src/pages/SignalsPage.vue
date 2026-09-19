@@ -4,15 +4,22 @@ import PageHeader from '../components/PageHeader.vue'
 import { signalsApi } from '../api/signals'
 import type { AuditReport } from '../api/account'
 import { aiApi, type AiSettings, type DailyUsage } from '../api/ai'
+import { getUniverse, type InstrumentView } from '../api/marketdata'
 import TodayTab from '../components/signals/TodayTab.vue'
 import SignalsTab from '../components/signals/SignalsTab.vue'
 import LedgerTab from '../components/signals/LedgerTab.vue'
 import ReplayTab from '../components/signals/ReplayTab.vue'
-import { errMsg, iso, todayEt } from '../components/signals/format'
+import { AI_STATUS_LABEL, errMsg, iso, todayEt } from '../components/signals/format'
+import type { AiStatus } from '../api/ai'
 
+/**
+ * 入场信号页：顶部是评估日的概况与审计（有问题才显示），下面四个标签页：当日、信号、纸面账本、回放。
+ * 标的列表只取一次，给各标签页显示中文名与行业。
+ */
 const audit = ref<AuditReport | null>(null)
 const settings = ref<AiSettings | null>(null)
 const today = ref<DailyUsage | null>(null)
+const universe = ref<InstrumentView[]>([])
 const date = ref<string | null>(null)
 const tab = ref('today')
 const error = ref<string | null>(null)
@@ -52,16 +59,39 @@ async function pickDate(d: string | null) {
   await load()
 }
 
-const failed = computed(() => (audit.value?.checks ?? []).filter((c) => !c.ok))
-const summary = computed(() => audit.value?.summary ?? {})
+const summary = computed(() => (audit.value?.summary ?? {}) as Record<string, number | boolean | undefined>)
+const callsToday = computed(() => (today.value?.day === todayEt() ? today.value.calls : 0))
 
-onMounted(load)
+// ---- 审计：只列没通过的项，名称与原因都转成中文；涉及的标的按原因分组收起 ----
+const CHECK_NAME: Record<string, string> = {
+  evaluationExists: '当天评估', coverage: '覆盖', staleData: '数据过期', dataQuality: '数据质量',
+  signalConsistency: '信号一致性', aiAnalyses: 'AI 分析', ledgerCurrent: '纸面账本', evaluationJob: '评估作业',
+}
+/** 样本形如 "HUM SKIPPED_BUDGET：今天已调用 20 次，达到每日上限 20"：按"状态 + 原因"分组，状态转中文。 */
+function groupSamples(samples: string[]) {
+  const groups = new Map<string, string[]>()
+  for (const raw of samples) {
+    const m = /^(\S+)\s+([A-Z_]+)[：:]\s*(.*)$/.exec(raw)
+    const key = m ? `${AI_STATUS_LABEL[m[2] as AiStatus] ?? m[2]}：${m[3]}` : '其他'
+    const sym = m ? m[1] : raw
+    groups.set(key, [...(groups.get(key) ?? []), sym])
+  }
+  return [...groups.entries()].map(([reason, symbols]) => ({ reason, symbols }))
+}
+const failed = computed(() =>
+  (audit.value?.checks ?? []).filter((c) => !c.ok).map((c) => ({ ...c, label: CHECK_NAME[c.name] ?? c.name, groups: groupSamples(c.samples) })),
+)
+const openedChecks = ref<string[]>([])
+
+onMounted(() => {
+  void load()
+  getUniverse().then((u) => (universe.value = u)).catch(() => { /* 中文名只是锦上添花 */ })
+})
 </script>
 
 <template>
   <div class="page">
-    <PageHeader title="信号"
-                hint="入场哨兵 sentinel-v1：每个交易日美东 18:10 评估，模型只有否决权；信号是候选提示与风险预案，不是买入指令">
+    <PageHeader title="入场信号" hint="入场哨兵（规则 sentinel-v1）：每个交易日美东 18:10 评估，模型只有否决权。信号是候选提示与风险预案，不是买入指令">
       <template #actions>
         <el-date-picker :model-value="date" type="date" value-format="YYYY-MM-DD" size="small" style="width: 140px" :clearable="false"
                         @update:model-value="pickDate" />
@@ -71,48 +101,69 @@ onMounted(load)
 
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
 
-    <el-card v-if="audit" shadow="never" class="status">
-      <div class="status__row">
-        <el-tag :type="audit.ok ? 'success' : 'danger'" effect="dark">审计{{ audit.ok ? '通过' : '不通过' }}</el-tag>
-        <span>{{ audit.date }}</span>
-        <template v-if="summary.tradingDay !== false">
-          <span>评估 <b>{{ summary.evaluations ?? 0 }}</b> / {{ summary.targets ?? '—' }}</span>
-          <span>新信号 <b>{{ summary.signals ?? 0 }}</b>（池与持仓 {{ summary.poolSignals ?? 0 }}）</span>
-          <span>AI 分析 {{ summary.aiAnalyses ?? 0 }} · 否决 <b>{{ summary.aiVetoes ?? 0 }}</b></span>
-        </template>
-        <span v-else class="muted">休市</span>
-        <span class="spacer"></span>
+    <section v-if="audit" class="panel">
+      <div class="panel__head">
+        <h3>{{ audit.date }} 概况</h3>
+        <el-tag size="small" :type="audit.ok ? 'success' : 'danger'" effect="plain">审计{{ audit.ok ? '通过' : '不通过' }}</el-tag>
+        <span class="panel__grow" />
         <template v-if="settings">
-          <el-tag size="small" :type="settings.configured ? 'success' : 'warning'">{{ settings.configured ? '密钥已配置' : '未配置密钥' }}</el-tag>
-          <el-tag size="small" :type="settings.signalVetoEnabled ? 'success' : 'info'">否决{{ settings.signalVetoEnabled ? '已开启' : '未开启' }}</el-tag>
-          <span class="muted">今天调用 {{ today?.day === todayEt() ? today.calls : 0 }} / {{ settings.dailyCallLimit }} · {{ settings.model }}</span>
+          <el-tag size="small" :type="settings.configured ? 'success' : 'warning'" effect="plain">{{ settings.configured ? '模型密钥已配置' : '未配置模型密钥' }}</el-tag>
+          <el-tag size="small" :type="settings.signalVetoEnabled ? 'success' : 'info'" effect="plain">AI 否决{{ settings.signalVetoEnabled ? '已开启' : '未开启' }}</el-tag>
         </template>
       </div>
-      <div v-for="c in failed" :key="c.name" class="status__check" :class="{ 'status__check--critical': c.critical }">
-        {{ c.critical ? '关键' : '提示' }} · {{ c.name }}：{{ c.detail }}<span v-if="c.samples.length" class="muted">（{{ c.samples.slice(0, 8).join('、') }}）</span>
+      <div v-if="summary.tradingDay !== false" class="kv-grid">
+        <div class="kv"><label>评估</label><b class="num">{{ summary.evaluations ?? 0 }} / {{ summary.targets ?? '—' }}</b></div>
+        <div class="kv"><label>四门全过（新信号）</label><b class="num">{{ summary.signals ?? 0 }}</b></div>
+        <div class="kv"><label>其中池与持仓</label><b class="num sig">{{ summary.poolSignals ?? 0 }}</b></div>
+        <div class="kv"><label>AI 分析</label><b class="num">{{ summary.aiAnalyses ?? 0 }}</b></div>
+        <div class="kv"><label>AI 否决</label><b class="num" :class="{ veto: (summary.aiVetoes as number) > 0 }">{{ summary.aiVetoes ?? 0 }}</b></div>
+        <div v-if="settings" class="kv"><label>今天 AI 调用</label><b class="num">{{ callsToday }} / {{ settings.dailyCallLimit }}</b></div>
+        <div v-if="settings" class="kv"><label>模型</label><b>{{ settings.model }}</b></div>
       </div>
-    </el-card>
+      <p v-else class="muted">休市，这一天没有评估。</p>
+
+      <div v-if="failed.length" class="issues">
+        <div v-for="c in failed" :key="c.name" class="issue" :class="{ 'issue--critical': c.critical }">
+          <el-tag size="small" :type="c.critical ? 'danger' : 'warning'">{{ c.critical ? '关键' : '提示' }}</el-tag>
+          <b>{{ c.label }}</b><span>{{ c.detail }}</span>
+          <el-collapse v-if="c.groups.length" v-model="openedChecks" class="issue__detail">
+            <el-collapse-item :name="c.name" :title="c.count > c.samples.length ? `列出 ${c.samples.length} 只（共 ${c.count}，后端只给前 ${c.samples.length} 个样本）` : `涉及 ${c.samples.length} 只`">
+              <div v-for="g in c.groups" :key="g.reason" class="issue__group">
+                <span class="muted">{{ g.reason }}（{{ g.symbols.length }} 只）</span>
+                <span class="issue__syms">{{ g.symbols.join('、') }}</span>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+        </div>
+      </div>
+    </section>
 
     <el-tabs v-model="tab">
-      <el-tab-pane label="今日评估" name="today" lazy>
-        <TodayTab ref="todayTab" :date="date" />
+      <el-tab-pane label="当日" name="today" lazy>
+        <TodayTab ref="todayTab" :date="date" :universe="universe" />
       </el-tab-pane>
       <el-tab-pane label="信号" name="signals" lazy>
-        <SignalsTab ref="signalsTab" />
+        <SignalsTab ref="signalsTab" :universe="universe" />
       </el-tab-pane>
       <el-tab-pane label="纸面账本" name="ledger" lazy>
-        <LedgerTab ref="ledgerTab" />
+        <LedgerTab ref="ledgerTab" :universe="universe" />
       </el-tab-pane>
       <el-tab-pane label="回放" name="replay" lazy>
-        <ReplayTab />
+        <ReplayTab :universe="universe" />
       </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <style scoped>
-.status__row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 13px; }
-.status__check { font-size: 13px; margin-top: 6px; color: var(--el-color-warning); }
-.status__check--critical { color: var(--el-color-danger); }
-.spacer { flex: 1; }
+.sig { color: var(--el-color-primary); }
+.veto { color: var(--el-color-danger); }
+.issues { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.issue { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.issue--critical b { color: var(--el-color-danger); }
+.issue__detail { flex-basis: 100%; border: 0; }
+.issue__detail :deep(.el-collapse-item__header) { height: 28px; font-size: 12px; border-bottom: 0; color: var(--el-text-color-secondary); }
+.issue__detail :deep(.el-collapse-item__wrap) { border-bottom: 0; }
+.issue__group { display: flex; gap: 8px; font-size: 12px; margin: 2px 0; flex-wrap: wrap; }
+.issue__syms { color: var(--el-text-color-regular); }
 </style>
