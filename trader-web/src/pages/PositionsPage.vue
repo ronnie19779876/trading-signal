@@ -2,10 +2,11 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../components/PageHeader.vue'
+import { useLiveAccount } from '../composables/useLiveAccount'
 import PositionDrawer, { type PositionRow } from '../components/positions/PositionDrawer.vue'
 import { errMsg, money, num, signed, timeEt, trend } from '../lib/format'
 import { sectorCn } from '../lib/sector'
-import { accountApi, type LiveView, type SnapshotView } from '../api/account'
+import { accountApi, type SnapshotView } from '../api/account'
 import { getPool, type InstrumentView } from '../api/marketdata'
 
 /**
@@ -14,12 +15,12 @@ import { getPool, type InstrumentView } from '../api/marketdata'
  * 数据口径与仪表盘一致：优先盈透实时（/api/account/live），全部是盈透原值，不做折算；拿不到时退回最近一份收盘快照。
  * 选中的标的放在 ?symbol= 里，刷新与分享都能回到同一只（不用 /positions/BRK.B：前端路由只用单段、不带点）。
  *
- * 刷新：实时账户 5 秒一轮（预热中 1.5 秒）；池与快照 5 分钟一轮；页面切到后台即暂停。
+ * 刷新：实时账户盘中 1 秒、其余 5 秒（见 useLiveAccount）；池与快照 5 分钟一轮；页面切到后台即暂停。
  */
 const route = useRoute()
 const router = useRouter()
 
-const live = ref<LiveView | null>(null)
+const { live, start: startLive, stop: stopLive } = useLiveAccount()
 const view = ref<SnapshotView | null>(null)
 const pool = ref<InstrumentView[]>([])
 const loaded = ref(false)
@@ -116,32 +117,17 @@ async function loadDaily() {
   }
 }
 
-async function loadLive() {
-  try {
-    live.value = await accountApi.live()
-  } catch {
-    live.value = null // 接口不可达：退回收盘快照
-  }
-}
 
 let dailyTimer = 0
-let liveTimer = 0
-function scheduleLive() {
-  window.clearTimeout(liveTimer)
-  liveTimer = window.setTimeout(async () => {
-    await loadLive()
-    scheduleLive()
-  }, live.value?.status === 'WARMING' ? 1_500 : 5_000)
-}
 function start() {
   void loadDaily()
-  void loadLive().then(scheduleLive)
+  startLive()
   dailyTimer = window.setInterval(loadDaily, 5 * 60_000)
 }
 function stop() {
   window.clearInterval(dailyTimer)
-  window.clearTimeout(liveTimer)
-  dailyTimer = liveTimer = 0
+  stopLive()
+  dailyTimer = 0
 }
 function onVisibility() {
   if (document.hidden) stop()

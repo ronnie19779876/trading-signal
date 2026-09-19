@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
+import { useLiveAccount } from '../composables/useLiveAccount'
 import EquityPanel from '../components/dash/EquityPanel.vue'
 import { daysAgoEt, errMsg, fmtEt, isoEt, money, signed, timeEt, trend } from '../lib/format'
 import {
@@ -9,7 +10,6 @@ import {
   type AccountSnapshot,
   type AuditReport,
   type HoldingSyncResult,
-  type LiveView,
   type ReconStatus,
   type SnapshotView,
   type SyncAction,
@@ -22,7 +22,7 @@ import {
  * 净值历史与对账来自每日美东 18:00 的快照（快照序列里每天都带着当天的对账明细）。
  * 拍快照、持仓同步、账户审计是偶尔才用的维护操作，收在页底折叠区。
  */
-const live = ref<LiveView | null>(null)
+const { live, start: startLive, stop: stopLive } = useLiveAccount()
 const view = ref<SnapshotView | null>(null)
 const series = ref<AccountSnapshot[]>([])
 const audit = ref<AuditReport | null>(null)
@@ -153,13 +153,6 @@ async function loadDaily() {
   }
 }
 
-async function loadLive() {
-  try {
-    live.value = await accountApi.live()
-  } catch {
-    live.value = null // 接口不可达：退回收盘快照
-  }
-}
 
 async function takeSnapshot() {
   try {
@@ -205,25 +198,17 @@ async function applySync() {
   }
 }
 
-// ---- 刷新节奏：实时 5 秒（预热中 1.5 秒），快照与审计 5 分钟；页面切到后台即暂停 ----
+// ---- 刷新节奏：实时见 useLiveAccount（盘中 1 秒），快照与审计 5 分钟；页面切到后台即暂停 ----
 let dailyTimer = 0
-let liveTimer = 0
-function scheduleLive() {
-  window.clearTimeout(liveTimer)
-  liveTimer = window.setTimeout(async () => {
-    await loadLive()
-    scheduleLive()
-  }, live.value?.status === 'WARMING' ? 1_500 : 5_000)
-}
 function start() {
   void loadDaily()
-  void loadLive().then(scheduleLive)
+  startLive()
   dailyTimer = window.setInterval(loadDaily, 5 * 60_000)
 }
 function stop() {
   window.clearInterval(dailyTimer)
-  window.clearTimeout(liveTimer)
-  dailyTimer = liveTimer = 0
+  stopLive()
+  dailyTimer = 0
 }
 function onVisibility() {
   if (document.hidden) stop()

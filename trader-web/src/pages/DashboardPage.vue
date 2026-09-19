@@ -6,8 +6,9 @@ import CandidatePanel, { type CandidateRow } from '../components/dash/CandidateP
 import HoldingsPanel, { type HoldingRow } from '../components/dash/HoldingsPanel.vue'
 import EvaluationDrawer from '../components/signals/EvaluationDrawer.vue'
 import { useMarketClock } from '../composables/useMarketClock'
+import { useLiveAccount } from '../composables/useLiveAccount'
 import { daysAgoEt, errMsg, isoEt } from '../lib/format'
-import { accountApi, type AccountSnapshot, type AuditReport, type LiveView, type SnapshotView } from '../api/account'
+import { accountApi, type AccountSnapshot, type AuditReport, type SnapshotView } from '../api/account'
 import { signalsApi, type EvaluationRow } from '../api/signals'
 import { getBars, getPool, type DailyBar, type InstrumentView } from '../api/marketdata'
 import { getQuotes, type Quote } from '../api/quotes'
@@ -18,14 +19,14 @@ import { getQuotes, type Quote } from '../api/quotes'
  * 账户与持仓优先用盈透实时（3.0.2，/api/account/live，按需订阅），全是盈透原值；拿不到时退回收盘快照。
  * 候选标的的现价与涨跌用富途实时报价（生产订阅了池与持仓），没有时用最近一根日 K。
  *
- * 刷新分三档：实时账户 5 秒一轮（预热中 1.5 秒）；日级数据（快照、评估、日 K）5 分钟一轮；
+ * 刷新分三档：实时账户盘中 1 秒、其余 5 秒（见 useLiveAccount）；日级数据（快照、评估、日 K）5 分钟一轮；
  * 报价在开市时段 5 秒一轮、休市 60 秒。
  * 页面切到后台即暂停。
  */
 const NAV_DAYS = 180
 
 const view = ref<SnapshotView | null>(null)
-const live = ref<LiveView | null>(null)
+const { live, start: startLive, stop: stopLive } = useLiveAccount()
 const series = ref<AccountSnapshot[]>([])
 const pool = ref<InstrumentView[]>([])
 const evaluations = ref<EvaluationRow[]>([])
@@ -104,14 +105,6 @@ async function loadBars() {
   barsBySymbol.value = new Map(pairs)
 }
 
-/** 实时账户：后端只读内存，第一次读发起订阅（WARMING），5 分钟没人读自动退订。 */
-async function loadLive() {
-  try {
-    live.value = await accountApi.live()
-  } catch {
-    live.value = null   // 接口不可达：退回收盘快照
-  }
-}
 
 async function loadQuotes() {
   try {
@@ -205,15 +198,6 @@ const problems = computed(() =>
 // ---- 刷新节奏：页面切到后台即暂停 ----
 let dailyTimer = 0
 let quoteTimer = 0
-let liveTimer = 0
-/** 预热中 1.5 秒一轮等数据到齐，之后 5 秒一轮（读的是后端内存，不打网关）。 */
-function scheduleLive() {
-  window.clearTimeout(liveTimer)
-  liveTimer = window.setTimeout(async () => {
-    await loadLive()
-    scheduleLive()
-  }, live.value?.status === 'WARMING' ? 1_500 : 5_000)
-}
 function scheduleQuotes() {
   window.clearTimeout(quoteTimer)
   const active = session.value !== 'CLOSED' && quotes.value.size > 0
@@ -224,15 +208,15 @@ function scheduleQuotes() {
 }
 function start() {
   void loadDaily()
-  void loadLive().then(scheduleLive)
+  startLive()
   void loadQuotes().then(scheduleQuotes)
   dailyTimer = window.setInterval(loadDaily, 5 * 60_000)
 }
 function stop() {
   window.clearInterval(dailyTimer)
   window.clearTimeout(quoteTimer)
-  window.clearTimeout(liveTimer)
-  dailyTimer = quoteTimer = liveTimer = 0
+  stopLive()
+  dailyTimer = quoteTimer = 0
 }
 function onVisibility() {
   if (document.hidden) stop()
