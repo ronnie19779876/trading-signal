@@ -4,6 +4,7 @@ import { useAppStore } from './stores/app'
 import { useAutoRefresh } from './composables/useAutoRefresh'
 import { useTheme, type ThemeMode } from './composables/useTheme'
 import MarketClock from './components/MarketClock.vue'
+import { jobLabel } from './lib/system'
 
 const links = [
   { to: '/', label: '仪表盘' },
@@ -49,9 +50,9 @@ const env = computed(() => app.info?.environment ?? null)
 
       <!-- 生产实例红色标记：写操作按钮长得一样，别对着生产点。 -->
       <el-tag v-if="env" size="small" :type="env === 'PROD' ? 'danger' : 'success'" effect="plain">{{ env }}</el-tag>
-      <router-link v-if="app.running" to="/marketdata" class="shell__job">
+      <router-link v-if="app.running" :to="{ path: '/system', query: { tab: 'jobs' } }" class="shell__job">
         <el-tag size="small" type="warning" effect="plain">
-          作业 #{{ app.running.id }} {{ app.running.job }} 运行中
+          作业 #{{ app.running.id }} {{ jobLabel(app.running.job) }} 运行中
         </el-tag>
       </router-link>
 

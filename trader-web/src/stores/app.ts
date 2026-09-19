@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { getHealth, getSystemInfo, type SystemInfo } from '../api/system'
+import { getHealth, getSystemInfo, type Health, type SystemInfo } from '../api/system'
 import { getJobs, type RunningJob } from '../api/marketdata'
 import { errMsg } from '../lib/format'
 
@@ -13,6 +13,8 @@ import { errMsg } from '../lib/format'
 export const useAppStore = defineStore('app', () => {
   const info = ref<SystemInfo | null>(null)
   const health = ref<string>('未知')
+  /** 健康检查全文：各组件与每类作业最近一次（系统页概况用） */
+  const healthDetail = ref<Health | null>(null)
   const running = ref<RunningJob | null>(null)
   const error = ref<string | null>(null)
 
@@ -21,6 +23,7 @@ export const useAppStore = defineStore('app', () => {
       const [i, h, j] = await Promise.all([getSystemInfo(), getHealth(), getJobs(1)])
       info.value = i
       health.value = h.status
+      healthDetail.value = h
       running.value = j.running && 'id' in j.running ? (j.running as RunningJob) : null
       error.value = null
     } catch (e) {
@@ -28,5 +31,5 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  return { info, health, running, error, refresh }
+  return { info, health, healthDetail, running, error, refresh }
 })

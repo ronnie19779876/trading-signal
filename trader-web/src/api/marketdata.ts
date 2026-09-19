@@ -1,4 +1,5 @@
 import { http } from './http'
+import type { AuditReport } from './account'
 
 export interface InstrumentView {
   symbol: string
@@ -99,6 +100,9 @@ export interface TradingDay {
 }
 
 export const getCoverage = async () => (await http.get<CoverageView>('/api/bars/coverage')).data
+/** 日线数据审计（收盘巡检第一段），默认最近应有收盘 K 的交易日 */
+export const getBarAudit = async (date?: string) =>
+  (await http.get<AuditReport>('/api/bars/audit', { params: date ? { date } : {}, timeout: 120_000 })).data
 export const getCalendar = async (from?: string, to?: string) =>
   (await http.get<TradingDay[]>('/api/bars/calendar', { params: { ...(from ? { from } : {}), ...(to ? { to } : {}) } })).data
 export interface GapView {

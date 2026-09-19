@@ -1,20 +1,21 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import PageHeader from '../components/PageHeader.vue'
-import StatCard from '../components/StatCard.vue'
-import { useAutoRefresh } from '../composables/useAutoRefresh'
-import { errMsg, fmtEt, num, timeEt } from '../lib/format'
+import { useAutoRefresh } from '../../composables/useAutoRefresh'
+import { errMsg, num, timeEt } from '../../lib/format'
 import {
-  addToPool, backfillPending, cancelJob, getBars, getCoverage, getJobs, getPool, refreshRehab, refreshUniverse, removeFromPool,
-  runIncrement, syncUniverse, type Adjust, type CoverageView, type DailyBar, type InstrumentView, type JobRun, type RunningJob,
-} from '../api/marketdata'
-import { getQuoteStatus, pauseQuotes, quoteStreamUrl, reconcileQuotes, resumeQuotes, type Quote, type QuoteStatus } from '../api/quotes'
-import KlineChart from '../components/KlineChart.vue'
+  addToPool, getBars, getCoverage, getPool, removeFromPool, type Adjust, type CoverageView, type DailyBar, type InstrumentView,
+} from '../../api/marketdata'
+import { getQuoteStatus, pauseQuotes, quoteStreamUrl, reconcileQuotes, resumeQuotes, type Quote, type QuoteStatus } from '../../api/quotes'
+import KlineChart from '../KlineChart.vue'
+
+/**
+ * 行情数据（原"行情数据底座"页，3.0.6 并进系统页）：覆盖统计、实时报价（SSE，只在本标签页打开时连）、标的池、K 线查询。
+ * 跑批在"跑批"标签页。
+ */
+const props = defineProps<{ active: boolean }>()
 
 const coverage = ref<CoverageView | null>(null)
-const running = ref<RunningJob | null>(null)
-const jobs = ref<JobRun[]>([])
 const pool = ref<InstrumentView[]>([])
 const error = ref<string | null>(null)
 
@@ -83,35 +84,15 @@ function selectSymbol(symbol: string) {
 }
 
 async function refresh() {
+  if (!props.active) return
   try {
-    const [c, j, p] = await Promise.all([getCoverage(), getJobs(15), getPool()])
+    const [c, p] = await Promise.all([getCoverage(), getPool()])
     coverage.value = c
-    running.value = j.running && 'id' in j.running ? (j.running as RunningJob) : null
-    jobs.value = j.recent
     pool.value = p
     error.value = null
   } catch (e) {
     error.value = errMsg(e)
   }
-}
-
-async function run(label: string, action: () => Promise<{ jobId: number }>) {
-  try {
-    const r = await action()
-    ElMessage.success(`${label}：作业 #${r.jobId} 已开始`)
-    await refresh()
-  } catch (e) {
-    ElMessage.error(`${label}失败：` + errMsg(e))
-  }
-}
-
-async function confirmRun(label: string, hint: string, action: () => Promise<{ jobId: number }>) {
-  try {
-    await ElMessageBox.confirm(hint, label, { confirmButtonText: '开始', cancelButtonText: '取消', type: 'warning' })
-  } catch {
-    return
-  }
-  await run(label, action)
 }
 
 async function add() {
@@ -153,21 +134,26 @@ async function loadBars() {
   }
 }
 
-async function cancel() {
-  await cancelJob()
-  ElMessage.info('已请求取消，作业会在下一批边界停下')
-}
-
+/**
+ * 本标签页打开时连推送、离开时断开；页面切到后台断开、回来再连（与原行情页一致）。
+ * 挂载与切换标签时不看可见性：有的环境（如内嵌的浏览器面板）一直报 hidden，看了就永远连不上。
+ */
 function onVisibility() {
-  if (document.visibilityState === 'visible') openStream()
+  if (document.visibilityState === 'visible' && props.active) openStream()
   else closeStream()
 }
+watch(() => props.active, (a) => {
+  if (a) openStream()
+  else closeStream()
+  void refresh()
+})
 
 useAutoRefresh(refresh, 5000)
 
 onMounted(() => {
   getQuoteStatus().then((s) => (quoteStatus.value = s)).catch(() => {})
-  openStream()
+  if (props.active) openStream()
+  void refresh()
   document.addEventListener('visibilitychange', onVisibility)
 })
 onBeforeUnmount(() => {
@@ -175,9 +161,6 @@ onBeforeUnmount(() => {
   closeStream()
 })
 
-function statusTag(s: JobRun['status']): 'success' | 'warning' | 'danger' | 'info' {
-  return s === 'OK' ? 'success' : s === 'PARTIAL' ? 'warning' : s === 'FAILED' ? 'danger' : 'info'
-}
 function sessionTag(s: Quote['session']): 'success' | 'warning' | 'info' {
   return s === 'RTH' ? 'success' : s === 'PRE' || s === 'AFTER' || s === 'OVERNIGHT' ? 'warning' : 'info'
 }
@@ -185,45 +168,33 @@ function chgClass(v: number | null): string {
   return v == null ? '' : v > 0 ? 'up' : v < 0 ? 'down' : ''
 }
 
-/** 标的数量取自覆盖统计，别在文案里写死——写死的那个数字已经过期过一次。 */
-const rehabHint = computed(
-  () => `对全量 ${coverage.value?.universeSize ?? '—'} 只各调一次 requestRehab，约 5 分钟，不占历史额度。`,
-)
+const SESSION_LABEL: Record<string, string> = { RTH: '盘中', PRE: '盘前', AFTER: '盘后', OVERNIGHT: '夜盘', CLOSED: '休市' }
+const ROLE_LABEL: Record<string, string> = { POOL: '池', HOLDING: '持仓', BENCHMARK: '基准' }
 </script>
 
 <template>
-  <div class="page">
-    <PageHeader title="行情数据底座" hint="每 5 秒自动刷新">
-      <template #actions>
-        <el-button size="small" @click="refresh">刷新</el-button>
-      </template>
-    </PageHeader>
+  <div class="tab">
     <el-alert v-if="error" type="error" :title="'后端不可达：' + error" show-icon :closable="false" />
 
-    <el-row v-if="coverage" :gutter="12">
-      <el-col :xs="24" :sm="12" :lg="6">
-        <StatCard :value="coverage.rows.toLocaleString()" :label="`日 K 行数（${coverage.instruments} 只）`"
-                  :sub="`${coverage.earliest ?? '—'} ～ ${coverage.latest ?? '—'}`" />
-      </el-col>
-      <el-col :xs="24" :sm="12" :lg="6">
-        <StatCard :value="`${coverage.universeCovered} / ${coverage.universeSize}`" label="全量标的已有 K 线"
-                  :sub="`复权因子 ${coverage.rehabCovered}，富途不认识 ${coverage.unresolved}，错误 ${coverage.withErrors}`" />
-      </el-col>
-      <el-col :xs="24" :sm="12" :lg="6">
-        <StatCard :value="`${coverage.deepCovered} / ${coverage.poolSize + coverage.holdingSize}`" label="池 + 持仓已有 20 年深度"
-                  :sub="`池 ${coverage.poolSize}，持仓 ${coverage.holdingSize}`" />
-      </el-col>
-      <el-col :xs="24" :sm="12" :lg="6">
-        <StatCard :value="coverage.quota.remain < 0 ? '—' : coverage.quota.remain + ' / ' + coverage.quota.total"
-                  label="历史 K 线额度剩余" :sub="coverage.quota.detail" />
-      </el-col>
-    </el-row>
+    <section v-if="coverage" class="panel">
+      <div class="panel__head"><h3>覆盖</h3><span class="panel__src">5 秒刷新</span></div>
+      <div class="kv-grid">
+        <div class="kv"><label>日 K 行数（{{ coverage.instruments }} 只）</label><b class="num">{{ coverage.rows.toLocaleString() }}</b></div>
+        <div class="kv"><label>日 K 区间</label><b class="small">{{ coverage.earliest ?? '—' }} ～ {{ coverage.latest ?? '—' }}</b></div>
+        <div class="kv"><label>全量标的已有 K 线</label><b class="num">{{ coverage.universeCovered }} / {{ coverage.universeSize }}</b></div>
+        <div class="kv"><label>池 + 持仓 20 年深度</label><b class="num">{{ coverage.deepCovered }} / {{ coverage.poolSize + coverage.holdingSize }}</b></div>
+        <div class="kv"><label>复权因子覆盖</label><b class="num">{{ coverage.rehabCovered }}</b></div>
+        <div class="kv"><label>富途不认识 / 错误</label><b class="num">{{ coverage.unresolved }} / {{ coverage.withErrors }}</b></div>
+        <div class="kv"><label>历史 K 线额度剩余</label><b class="num">{{ coverage.quota.remain < 0 ? '—' : coverage.quota.remain + ' / ' + coverage.quota.total }}</b></div>
+      </div>
+      <p class="panel__foot">{{ coverage.quota.detail }}</p>
+    </section>
 
     <el-card shadow="never">
       <template #header>
         <div class="actions">
           <span>实时报价（不落库）</span>
-          <el-tag size="small" :type="sseState === 'open' ? 'success' : 'warning'">SSE {{ sseState }}</el-tag>
+          <el-tag size="small" :type="sseState === 'open' ? 'success' : 'warning'">推送{{ sseState === 'open' ? '已连接' : sseState === 'connecting' ? '连接中' : '未连接' }}</el-tag>
           <span v-if="quoteStatus" class="muted">
             订阅 {{ quoteStatus.subscribed }} / 期望 {{ quoteStatus.desired }}{{ quoteStatus.paused ? '（已暂停）' : '' }}
             · 额度 {{ quoteStatus.quota ? quoteStatus.quota.usedQuota + '/' + (quoteStatus.quota.usedQuota + quoteStatus.quota.remainQuota) : '—' }}
@@ -238,7 +209,7 @@ const rehabHint = computed(
       </template>
       <el-table :data="quoteList" size="small" max-height="360" empty-text="没有报价：先「订阅池与持仓」（需富途已连接）" @row-click="(row: Quote) => selectSymbol(row.instrument.symbol)">
         <el-table-column label="代码" width="90"><template #default="{ row }: { row: Quote }"><b>{{ row.instrument.symbol }}</b></template></el-table-column>
-        <el-table-column label="时段" width="90"><template #default="{ row }: { row: Quote }"><el-tag size="small" :type="sessionTag(row.session)">{{ row.session }}</el-tag></template></el-table-column>
+        <el-table-column label="时段" width="90"><template #default="{ row }: { row: Quote }"><el-tag size="small" :type="sessionTag(row.session)">{{ SESSION_LABEL[row.session] ?? row.session }}</el-tag></template></el-table-column>
         <el-table-column label="有效价" width="100"><template #default="{ row }: { row: Quote }"><span :class="chgClass(row.change)">{{ num(row.price) }}</span></template></el-table-column>
         <el-table-column label="涨跌" width="90"><template #default="{ row }: { row: Quote }"><span :class="chgClass(row.change)">{{ num(row.change) }}</span></template></el-table-column>
         <el-table-column label="涨跌 %" width="90"><template #default="{ row }: { row: Quote }"><span :class="chgClass(row.changeRate)">{{ num(row.changeRate) }}</span></template></el-table-column>
@@ -251,41 +222,18 @@ const rehabHint = computed(
       </el-table>
     </el-card>
 
-    <el-card shadow="never" header="跑批">
-      <div class="actions jobs__actions">
-        <el-button size="small" @click="run('同步成分股', syncUniverse)">同步成分股</el-button>
-        <el-button size="small" @click="confirmRun('全量轮转拉 K 线', '对全量标的按批订阅并拉取 1000 根日 K，约 8 分钟，不占历史额度。', () => refreshUniverse(1000))">全量拉 1000 根</el-button>
-        <el-button size="small" @click="confirmRun('深度回补', '对池与持仓里还没有 20 年深度的标的依次回补，每只占 1 个历史额度。', backfillPending)">深度回补池/持仓</el-button>
-        <el-button size="small" @click="run('每日增量', runIncrement)">每日增量</el-button>
-        <el-button size="small" @click="confirmRun('全量复权因子', rehabHint, () => refreshRehab(true))">全量复权因子</el-button>
-        <el-button v-if="running" size="small" type="danger" plain @click="cancel">取消当前作业</el-button>
-      </div>
-      <el-alert v-if="running" type="info" :closable="false" show-icon class="running">
-        <template #title>作业 #{{ running.id }} {{ running.job }} 运行中（{{ running.trigger }}，开始于 {{ fmtEt(running.startedAt) }}）：{{ running.progress || '…' }}</template>
-      </el-alert>
-      <el-table :data="jobs" size="small" empty-text="暂无作业记录">
-        <el-table-column prop="id" label="#" width="60" />
-        <el-table-column prop="job" label="作业" width="170" />
-        <el-table-column prop="trigger" label="触发" width="90" />
-        <el-table-column label="开始" width="190"><template #default="{ row }: { row: JobRun }">{{ fmtEt(row.startedAt) }}</template></el-table-column>
-        <el-table-column label="结束" width="190"><template #default="{ row }: { row: JobRun }">{{ fmtEt(row.finishedAt) }}</template></el-table-column>
-        <el-table-column label="状态" width="90"><template #default="{ row }: { row: JobRun }"><el-tag :type="statusTag(row.status)" size="small">{{ row.status }}</el-tag></template></el-table-column>
-        <el-table-column prop="summary" label="摘要" min-width="320" show-overflow-tooltip />
-      </el-table>
-    </el-card>
-
-    <el-card shadow="never" header="标的池（POOL 候选，上限 50；HOLDING 持仓，由盈透持仓自动维护；BENCHMARK 基准，只采集不选股）">
+    <el-card shadow="never" header="标的池（池：候选，上限 50；持仓：由盈透持仓自动维护；基准：只采集不选股）">
       <div class="actions">
         <el-input v-model="newSymbol" size="small" placeholder="代码，如 AAPL" style="width: 160px" @keyup.enter="add" />
         <el-select v-model="newRole" size="small" style="width: 200px">
-          <el-option label="POOL" value="POOL" /><el-option label="HOLDING（盈透自动维护）" value="HOLDING" disabled /><el-option label="BENCHMARK" value="BENCHMARK" />
+          <el-option label="池（POOL）" value="POOL" /><el-option label="持仓（盈透自动维护）" value="HOLDING" disabled /><el-option label="基准（BENCHMARK）" value="BENCHMARK" />
         </el-select>
         <el-button size="small" type="primary" @click="add">加入（自动深度回补）</el-button>
       </div>
       <el-table :data="pool" size="small" empty-text="标的池为空">
         <el-table-column prop="symbol" label="代码" width="90" />
         <el-table-column label="名称" min-width="160"><template #default="{ row }: { row: InstrumentView }">{{ row.nameCn ?? row.name ?? '—' }}</template></el-table-column>
-        <el-table-column prop="role" label="角色" width="110" />
+        <el-table-column label="角色" width="80"><template #default="{ row }: { row: InstrumentView }">{{ row.role ? ROLE_LABEL[row.role] ?? row.role : '—' }}</template></el-table-column>
         <el-table-column label="指数" width="130"><template #default="{ row }: { row: InstrumentView }">{{ row.indexes.join(' ') || '—' }}</template></el-table-column>
         <el-table-column prop="depth" label="深度" width="90" />
         <el-table-column label="覆盖" width="260"><template #default="{ row }: { row: InstrumentView }">{{ row.earliest ?? '—' }} ～ {{ row.latest ?? '—' }}（{{ row.barCount }}）</template></el-table-column>
@@ -323,11 +271,7 @@ const rehabHint = computed(
 </template>
 
 <style scoped>
-.jobs__actions,
-.running {
-  margin-bottom: 10px;
-}
-.actions {
-  margin-bottom: 10px;
-}
+.tab { display: flex; flex-direction: column; gap: 12px; }
+.actions { margin-bottom: 10px; }
+.kv b.small { font-size: 12px; font-weight: 500; }
 </style>

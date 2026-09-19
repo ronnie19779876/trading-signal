@@ -26,8 +26,15 @@ export interface SystemInfo {
   ai: AiStatus
 }
 
+export interface HealthComponent {
+  status: string
+  details?: Record<string, unknown>
+}
+
 export interface Health {
   status: 'UP' | 'DEGRADED' | 'DOWN' | 'OUT_OF_SERVICE' | 'UNKNOWN'
+  /** 各组件：db、diskSpace、gateways、jobs（每类作业最近一次：值形如 "OK @ 时间：摘要"）等 */
+  components?: Record<string, HealthComponent>
 }
 
 export async function getSystemInfo(): Promise<SystemInfo> {

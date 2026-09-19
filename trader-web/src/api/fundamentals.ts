@@ -1,4 +1,5 @@
 import { http } from './http'
+import type { AuditReport } from './account'
 
 /**
  * 估值快照。个股与 ETF 共用一张表，两套口径：
@@ -88,6 +89,9 @@ export const fundamentalsApi = {
   valuationsOn: async (date?: string) =>
     (await http.get<DayValuations>('/api/fundamentals/valuations', { params: date ? { date } : {} })).data,
   coverage: async () => (await http.get<FundamentalsCoverage>('/api/fundamentals/coverage')).data,
+  /** 基本面审计（收盘巡检第二段） */
+  audit: async (date?: string) =>
+    (await http.get<AuditReport>('/api/fundamentals/audit', { params: date ? { date } : {}, timeout: 60_000 })).data,
   refreshValuation: async () => (await http.post<{ jobId: number }>('/api/fundamentals/valuation/refresh')).data,
   /** all=true 做全量成分股，约 41 分钟且不取公司简介；默认只做池与持仓。 */
   refreshFinancials: async (all = false) =>

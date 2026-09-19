@@ -23,7 +23,8 @@ const router = createRouter({
     { path: '/trades', name: 'trades', component: () => import('../pages/PlaceholderPage.vue'), meta: { title: '交易' } },
     { path: '/system', name: 'system', component: () => import('../pages/SystemInfoPage.vue'), meta: { title: '系统' } },
     // 行情数据底座不在菜单里了，归属待逐页调整时再定；暂时从系统页进入
-    { path: '/marketdata', name: 'marketdata', component: () => import('../pages/MarketDataPage.vue'), meta: { title: '行情数据' } },
+    // 行情数据底座 3.0.6 并进系统页的「行情数据」标签；旧地址与书签跳过去
+    { path: '/marketdata', redirect: { path: '/system', query: { tab: 'marketdata' } } },
     // 没有这条时，打开不存在的路径是白屏加一句控制台告警（后端会把单段路径转发给 index.html）。
     { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('../pages/NotFoundPage.vue'), meta: { title: '找不到页面' } },
   ],

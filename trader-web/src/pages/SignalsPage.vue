@@ -11,6 +11,7 @@ import LedgerTab from '../components/signals/LedgerTab.vue'
 import ReplayTab from '../components/signals/ReplayTab.vue'
 import { AI_STATUS_LABEL, errMsg, iso, todayEt } from '../components/signals/format'
 import type { AiStatus } from '../api/ai'
+import { auditCheckLabel } from '../lib/audit'
 
 /**
  * 入场信号页：顶部是评估日的概况与审计（有问题才显示），下面四个标签页：当日、信号、纸面账本、回放。
@@ -63,10 +64,6 @@ const summary = computed(() => (audit.value?.summary ?? {}) as Record<string, nu
 const callsToday = computed(() => (today.value?.day === todayEt() ? today.value.calls : 0))
 
 // ---- 审计：只列没通过的项，名称与原因都转成中文；涉及的标的按原因分组收起 ----
-const CHECK_NAME: Record<string, string> = {
-  evaluationExists: '当天评估', coverage: '覆盖', staleData: '数据过期', dataQuality: '数据质量',
-  signalConsistency: '信号一致性', aiAnalyses: 'AI 分析', ledgerCurrent: '纸面账本', evaluationJob: '评估作业',
-}
 /** 样本形如 "HUM SKIPPED_BUDGET：今天已调用 20 次，达到每日上限 20"：按"状态 + 原因"分组，状态转中文。 */
 function groupSamples(samples: string[]) {
   const groups = new Map<string, string[]>()
@@ -79,7 +76,7 @@ function groupSamples(samples: string[]) {
   return [...groups.entries()].map(([reason, symbols]) => ({ reason, symbols }))
 }
 const failed = computed(() =>
-  (audit.value?.checks ?? []).filter((c) => !c.ok).map((c) => ({ ...c, label: CHECK_NAME[c.name] ?? c.name, groups: groupSamples(c.samples) })),
+  (audit.value?.checks ?? []).filter((c) => !c.ok).map((c) => ({ ...c, label: auditCheckLabel(c.name), groups: groupSamples(c.samples) })),
 )
 const openedChecks = ref<string[]>([])
 
