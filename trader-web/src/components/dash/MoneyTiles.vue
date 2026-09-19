@@ -7,8 +7,8 @@ import { fmtEt, money, signed, timeEt, trend } from '../../lib/format'
 /**
  * 资金区：五个大数字 + 副行 + 折叠"更多"。
  *
- * 有实时数据（盈透常驻订阅，3.0.2）时用实时：净值是估算（现金 + 应计股息 + 逐只市值之和，秒级），
- * 当日盈亏 / 浮盈来自盈透账户盈亏（秒级），现金与可用资金来自盈透账户汇总（约 3 分钟一推）。
+ * <b>全部是盈透原值，不做折算</b>（2026-09-19 用户要求与盈透 App 一致）：净值、现金、可用资金、股票市值来自盈透账户汇总
+ * （约 3 分钟一推，可能比 App 晚），当日 / 浮动 / 已实现盈亏来自盈透账户盈亏（按变化秒级推）。
  * 各部分更新时间不同步，"更多"里分开写，不强行对齐。
  * 拿不到实时（网关未连、未启用）时退回最近一份收盘快照，并在标题旁写明。
  */
@@ -21,20 +21,10 @@ const useLive = computed(() => {
   return !!l && !!l.money && (l.status === 'LIVE' || l.status === 'DISCONNECTED')
 })
 
-const liveNav = computed(() => props.live?.nav?.estimate ?? props.live?.nav?.summary ?? null)
-const navIsEstimate = computed(() => props.live?.nav?.estimate != null)
-const liveStock = computed(() => {
-  const ps = props.live?.positions ?? []
-  return ps.length && ps.every((p) => p.marketValue !== null) ? ps.reduce((s, p) => s + (p.marketValue as number), 0) : null
-})
-/** 相对最近一份收盘快照的变化：实时净值口径，含出入金。 */
-const sinceClose = computed(() =>
-  liveNav.value !== null && props.view?.snapshot.netLiquidation != null ? liveNav.value - props.view.snapshot.netLiquidation : null,
-)
 const extSession = computed(() => (props.session === 'PRE' ? '盘前' : props.session === 'AFTER' ? '盘后' : props.session === 'CLOSED' ? '休市' : null))
 const lastUpdate = computed(() => {
   const l = props.live
-  const ts = [l?.pnl?.updatedAt, l?.nav?.estimateAt, l?.money?.updatedAt].filter(Boolean) as string[]
+  const ts = [l?.pnl?.updatedAt, l?.money?.updatedAt].filter(Boolean) as string[]
   return ts.length ? ts.sort().at(-1)! : null
 })
 </script>
@@ -76,26 +66,25 @@ const lastUpdate = computed(() => {
             净值（{{ live!.currency ?? 'USD' }}）
             <el-tooltip placement="bottom-start">
               <template #content>
-                <div style="max-width: 320px">
-                  <template v-if="navIsEstimate">
-                    实时估算 = 总现金 + 应计股息 + 逐只持仓市值之和，秒级更新。盈透自己的汇总净值约 3 分钟才推一次，
-                    放在"更多"里对照（2026-09-19 实测同一时刻两者精确相等）。
-                  </template>
-                  <template v-else>逐只市值还没到齐，暂用盈透汇总净值（约 3 分钟一推）。</template>
+                <div style="max-width: 300px">
+                  盈透账户汇总的 NetLiquidation 原值。盈透约 3 分钟才推一次，可能比 App 晚几分钟；
+                  本次更新于 {{ timeEt(live!.money?.updatedAt) }}（美东）。
                 </div>
               </template>
               <span class="q">?</span>
             </el-tooltip>
           </span>
-          <b class="tile__v num">{{ money(liveNav) }}</b>
+          <b class="tile__v num">{{ money(live!.money?.netLiquidation) }}</b>
         </div>
         <div class="tile">
           <span class="tile__l">当日盈亏</span>
-          <b class="tile__v num" :class="trend(live!.pnl?.daily)">{{ signed(live!.pnl?.daily) }}</b>
+          <b v-if="live!.pnl" class="tile__v num" :class="trend(live!.pnl.daily)">{{ signed(live!.pnl.daily) }}</b>
+          <span v-else class="tile__wait">等待盈透推送…</span>
         </div>
         <div class="tile">
           <span class="tile__l">累计浮盈</span>
-          <b class="tile__v num" :class="trend(live!.pnl?.unrealized)">{{ signed(live!.pnl?.unrealized) }}</b>
+          <b v-if="live!.pnl" class="tile__v num" :class="trend(live!.pnl.unrealized)">{{ signed(live!.pnl.unrealized) }}</b>
+          <span v-else class="tile__wait">等待盈透推送…</span>
         </div>
         <div class="tile">
           <span class="tile__l">总现金</span>
@@ -118,23 +107,16 @@ const lastUpdate = computed(() => {
         </div>
       </div>
       <div class="subrow">
-        <span>股票市值 <b class="num">{{ money(liveStock ?? live!.money?.stockMarketValue) }}</b></span>
+        <span>股票市值 <b class="num">{{ money(live!.money?.stockMarketValue) }}</b></span>
         <span>应计股息 <b class="num">{{ money(live!.money?.accruedDividend) }}</b></span>
         <span>当日已实现 <b class="num" :class="trend(live!.pnl?.realized)">{{ signed(live!.pnl?.realized) }}</b></span>
-        <span v-if="sinceClose !== null && view">较 {{ view.snapshot.asOfDate }} 收盘快照
-          <b class="num" :class="trend(sinceClose)">{{ signed(sinceClose) }}</b></span>
         <a class="toggle" @click="more = !more">{{ more ? '收起' : '更多' }}</a>
         <template v-if="more">
-          <span>盈透汇总净值 <b class="num">{{ money(live!.nav?.summary) }}</b></span>
           <span>购买力 <b class="num">{{ money(live!.money?.buyingPower) }}</b></span>
           <span>剩余流动性 <b class="num">{{ money(live!.money?.excessLiquidity) }}</b></span>
           <span>持仓总市值 <b class="num">{{ money(live!.money?.grossPositionValue) }}</b></span>
           <!-- 三个时间分开写：它们本来就不同步，对齐反而是撒谎 -->
-          <span class="ts">
-            资金 {{ timeEt(live!.money?.updatedAt) }}（约 3 分钟一推）· 盈亏 {{ timeEt(live!.pnl?.updatedAt) }}
-            <template v-if="live!.pnl?.source === 'POSITIONS'">（逐只加总）</template>
-            · 估值 {{ timeEt(live!.nav?.estimateAt) }}
-          </span>
+          <span class="ts">资金 {{ timeEt(live!.money?.updatedAt) }}（约 3 分钟一推）· 盈亏 {{ timeEt(live!.pnl?.updatedAt) }}</span>
         </template>
       </div>
       <p v-if="live!.lastError" class="warn">{{ live!.lastError }}</p>
@@ -190,6 +172,7 @@ const lastUpdate = computed(() => {
 .tile { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .tile__l { font-size: 12px; color: var(--el-text-color-secondary); }
 .tile__v { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
+.tile__wait { font-size: 13px; color: var(--el-text-color-placeholder); line-height: 29px; }
 .q {
   display: inline-block; width: 13px; height: 13px; line-height: 13px; text-align: center; border-radius: 50%;
   background: var(--el-fill-color); color: var(--el-text-color-secondary); font-size: 10px; cursor: help;

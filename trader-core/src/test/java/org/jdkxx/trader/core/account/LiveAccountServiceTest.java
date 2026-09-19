@@ -7,6 +7,7 @@ import org.jdkxx.trader.domain.AccountSummary;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.domain.Position;
 import org.jdkxx.trader.domain.PositionPnl;
+import org.jdkxx.trader.domain.PositionPrice;
 import org.jdkxx.trader.gateway.BrokerGateway;
 import org.jdkxx.trader.gateway.GatewayStatus;
 import org.jdkxx.trader.gateway.LiveAccountGateway;
@@ -30,8 +31,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 实时账户服务。数字取自 2026-09-19 只读探针的同一时刻：逐只市值之和 505,553.69 = 汇总股票市值，
- * 现金 2,801.18 + 应计股息 379.49 + 505,553.69 = 净值 508,734.36。
+ * 实时账户服务。数字取自 2026-09-19 生产账户的只读探针。
+ * 核心约束（用户要求）：<b>只给盈透原值，不做任何折算</b>——与盈透 App 一致。
  */
 class LiveAccountServiceTest {
 
@@ -69,8 +70,8 @@ class LiveAccountServiceTest {
         @Override public Instant instant() { return now; }
     }
 
-    private static Position pos(String conId, String symbol, String qty) {
-        return new Position(Broker.IBKR, ACCT, conId, symbol, symbol, "STK", "NYSE", null, "USD", new BigDecimal(qty), new BigDecimal("100"));
+    private static Position pos(String conId, String symbol, String qty, String avg) {
+        return new Position(Broker.IBKR, ACCT, conId, symbol, symbol, "STK", "NYSE", null, "USD", new BigDecimal(qty), new BigDecimal(avg));
     }
 
     private static PositionPnl single(String conId, String qty, String daily, String unreal, String value) {
@@ -79,11 +80,11 @@ class LiveAccountServiceTest {
     }
 
     private static AccountSummary summary() {
-        return new AccountSummary(Broker.IBKR, ACCT, T, "USD", new BigDecimal("508734.36"), new BigDecimal("2801.18"),
-                new BigDecimal("505553.69"), null, new BigDecimal("375647.03"), null, null, null, null, new BigDecimal("379.49"), Map.of());
+        return new AccountSummary(Broker.IBKR, ACCT, T, "USD", new BigDecimal("508769.74"), new BigDecimal("2801.18"),
+                new BigDecimal("505589.07"), null, new BigDecimal("375673.12"), null, null, null, null, new BigDecimal("379.49"), Map.of());
     }
 
-    /** 第一次读发起订阅并报 WARMING；账户号只给打码后的尾号。 */
+    /** 第一次读发起订阅并报 WARMING；账户号只给打码后的形式。 */
     @Test
     void 第一次读发起订阅() {
         LiveAccountService.LiveView v = service.view();
@@ -92,62 +93,55 @@ class LiveAccountServiceTest {
         assertThat(v.accountMask()).isNotEqualTo(ACCT).contains("*");
     }
 
-    /** 守护：实时净值 = 现金 + 应计股息 + 逐只市值之和（实测同一时刻与汇总净值精确相等）。 */
+    /**
+     * 守护：全是盈透原值——净值是汇总的 NetLiquidation（不是"现金 + 股息 + Σ市值"的估算），
+     * 现价是行情最新价（不是"市值 ÷ 数量"：GOOG 实测 346.08 对 344.41）。
+     */
     @Test
-    void 实时净值按恒等式估算() {
+    void 净值与现价都是盈透原值() {
         service.onSummary(summary());
-        service.onPositions(List.of(pos("756733", "SPY", "210"), pos("424099317", "SGOV", "2366")));
-        service.onPositionPnl(single("756733", "210", "449.15", "19828.81", "160198.49"));
-        service.onPositionPnl(single("424099317", "2366", "70.97", "-189.30", "345355.20"));   // 两只凑成 505,553.69
+        service.onPositions(List.of(pos("208813720", "GOOG", "62", "346.81"), pos("424099317", "SGOV", "2366", "100.67")));
+        service.onPositionPnl(single("208813720", "62", "45.26", "-148.58", "21353.42"));   // 21353.42 / 62 = 344.41
+        service.onPositionPnl(single("424099317", "2366", "82.81", "-177.45", "237994.94"));
+        service.onPositionPrice(new PositionPrice(Broker.IBKR, "208813720", T, new BigDecimal("346.08"), false));
 
         LiveAccountService.LiveView v = service.snapshotView();
         assertThat(v.status()).isEqualTo(LiveAccountService.Status.LIVE);
-        assertThat(v.nav().estimate()).isEqualByComparingTo("508734.36");
-        assertThat(v.nav().summary()).isEqualByComparingTo("508734.36");
+        assertThat(v.money().netLiquidation()).isEqualByComparingTo("508769.74");
+        LiveAccountService.LivePosition goog = v.positions().get(0);
+        assertThat(goog.last()).isEqualByComparingTo("346.08");
+        assertThat(goog.marketValue()).isEqualByComparingTo("21353.42");
+        assertThat(v.positions().get(1).last()).isNull();   // 行情还没到就是空，不用市值倒推
         assertThat(v.positions()).filteredOn(LiveAccountService.LivePosition::cashEquivalent)
                 .extracting(LiveAccountService.LivePosition::symbol).containsExactly("SGOV");
     }
 
-    /** 缺任何一只的市值不估：少算一只会把净值低估几万，不如退回汇总净值。 */
+    /** 守护：账户盈亏没到时就是空，不用逐只加总顶替（那是本系统的计算，不是盈透的数）。 */
     @Test
-    void 缺一只市值就不估净值() {
+    void 账户盈亏没到时为空不加总() {
         service.onSummary(summary());
-        service.onPositions(List.of(pos("756733", "SPY", "210"), pos("424099317", "SGOV", "2366")));
-        service.onPositionPnl(single("756733", "210", "449.15", "19828.81", "160198.49"));
+        service.onPositions(List.of(pos("756733", "SPY", "210", "668.43")));
+        service.onPositionPnl(single("756733", "210", "476.45", "19656.12", "160225.80"));
 
-        LiveAccountService.LiveView v = service.snapshotView();
-        assertThat(v.nav().estimate()).isNull();
-        assertThat(v.nav().summary()).isEqualByComparingTo("508734.36");
+        assertThat(service.snapshotView().pnl()).isNull();
+
+        service.onPnl(new AccountPnl(Broker.IBKR, T, new BigDecimal("915.99"), new BigDecimal("22328.76"), BigDecimal.ZERO));
+        assertThat(service.snapshotView().pnl().daily()).isEqualByComparingTo("915.99");
     }
 
-    /** 账户盈亏还没到（首条被丢）时用逐只加总；到了就用账户的。实测两者精确相等。 */
+    /** 清仓的持仓连同它的市值与现价一起拿掉。 */
     @Test
-    void 账户盈亏没到时用逐只加总() {
+    void 清仓后移除() {
         service.onSummary(summary());
-        service.onPositions(List.of(pos("756733", "SPY", "210"), pos("43645865", "IBKR", "11.1142")));
-        service.onPositionPnl(single("756733", "210", "449.15", "19828.81", "160198.49"));
-        service.onPositionPnl(single("43645865", "11.1142", "26.67", "184.65", "1008.95"));
-
-        LiveAccountService.Pnl p = service.snapshotView().pnl();
-        assertThat(p.source()).isEqualTo("POSITIONS");
-        assertThat(p.daily()).isEqualByComparingTo("475.82");
-
-        service.onPnl(new AccountPnl(Broker.IBKR, T, new BigDecimal("946.95"), new BigDecimal("22359.71"), BigDecimal.ZERO));
-        assertThat(service.snapshotView().pnl().source()).isEqualTo("ACCOUNT");
-        assertThat(service.snapshotView().pnl().daily()).isEqualByComparingTo("946.95");
-    }
-
-    /** 清仓的持仓不能再算进净值。 */
-    @Test
-    void 清仓后逐只市值随之移除() {
-        service.onSummary(summary());
-        service.onPositions(List.of(pos("756733", "SPY", "210")));
-        service.onPositionPnl(single("756733", "210", "449.15", "19828.81", "160198.49"));
+        service.onPositions(List.of(pos("756733", "SPY", "210", "668.43")));
+        service.onPositionPnl(single("756733", "210", "476.45", "19656.12", "160225.80"));
+        service.onPositionPrice(new PositionPrice(Broker.IBKR, "756733", T, new BigDecimal("762.98"), false));
         service.onPositions(List.of());
+        service.onPositions(List.of(pos("756733", "SPY", "10", "700")));   // 又买回来：旧的市值与现价不能沿用
 
-        LiveAccountService.LiveView v = service.snapshotView();
-        assertThat(v.positions()).isEmpty();
-        assertThat(v.nav().estimate()).isEqualByComparingTo("3180.67");   // 只剩现金 + 应计股息
+        LiveAccountService.LivePosition spy = service.snapshotView().positions().get(0);
+        assertThat(spy.marketValue()).isNull();
+        assertThat(spy.last()).isNull();
     }
 
     /** 守护：按需订阅——5 分钟没人读就退订；有人读就一直订着。 */

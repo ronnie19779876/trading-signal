@@ -2342,7 +2342,7 @@
                 "live"
               ]
             },
-            "description": "3.0.2：盈透常驻订阅的资金、盈亏、持仓，只读内存。第一次读发起订阅（status=WARMING，约 2 秒到齐），5 分钟没人读自动退订。nav.estimate = 现金 + 应计股息 + 逐只市值之和（秒级），nav.summary 为盈透汇总（约 3 分钟一推）。网关未启用 / 未连接时 status=UNAVAILABLE。"
+            "description": "盈透常驻订阅的资金、盈亏、持仓与行情最新价，只读内存，全是盈透原值不做折算。第一次读发起订阅（status=WARMING，约 2 秒到齐），5 分钟没人读自动退订。money 为账户汇总（约 3 分钟一推）；pnl 还没有有效推送时为 null；positions[].last 为盈透行情最新价。网关未启用 / 未连接时 status=UNAVAILABLE。"
           },
           "event": [
             {

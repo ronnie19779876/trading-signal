@@ -5,6 +5,7 @@ import org.jdkxx.trader.domain.AccountRef;
 import org.jdkxx.trader.domain.AccountSummary;
 import org.jdkxx.trader.domain.Position;
 import org.jdkxx.trader.domain.PositionPnl;
+import org.jdkxx.trader.domain.PositionPrice;
 import org.jdkxx.trader.gateway.BrokerGateway;
 import org.jdkxx.trader.gateway.GatewayException;
 import org.jdkxx.trader.gateway.GatewayState;
@@ -21,7 +22,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -30,16 +30,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
- * 实时账户（3.0.2 起）：按需订阅盈透的资金、盈亏与持仓，给仪表盘读。只在内存里，不落库、不进快照。
+ * 实时账户（3.0.2 起）：按需订阅盈透的资金、盈亏、持仓与持仓标的行情，给仪表盘读。只在内存里，不落库、不进快照。
+ *
+ * <p><b>只给盈透原值，不做任何折算</b>（2026-09-19 用户要求：与盈透 App 一致，不因计算产生误解）：
+ * 净值、现金等取账户汇总（约 3 分钟一推），当日 / 浮动 / 已实现盈亏取账户盈亏，逐只市值与盈亏取逐只盈亏，
+ * 现价取行情最新价。金额只保留到分（盈透推的是 double，带浮点尾巴），这是格式化，不是计算。
  *
  * <p><b>按需</b>：有人来读才订阅，{@value #IDLE_MINUTES} 分钟没人读就退订——这个网关同时在给真正下单的系统服务，能少占就少占。
  * 刚订上的几秒里数据陆续到齐，状态是 WARMING。
  *
- * <p><b>实时净值</b>是估算：现金 + 应计股息 + 逐只市值之和。盈透的账户汇总约 3 分钟才推一次，而逐只市值秒级更新；
- * 2026-09-19 实测同一时刻逐只市值之和与汇总的股票市值精确相等，恒等式"现金 + 股票市值 + 应计股息 = 净值"在 09-14 也验证过。
- * 只对全是股票的账户估算（有期权等其他品种时恒等式不成立），缺任何一只的市值就不估，退回汇总净值。
- *
- * <p>监听回调在网关的 dispatch 线程上，只写 volatile 字段；读在请求线程上。
+ * <p>监听回调在网关的 dispatch 线程上，只写 volatile 字段 / 并发容器；读在请求线程上。
  */
 public class LiveAccountService implements LiveAccountListener, AutoCloseable {
 
@@ -57,27 +57,28 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
         UNAVAILABLE
     }
 
-    /** 资金（盈透账户汇总，约 3 分钟一推）。 */
+    /** 资金（盈透账户汇总原值，约 3 分钟一推）。 */
     public record Money(BigDecimal netLiquidation, BigDecimal totalCash, BigDecimal availableFunds, BigDecimal buyingPower,
                         BigDecimal excessLiquidity, BigDecimal grossPositionValue, BigDecimal stockMarketValue,
                         BigDecimal accruedDividend, Instant updatedAt) {
     }
 
-    /** 净值：estimate 为实时估算（缺数据时为 null），summary 为盈透汇总的原值。 */
-    public record Nav(BigDecimal estimate, Instant estimateAt, BigDecimal summary, Instant summaryAt) {
+    /** 盈亏（盈透账户盈亏原值）。 */
+    public record Pnl(BigDecimal daily, BigDecimal unrealized, BigDecimal realized, Instant updatedAt) {
     }
 
-    /** 盈亏。source：ACCOUNT = 盈透账户盈亏；POSITIONS = 账户盈亏还没到时由逐只盈亏加总（实测两者精确相等）。 */
-    public record Pnl(BigDecimal daily, BigDecimal unrealized, BigDecimal realized, String source, Instant updatedAt) {
-    }
-
+    /**
+     * 持仓一行，全是盈透原值：数量与成本来自持仓，市值 / 当日 / 浮盈来自逐只盈亏（updatedAt），
+     * 最新价来自行情（lastAt；lastDelayed 表示降级成了延迟行情）。
+     */
     public record LivePosition(String symbol, String conId, String securityType, String currency, BigDecimal quantity,
-                               BigDecimal averageCost, BigDecimal price, BigDecimal marketValue, BigDecimal dailyPnl,
-                               BigDecimal unrealizedPnl, boolean cashEquivalent, Instant updatedAt) {
+                               BigDecimal averageCost, BigDecimal last, Instant lastAt, boolean lastDelayed,
+                               BigDecimal marketValue, BigDecimal dailyPnl, BigDecimal unrealizedPnl, boolean cashEquivalent,
+                               Instant updatedAt) {
     }
 
     public record LiveView(Status status, String detail, String accountMask, String currency, Instant startedAt,
-                           Nav nav, Money money, Pnl pnl, List<LivePosition> positions, Instant positionsUpdatedAt,
+                           Money money, Pnl pnl, List<LivePosition> positions, Instant positionsUpdatedAt,
                            String lastError) {
     }
 
@@ -96,6 +97,7 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
     private volatile List<Position> positions;
     private volatile Instant positionsAt;
     private final Map<String, PositionPnl> singles = new ConcurrentHashMap<>();
+    private final Map<String, PositionPrice> prices = new ConcurrentHashMap<>();
     private volatile String lastError;
 
     public LiveAccountService(AccountProperties props, String configuredAccount, BrokerGateway broker, LiveAccountGateway live,
@@ -166,11 +168,12 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
         positions = null;
         positionsAt = null;
         singles.clear();
+        prices.clear();
         lastError = null;
     }
 
     private LiveView unavailable(String reason) {
-        return new LiveView(Status.UNAVAILABLE, reason, null, null, null, null, null, null, List.of(), null, null);
+        return new LiveView(Status.UNAVAILABLE, reason, null, null, null, null, null, List.of(), null, null);
     }
 
     LiveView snapshotView() {
@@ -186,8 +189,7 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
         };
         List<LivePosition> rows = ps == null ? List.of() : positionRows(ps);
         return new LiveView(status, detail, accountId == null ? null : AccountKeys.mask(accountId),
-                s == null ? null : s.currency(), startedAt, nav(s, ps, rows), money(s), pnl(p, ps, rows), rows, positionsAt,
-                lastError);
+                s == null ? null : s.currency(), startedAt, money(s), pnl(p), rows, positionsAt, lastError);
     }
 
     private List<LivePosition> positionRows(List<Position> ps) {
@@ -195,40 +197,19 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
         List<LivePosition> out = new ArrayList<>();
         for (Position q : ps) {
             PositionPnl v = singles.get(q.brokerRef());
+            PositionPrice px = prices.get(q.brokerRef());
             String symbol = AccountPositions.normalize(q.symbol());
-            BigDecimal value = v == null ? null : cents(v.marketValue());
-            BigDecimal price = value == null || q.quantity().signum() == 0 ? null
-                    : value.divide(q.quantity(), 4, RoundingMode.HALF_UP);
-            out.add(new LivePosition(symbol, q.brokerRef(), q.securityType(), q.currency(), q.quantity(), q.averageCost(), price,
-                    value, v == null ? null : cents(v.daily()), v == null ? null : cents(v.unrealized()), cash.contains(symbol),
-                    v == null ? null : v.receivedAt()));
+            out.add(new LivePosition(symbol, q.brokerRef(), q.securityType(), q.currency(), q.quantity(), q.averageCost(),
+                    px == null ? null : px.last(), px == null ? null : px.receivedAt(), px != null && px.delayed(),
+                    v == null ? null : cents(v.marketValue()), v == null ? null : cents(v.daily()),
+                    v == null ? null : cents(v.unrealized()), cash.contains(symbol), v == null ? null : v.receivedAt()));
         }
         return out;
     }
 
-    /** 盈透推送的是 double，转成 BigDecimal 会带出浮点尾巴（238007.7728881836）；金额只留到分。 */
+    /** 盈透推送的是 double，转成 BigDecimal 会带出浮点尾巴（238007.7728881836）；金额只留到分。格式化，不是计算。 */
     static BigDecimal cents(BigDecimal v) {
         return v == null ? null : v.setScale(2, RoundingMode.HALF_UP);
-    }
-
-    /** 实时净值 = 现金 + 应计股息 + 逐只市值之和。非股票品种或缺任何一只的市值时不估。 */
-    static Nav nav(AccountSummary s, List<Position> ps, List<LivePosition> rows) {
-        if (s == null) {
-            return new Nav(null, null, null, null);
-        }
-        BigDecimal estimate = null;
-        Instant at = null;
-        boolean stocksOnly = ps != null && ps.stream().allMatch(p -> "STK".equals(p.securityType()));
-        boolean allValued = rows.stream().allMatch(r -> r.marketValue() != null);
-        if (ps != null && stocksOnly && allValued && s.totalCash() != null) {
-            estimate = s.totalCash().add(Objects.requireNonNullElse(s.accruedDividend(), BigDecimal.ZERO));
-            for (LivePosition r : rows) {
-                estimate = estimate.add(r.marketValue());
-                at = at == null || r.updatedAt().isAfter(at) ? r.updatedAt() : at;
-            }
-            at = at == null ? s.receivedAt() : at;
-        }
-        return new Nav(estimate, at, s.netLiquidation(), s.receivedAt());
     }
 
     private static Money money(AccountSummary s) {
@@ -236,23 +217,9 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
                 s.excessLiquidity(), s.grossPositionValue(), s.stockMarketValue(), s.accruedDividend(), s.receivedAt());
     }
 
-    /** 账户盈亏优先；还没到（首条被丢、价格静止时第二条迟迟不来）就用逐只盈亏加总。 */
-    static Pnl pnl(AccountPnl p, List<Position> ps, List<LivePosition> rows) {
-        if (p != null) {
-            return new Pnl(cents(p.daily()), cents(p.unrealized()), cents(p.realized()), "ACCOUNT", p.receivedAt());
-        }
-        if (ps == null || ps.isEmpty() || rows.stream().anyMatch(r -> r.dailyPnl() == null || r.unrealizedPnl() == null)) {
-            return null;
-        }
-        BigDecimal daily = BigDecimal.ZERO;
-        BigDecimal unrealized = BigDecimal.ZERO;
-        Instant at = null;
-        for (LivePosition r : rows) {
-            daily = daily.add(r.dailyPnl());
-            unrealized = unrealized.add(r.unrealizedPnl());
-            at = at == null || r.updatedAt().isAfter(at) ? r.updatedAt() : at;
-        }
-        return new Pnl(daily, unrealized, null, "POSITIONS", at);
+    /** 只用盈透账户盈亏的原值；还没收到有效推送（首条被丢、网关在重订）时为 null，页面显示"等待盈透推送"。 */
+    static Pnl pnl(AccountPnl p) {
+        return p == null ? null : new Pnl(cents(p.daily()), cents(p.unrealized()), cents(p.realized()), p.receivedAt());
     }
 
     // ------------------------------------------------------------------ 推送（网关 dispatch 线程）
@@ -272,12 +239,18 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
         positions = List.copyOf(list);
         positionsAt = clock.instant();
         Set<String> refs = list.stream().map(Position::brokerRef).collect(Collectors.toSet());
-        singles.keySet().retainAll(refs);   // 清仓的不再算进净值
+        singles.keySet().retainAll(refs);   // 清仓的不再显示
+        prices.keySet().retainAll(refs);
     }
 
     @Override
     public void onPositionPnl(PositionPnl p) {
         singles.put(p.brokerRef(), p);
+    }
+
+    @Override
+    public void onPositionPrice(PositionPrice p) {
+        prices.put(p.brokerRef(), p);
     }
 
     @Override

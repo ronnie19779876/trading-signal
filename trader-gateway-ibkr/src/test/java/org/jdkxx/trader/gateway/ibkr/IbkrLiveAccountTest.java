@@ -7,6 +7,7 @@ import org.jdkxx.trader.domain.AccountPnl;
 import org.jdkxx.trader.domain.AccountSummary;
 import org.jdkxx.trader.domain.Position;
 import org.jdkxx.trader.domain.PositionPnl;
+import org.jdkxx.trader.domain.PositionPrice;
 import org.jdkxx.trader.gateway.LiveAccountListener;
 import org.jdkxx.trader.gateway.ibkr.mapper.IbkrAccounts;
 import org.junit.jupiter.api.Test;
@@ -42,7 +43,8 @@ class IbkrLiveAccountTest {
         int next = 100;
         final EClientSocket client = mock(EClientSocket.class);
         final Map<Integer, IbkrSubscriptions.Handler> handlers = new HashMap<>();
-        final List<Runnable> timers = new ArrayList<>();
+        /** 延时任务：按延时记下，测试手动触发。 */
+        final List<Map.Entry<Duration, Runnable>> timers = new ArrayList<>();
         boolean connected = true;
 
         @Override public Object sessionToken() { return token; }
@@ -55,7 +57,22 @@ class IbkrLiveAccountTest {
         @Override public void unsubscribe(String what, Consumer<EClientSocket> cancel) { cancel.accept(client); }
         @Override public void open(int id, IbkrSubscriptions.Handler handler) { handlers.put(id, handler); }
         @Override public void close(int id) { handlers.remove(id); }
-        @Override public Runnable later(Duration delay, Runnable task) { timers.add(task); return () -> timers.remove(task); }
+        @Override public Runnable later(Duration delay, Runnable task) {
+            Map.Entry<Duration, Runnable> e = Map.entry(delay, task);
+            timers.add(e);
+            return () -> timers.remove(e);
+        }
+
+        /** 取出并执行指定延时的那个任务。 */
+        void fire(Duration delay) {
+            Map.Entry<Duration, Runnable> e = timers.stream().filter(t -> t.getKey().equals(delay)).findFirst().orElseThrow();
+            timers.remove(e);
+            e.getValue().run();
+        }
+
+        long pending(Duration delay) {
+            return timers.stream().filter(t -> t.getKey().equals(delay)).count();
+        }
         @Override public Instant now() { return Instant.parse("2026-09-21T14:00:00Z"); }
     }
 
@@ -65,10 +82,12 @@ class IbkrLiveAccountTest {
         final List<AccountPnl> pnls = new ArrayList<>();
         final List<List<Position>> positions = new ArrayList<>();
         final List<PositionPnl> singles = new ArrayList<>();
+        final List<PositionPrice> prices = new ArrayList<>();
         @Override public void onSummary(AccountSummary s) { summaries.add(s); }
         @Override public void onPnl(AccountPnl p) { pnls.add(p); }
         @Override public void onPositions(List<Position> p) { positions.add(p); }
         @Override public void onPositionPnl(PositionPnl p) { singles.add(p); }
+        @Override public void onPositionPrice(PositionPrice p) { prices.add(p); }
     }
 
     private final FakeWire wire = new FakeWire();
@@ -151,10 +170,10 @@ class IbkrLiveAccountTest {
         summary.item(new IbkrAccounts.SummaryRow(ACCT, "NetLiquidation", "508729.25", "USD"));
         summary.item(new IbkrAccounts.SummaryRow(ACCT, "TotalCashValue", "2801.18", "USD"));
         summary.item(new IbkrAccounts.SummaryRow(ACCT, "$LEDGER-StockMarketValue", "505548.58", "USD"));
-        assertThat(wire.timers).hasSize(1);
+        assertThat(wire.pending(Duration.ofMillis(IbkrLiveAccount.SUMMARY_DEBOUNCE_MS))).isEqualTo(1);
         assertThat(rec.summaries).isEmpty();
 
-        wire.timers.remove(0).run();
+        wire.fire(Duration.ofMillis(IbkrLiveAccount.SUMMARY_DEBOUNCE_MS));
         assertThat(rec.summaries).hasSize(1);
         assertThat(rec.summaries.get(0).netLiquidation()).isEqualByComparingTo("508729.25");
         assertThat(rec.summaries.get(0).totalCash()).isEqualByComparingTo("2801.18");
@@ -181,5 +200,76 @@ class IbkrLiveAccountTest {
         assertThat(p.marketValue()).isEqualByComparingTo("160198.49");
         live.subscribe();
         assertThat(live.toString()).doesNotContain(ACCT);
+    }
+
+    private static final Duration WATCHDOG = Duration.ofSeconds(IbkrLiveAccount.PNL_WATCHDOG_SECONDS);
+
+    /** 行情跟着持仓走：End 后按 conId 走 SMART 订行情，清仓的退订。 */
+    @Test
+    void 持仓行情跟着持仓订退() {
+        live.subscribe();
+        IbkrSubscriptions.Handler positions = wire.handlers.get(POS);
+        positions.item(pos(208813720, "GOOG", 62));
+        positions.end();
+
+        org.mockito.ArgumentCaptor<Contract> c = org.mockito.ArgumentCaptor.forClass(Contract.class);
+        verify(wire.client).reqMktData(anyInt(), c.capture(), eq(""), eq(false), eq(false), org.mockito.ArgumentMatchers.isNull());
+        assertThat(c.getValue().conid()).isEqualTo(208813720);
+        assertThat(c.getValue().exchange()).isEqualTo("SMART");
+        assertThat(live.quoteCount()).isEqualTo(1);
+
+        positions.item(pos(208813720, "GOOG", 0));
+        verify(wire.client).cancelMktData(anyInt());
+        assertThat(live.quoteCount()).isZero();
+    }
+
+    /** 现价只认最新价（LAST / 延迟 LAST），收盘后的 -1 买卖价与其他 tick 不当现价；延迟行情要标出来。 */
+    @Test
+    void 现价只取最新价() {
+        live.subscribe();
+        wire.handlers.get(POS).item(pos(208813720, "GOOG", 62));
+        wire.handlers.get(POS).end();
+        IbkrSubscriptions.Handler quote = wire.handlers.entrySet().stream()
+                .filter(e -> e.getKey() > PNL).reduce((a, b) -> b).orElseThrow().getValue();   // 最后开的是行情
+
+        quote.item(new IbkrAccounts.TickRow(1, -1.0));      // 收盘后买价 -1
+        quote.item(new IbkrAccounts.TickRow(9, 343.68));    // 昨收，不是最新价
+        quote.item(new IbkrAccounts.TickRow(4, 346.08));    // 最新价
+        assertThat(rec.prices).hasSize(1);
+        assertThat(rec.prices.get(0).last()).isEqualByComparingTo("346.08");
+        assertThat(rec.prices.get(0).delayed()).isFalse();
+
+        quote.item(new IbkrAccounts.MarketDataTypeRow(3));   // 降级成延迟行情
+        quote.item(new IbkrAccounts.TickRow(68, 346.10));
+        assertThat(rec.prices.get(1).delayed()).isTrue();
+    }
+
+    /** 守护：账户盈亏首条丢掉后第二条迟迟不来（生产 09-18 实测 20 分钟），10 秒后重订；收到有效值就不再重订。 */
+    @Test
+    void 账户盈亏没有有效值时重订() {
+        live.subscribe();
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(25.67, 183.65, 0));   // 首条，丢掉
+        assertThat(rec.pnls).isEmpty();
+
+        wire.fire(WATCHDOG);
+        verify(wire.client).cancelPnL(PNL);
+        int second = wire.handlers.keySet().stream().max(Integer::compare).orElseThrow();
+        wire.handlers.get(second).item(new IbkrAccounts.PnlRow(991.93, 23308.54, 0));   // 重订后的首条也不对，照丢
+        wire.handlers.get(second).item(new IbkrAccounts.PnlRow(915.99, 22328.76, 0));
+        assertThat(rec.pnls).extracting(p -> p.daily().toPlainString()).containsExactly("915.99");
+
+        wire.fire(WATCHDOG);   // 已有有效值：不再重订
+        verify(wire.client, org.mockito.Mockito.times(1)).cancelPnL(anyInt());
+    }
+
+    /** 重订最多 3 次，之后不再打扰网关。 */
+    @Test
+    void 账户盈亏重订有上限() {
+        live.subscribe();
+        for (int i = 0; i < IbkrLiveAccount.PNL_MAX_RETRIES; i++) {
+            wire.fire(WATCHDOG);
+        }
+        assertThat(wire.pending(WATCHDOG)).isZero();
+        verify(wire.client, org.mockito.Mockito.times(IbkrLiveAccount.PNL_MAX_RETRIES)).cancelPnL(anyInt());
     }
 }

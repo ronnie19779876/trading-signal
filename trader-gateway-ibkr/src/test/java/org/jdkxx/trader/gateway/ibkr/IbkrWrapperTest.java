@@ -132,10 +132,12 @@ class IbkrWrapperTest {
 
         wrapper.pnl(id, 1.0, 2.0, 0.0);
         wrapper.pnlSingle(id, Decimal.get(10), 1.0, 2.0, Double.MAX_VALUE, 100.0);
+        wrapper.marketDataType(id, 1);
+        wrapper.tickPrice(id, 4, 346.08, new com.ib.client.TickAttrib());
         wrapper.error(id, 0, 322, "Maximum number of account summary requests exceeded", null);
         wrapper.pnl(id + 1, 1.0, 2.0, 0.0);   // 不认识的 id 忽略
 
-        assertThat(got).containsExactly("PnlRow", "PnlSingleRow", "error=322");
+        assertThat(got).containsExactly("PnlRow", "PnlSingleRow", "MarketDataTypeRow", "TickRow", "error=322");
         assertThat(events).doesNotContain("sys=322");
     }
 }

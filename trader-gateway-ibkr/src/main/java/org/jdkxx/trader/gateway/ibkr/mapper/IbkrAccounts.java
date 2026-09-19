@@ -7,6 +7,7 @@ import org.jdkxx.trader.domain.AccountSummary;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.domain.Position;
 import org.jdkxx.trader.domain.PositionPnl;
+import org.jdkxx.trader.domain.PositionPrice;
 import org.jdkxx.trader.gateway.GatewayException;
 
 import java.math.BigDecimal;
@@ -61,7 +62,31 @@ public final class IbkrAccounts {
     public record PnlSingleRow(Decimal position, double daily, double unrealized, double realized, double value) {
     }
 
+    /** tickPrice 回调的原样数据。 */
+    public record TickRow(int field, double price) {
+    }
+
+    /** marketDataType 回调：1 实时、2 冻结、3 延迟、4 延迟冻结。 */
+    public record MarketDataTypeRow(int type) {
+    }
+
+    /** 最新价的 tick 类型：LAST = 4，延迟行情下是 DELAYED_LAST = 68。 */
+    public static final int TICK_LAST = 4;
+    public static final int TICK_DELAYED_LAST = 68;
+
     private IbkrAccounts() {
+    }
+
+    /** 最新价；不是最新价的 tick、或价格无效（收盘后买卖价为 -1，实测）时返回 null。 */
+    public static PositionPrice lastPrice(String conId, TickRow r, boolean delayed, Instant receivedAt) {
+        if (r.field() != TICK_LAST && r.field() != TICK_DELAYED_LAST) {
+            return null;
+        }
+        BigDecimal price = amount(r.price());
+        if (price == null || price.signum() <= 0) {
+            return null;
+        }
+        return new PositionPrice(Broker.IBKR, conId, receivedAt, price, delayed || r.field() == TICK_DELAYED_LAST);
     }
 
     public static AccountPnl pnl(PnlRow r, Instant receivedAt) {

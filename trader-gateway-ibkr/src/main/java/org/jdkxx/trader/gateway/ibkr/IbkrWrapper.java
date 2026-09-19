@@ -4,6 +4,7 @@ import com.ib.client.Contract;
 import com.ib.client.ContractDetails;
 import com.ib.client.Decimal;
 import com.ib.client.DefaultEWrapper;
+import com.ib.client.TickAttrib;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.gateway.RequestRejectedException;
 import org.jdkxx.trader.gateway.ibkr.mapper.IbkrAccounts;
@@ -137,5 +138,17 @@ final class IbkrWrapper extends DefaultEWrapper {
     @Override
     public void pnlSingle(int reqId, Decimal pos, double dailyPnL, double unrealizedPnL, double realizedPnL, double value) {
         subscriptions.item(reqId, new IbkrAccounts.PnlSingleRow(pos, dailyPnL, unrealizedPnL, realizedPnL, value));
+    }
+
+    /** 行情价格推送：实时账户只订了持仓标的的行情，其余 tick 类型由订阅方自己挑。 */
+    @Override
+    public void tickPrice(int tickerId, int field, double price, TickAttrib attrib) {
+        subscriptions.item(tickerId, new IbkrAccounts.TickRow(field, price));
+    }
+
+    /** 券商告知本次行情是实时（1）还是降级的延迟（3 / 4）。 */
+    @Override
+    public void marketDataType(int reqId, int marketDataType) {
+        subscriptions.item(reqId, new IbkrAccounts.MarketDataTypeRow(marketDataType));
     }
 }

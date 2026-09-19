@@ -4,6 +4,7 @@ import org.jdkxx.trader.domain.AccountPnl;
 import org.jdkxx.trader.domain.AccountSummary;
 import org.jdkxx.trader.domain.Position;
 import org.jdkxx.trader.domain.PositionPnl;
+import org.jdkxx.trader.domain.PositionPrice;
 
 import java.util.List;
 
@@ -23,6 +24,9 @@ public interface LiveAccountListener {
 
     /** 单个持仓的盈亏与市值。 */
     void onPositionPnl(PositionPnl pnl);
+
+    /** 单个持仓标的的最新价（盈透行情）。 */
+    void onPositionPrice(PositionPrice price);
 
     /** 订阅被券商拒绝（例如账户汇总超出并发上限 322）。订阅本身不重试，由调用方决定。 */
     default void onLiveError(String what, GatewayException error) {

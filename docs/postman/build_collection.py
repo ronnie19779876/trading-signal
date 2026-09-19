@@ -279,8 +279,8 @@ ENDPOINTS = [
              "desc": "当天快照是否存在（美东 18:30 前缺快照只提示）、对账状态（FAIL 为关键项，WARN 只提示）、缺价、最近一次快照作业。休市日直接判过。",
              "tests": T_200 + T_JSON + ['pm.test("审计通过 ok=true（失败时看 checks）", () => pm.expect(body.ok, JSON.stringify(body.checks.filter(c => !c.ok))).to.eql(true));']},
             {"name": "实时账户（按需订阅）", "method": "GET", "path": "/api/account/live",
-             "desc": "3.0.2：盈透常驻订阅的资金、盈亏、持仓，只读内存。第一次读发起订阅（status=WARMING，约 2 秒到齐），5 分钟没人读自动退订。"
-                     "nav.estimate = 现金 + 应计股息 + 逐只市值之和（秒级），nav.summary 为盈透汇总（约 3 分钟一推）。网关未启用 / 未连接时 status=UNAVAILABLE。",
+             "desc": "盈透常驻订阅的资金、盈亏、持仓与行情最新价，只读内存，全是盈透原值不做折算。第一次读发起订阅（status=WARMING，约 2 秒到齐），5 分钟没人读自动退订。"
+                     "money 为账户汇总（约 3 分钟一推）；pnl 还没有有效推送时为 null；positions[].last 为盈透行情最新价。网关未启用 / 未连接时 status=UNAVAILABLE。",
              "tests": T_200 + T_JSON + ['pm.test("status 是四种之一", () => pm.expect(body.status).to.be.oneOf(["LIVE", "WARMING", "DISCONNECTED", "UNAVAILABLE"]));',
                                         'pm.test("账户号只给脱敏形式", () => pm.expect(String(body.accountMask ?? "")).to.not.match(/U\\d{5,}/));',
                                         'pm.test("positions 是数组", () => pm.expect(body.positions).to.be.an("array"));']},

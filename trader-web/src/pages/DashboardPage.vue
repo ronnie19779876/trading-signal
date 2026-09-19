@@ -15,8 +15,8 @@ import { getQuotes, type Quote } from '../api/quotes'
 /**
  * 仪表盘：一屏看清"我现在怎么样"。布局参考 futu-trader：上面账户资金，中间净值走势，下面左候选、右持仓。
  *
- * 账户与持仓优先用盈透实时（3.0.2，/api/account/live，按需订阅）；拿不到时退回收盘快照，
- * 此时有富途实时报价（生产订阅了池与持仓）就按实时价估算持仓现价与涨跌。
+ * 账户与持仓优先用盈透实时（3.0.2，/api/account/live，按需订阅），全是盈透原值；拿不到时退回收盘快照。
+ * 候选标的的现价与涨跌用富途实时报价（生产订阅了池与持仓），没有时用最近一根日 K。
  *
  * 刷新分三档：实时账户 5 秒一轮（预热中 1.5 秒）；日级数据（快照、评估、日 K）5 分钟一轮；
  * 报价在开市时段 5 秒一轮、休市 60 秒。
@@ -122,8 +122,6 @@ async function loadQuotes() {
   }
 }
 
-const lastBar = (symbol: string) => barsBySymbol.value.get(symbol)?.at(-1) ?? null
-
 const candidates = computed<CandidateRow[]>(() => {
   const evalBySymbol = new Map(evaluations.value.map((e) => [e.symbol, e]))
   return pool.value
@@ -146,65 +144,44 @@ const candidates = computed<CandidateRow[]>(() => {
     })
 })
 
-/** 有盈透实时持仓（LIVE，或断线但留着最后的数据）就用它，否则用收盘快照。 */
+/** 有盈透实时持仓（LIVE，或断线但留着最后的数据）就用它，否则用收盘快照。都是券商原值，不做折算。 */
 const liveHoldings = computed(() => {
   const l = live.value
   return !!l && (l.status === 'LIVE' || l.status === 'DISCONNECTED') && l.positionsUpdatedAt !== null
 })
-const liveNav = computed(() => live.value?.nav?.estimate ?? live.value?.nav?.summary ?? null)
+const liveNav = computed(() => live.value?.money?.netLiquidation ?? null)
 
 const holdings = computed<HoldingRow[]>(() => {
   const evalBySymbol = new Map(evaluations.value.map((e) => [e.symbol, e]))
   if (liveHoldings.value) {
-    const nav = liveNav.value
-    return live.value!.positions.map((p) => {
-      const cost = p.averageCost !== null ? p.averageCost * p.quantity : null
-      const yesterday = p.marketValue !== null && p.dailyPnl !== null ? p.marketValue - p.dailyPnl : null
-      return {
-        symbol: p.symbol,
-        quantity: p.quantity,
-        averageCost: p.averageCost,
-        price: p.price,
-        live: true,
-        session: null,
-        outcome: evalBySymbol.get(p.symbol)?.outcome ?? null,
-        dailyPnl: p.dailyPnl,
-        dayChange: yesterday ? (p.dailyPnl! / yesterday) * 100 : null,
-        dayChangeDate: null,
-        marketValue: p.marketValue,
-        unrealizedPnl: p.unrealizedPnl,
-        unrealizedPct: p.unrealizedPnl !== null && cost ? (p.unrealizedPnl / cost) * 100 : null,
-        weight: p.marketValue !== null && nav ? (p.marketValue / nav) * 100 : null,
-        cashEquivalent: p.cashEquivalent,
-      }
-    })
+    return live.value!.positions.map((p) => ({
+      symbol: p.symbol,
+      quantity: p.quantity,
+      averageCost: p.averageCost,
+      price: p.last,
+      priceAt: p.lastAt,
+      priceDelayed: p.lastDelayed,
+      marketValue: p.marketValue,
+      dailyPnl: p.dailyPnl,
+      unrealizedPnl: p.unrealizedPnl,
+      cashEquivalent: p.cashEquivalent,
+      outcome: evalBySymbol.get(p.symbol)?.outcome ?? null,
+    }))
   }
-  const nav = view.value?.snapshot.netLiquidation ?? null
   return (view.value?.positions ?? []).map((p) => {
     const symbol = norm(p.symbol)
-    const q = quotes.value.get(symbol)
-    const live = !!q?.price
-    const price = live ? (q!.price as number) : p.price
-    const bar = lastBar(symbol)
-    const marketValue = live ? p.quantity * price! : p.marketValue
-    const cost = p.averageCost !== null ? p.averageCost * p.quantity : null
-    const unrealized = live && cost !== null ? marketValue! - cost : p.unrealizedPnl
     return {
       symbol,
       quantity: p.quantity,
       averageCost: p.averageCost,
-      price,
-      live,
-      session: q?.session ?? null,
-      outcome: evalBySymbol.get(symbol)?.outcome ?? null,
+      price: p.price,
+      priceAt: null,
+      priceDelayed: false,
+      marketValue: p.marketValue,
       dailyPnl: null,
-      dayChange: live ? q!.changeRate : bar?.changeRate ?? null,
-      dayChangeDate: live ? null : bar?.tradeDate ?? null,
-      marketValue,
-      unrealizedPnl: unrealized,
-      unrealizedPct: unrealized !== null && cost ? (unrealized / cost) * 100 : null,
-      weight: marketValue !== null && nav ? (marketValue / nav) * 100 : null,
+      unrealizedPnl: p.unrealizedPnl,
       cashEquivalent: p.cashEquivalent,
+      outcome: evalBySymbol.get(symbol)?.outcome ?? null,
     }
   })
 })
