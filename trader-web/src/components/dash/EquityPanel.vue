@@ -128,7 +128,7 @@ const lastChange = computed(() => changes.value.at(-1) ?? null)
     <div class="panel__head">
       <h3>净值走势</h3>
       <span v-if="mode === 'nav'" class="panel__src">
-        实线 = 每日美东 18:00 快照，按收盘价估值（最近 {{ days }} 天）<template v-if="liveTail"> · 虚线 = 当前实时净值（估算），口径不同</template>
+        实线 = 盈透净值（每日美东 18:00 快照，最近 {{ days }} 天）<template v-if="liveTail"> · 虚线 = 盈透当前净值</template>
       </span>
       <span v-else class="panel__src">每根柱子 = 相邻两份快照的净值差，含出入金，不是交易盈亏</span>
       <span class="panel__grow" />

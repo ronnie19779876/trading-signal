@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
 import StatCard from '../components/StatCard.vue'
@@ -19,7 +20,9 @@ const coverage = ref<FundamentalsCoverage | null>(null)
 const running = ref<RunningJob | null>(null)
 const error = ref<string | null>(null)
 
-const symbol = ref('NVDA')
+// 从持仓页等处跳过来时带 ?symbol=
+const route = useRoute()
+const symbol = ref(typeof route.query.symbol === 'string' && route.query.symbol ? route.query.symbol : 'NVDA')
 const overview = ref<FundamentalsOverview | null>(null)
 const valuations = ref<ValuationSnapshot[]>([])
 const reports = ref<FinancialReport[]>([])

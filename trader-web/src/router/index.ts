@@ -16,7 +16,7 @@ const router = createRouter({
   routes: [
     // 菜单顺序（2026-09-19 用户定）：仪表盘、持仓、账户、基本面、入场信号、交易、系统
     { path: '/', name: 'dashboard', component: () => import('../pages/DashboardPage.vue'), meta: { title: '仪表盘' } },
-    { path: '/positions', name: 'positions', component: () => import('../pages/PlaceholderPage.vue'), meta: { title: '持仓' } },
+    { path: '/positions', name: 'positions', component: () => import('../pages/PositionsPage.vue'), meta: { title: '持仓' } },
     { path: '/account', name: 'account', component: () => import('../pages/AccountPage.vue'), meta: { title: '账户' } },
     { path: '/fundamentals', name: 'fundamentals', component: () => import('../pages/FundamentalsPage.vue'), meta: { title: '基本面' } },
     { path: '/signals', name: 'signals', component: () => import('../pages/SignalsPage.vue'), meta: { title: '入场信号' } },
