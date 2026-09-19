@@ -12,7 +12,16 @@ import { money, signed, todayEt, trend } from '../../lib/format'
  * 日变化是相邻两份快照的净值差，**含出入金**——本系统没有盈透的当日盈亏，别把它读成交易盈亏。
  * 盈亏用柱子而不是折线：它是每天独立的一个量，折线会画出两天之间并不存在的过渡。
  */
-const props = defineProps<{ series: AccountSnapshot[]; days: number; liveNav: number | null }>()
+const props = withDefaults(
+  defineProps<{
+    series: AccountSnapshot[]
+    /** 说明文字里的"最近 N 天"；null = 全部 */
+    days: number | null
+    liveNav: number | null
+    height?: number
+  }>(),
+  { height: 200 },
+)
 
 type Mode = 'nav' | 'change'
 const mode = ref<Mode>('nav')
@@ -51,7 +60,7 @@ function render() {
   const t = chartTheme()
   if (!chart.value) {
     chart.value = createChart(box.value, {
-      height: 200,
+      height: props.height,
       // 跟着容器宽度走（内部 ResizeObserver）；尺寸变了再由下面的 ro 重算可见范围
       autoSize: true,
       ...chartLayout(t),
@@ -128,17 +137,19 @@ const lastChange = computed(() => changes.value.at(-1) ?? null)
     <div class="panel__head">
       <h3>净值走势</h3>
       <span v-if="mode === 'nav'" class="panel__src">
-        实线 = 盈透净值（每日美东 18:00 快照，最近 {{ days }} 天）<template v-if="liveTail"> · 虚线 = 盈透当前净值</template>
+        实线 = 盈透净值（每日美东 18:00 快照，{{ days === null ? '全部' : `最近 ${days} 天` }}）<template v-if="liveTail"> · 虚线 = 盈透当前净值</template>
       </span>
       <span v-else class="panel__src">每根柱子 = 相邻两份快照的净值差，含出入金，不是交易盈亏</span>
       <span class="panel__grow" />
+      <!-- 页面可以在这里放时间范围切换等 -->
+      <slot name="actions" />
       <el-radio-group v-model="mode" size="small">
         <el-radio-button value="nav">净值</el-radio-button>
         <el-radio-button value="change">日变化</el-radio-button>
       </el-radio-group>
     </div>
     <!-- v-if 而不是 v-show：隐藏时建图拿到的宽度是 0，时间轴会把所有点挤在最右边（生产 5 份快照时实测） -->
-    <div v-if="rows.length > 1" ref="box" class="chart" />
+    <div v-if="rows.length > 1" ref="box" class="chart" :style="{ height: height + 'px' }" />
     <p class="panel__foot">
       <template v-if="rows.length > 1">
         {{ rows.length }} 份快照（{{ rows[0].asOfDate }} 起）。
@@ -152,7 +163,7 @@ const lastChange = computed(() => changes.value.at(-1) ?? null)
 </template>
 
 <style scoped>
-.chart { width: 100%; height: 200px; }
+.chart { width: 100%; }
 .panel__foot b { color: var(--el-text-color-primary); }
 .panel__foot b.up { color: var(--tr-up); }
 .panel__foot b.down { color: var(--tr-down); }

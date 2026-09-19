@@ -108,6 +108,30 @@ html.dark {
   color: var(--el-text-color-placeholder);
 }
 
+/* 数字格子：一格一个"标签 + 数值"，持仓抽屉与账户页共用。 */
+.kv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+}
+.kv {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+  min-width: 0;
+}
+.kv > label {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+}
+.kv > b {
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .num {
   font-variant-numeric: tabular-nums;
 }

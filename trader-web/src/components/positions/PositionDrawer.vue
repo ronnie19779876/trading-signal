@@ -163,14 +163,14 @@ const title = computed(() => {
         <span v-else class="muted">收盘快照价</span>
       </div>
 
-      <div class="grid">
-        <div class="cell"><label>数量</label><b class="num">{{ row.quantity.toLocaleString(undefined, { maximumFractionDigits: 4 }) }}</b></div>
-        <div class="cell"><label>成本价</label><b class="num">{{ money(row.averageCost) }}</b></div>
-        <div class="cell"><label>成本</label><b class="num">{{ money(row.costBasis) }}</b></div>
-        <div class="cell"><label>市值</label><b class="num">{{ money(row.marketValue) }}</b></div>
-        <div class="cell"><label>当日盈亏</label><b class="num" :class="trend(row.dailyPnl)">{{ signed(row.dailyPnl) }}</b></div>
-        <div class="cell"><label>浮动盈亏</label><b class="num" :class="trend(row.unrealizedPnl)">{{ signed(row.unrealizedPnl) }}</b></div>
-        <div class="cell"><label>占组合</label><b class="num">{{ row.portfolioPct === null ? '—' : num(row.portfolioPct) + '%' }}</b></div>
+      <div class="kv-grid">
+        <div class="kv"><label>数量</label><b class="num">{{ row.quantity.toLocaleString(undefined, { maximumFractionDigits: 4 }) }}</b></div>
+        <div class="kv"><label>成本价</label><b class="num">{{ money(row.averageCost) }}</b></div>
+        <div class="kv"><label>成本</label><b class="num">{{ money(row.costBasis) }}</b></div>
+        <div class="kv"><label>市值</label><b class="num">{{ money(row.marketValue) }}</b></div>
+        <div class="kv"><label>当日盈亏</label><b class="num" :class="trend(row.dailyPnl)">{{ signed(row.dailyPnl) }}</b></div>
+        <div class="kv"><label>浮动盈亏</label><b class="num" :class="trend(row.unrealizedPnl)">{{ signed(row.unrealizedPnl) }}</b></div>
+        <div class="kv"><label>占组合</label><b class="num">{{ row.portfolioPct === null ? '—' : num(row.portfolioPct) + '%' }}</b></div>
       </div>
 
       <el-empty v-if="!known" :image-size="60"
@@ -198,13 +198,13 @@ const title = computed(() => {
           </div>
           <el-alert v-if="fundError" :title="'基本面取数失败：' + fundError" type="error" :closable="false" />
 
-          <div v-if="overview?.valuation" class="grid">
-            <div class="cell"><label>总市值</label><b class="num">{{ big(overview.valuation.marketCap) }}</b></div>
-            <div class="cell"><label>市盈率 TTM</label><b class="num" :class="negative(overview.valuation.peTtm)">{{ numMax(overview.valuation.peTtm) }}</b></div>
-            <div class="cell"><label>市净率</label><b class="num" :class="negative(overview.valuation.pb)">{{ numMax(overview.valuation.pb) }}</b></div>
-            <div class="cell"><label>每股收益</label><b class="num">{{ numMax(overview.valuation.eps) }}</b></div>
-            <div class="cell"><label>股息率 TTM</label><b class="num">{{ numMax(overview.valuation.dividendYieldTtm) }}%</b></div>
-            <div v-if="overview.valuation.navPerShare !== null" class="cell"><label>净值</label><b class="num">{{ numMax(overview.valuation.navPerShare) }}</b></div>
+          <div v-if="overview?.valuation" class="kv-grid">
+            <div class="kv"><label>总市值</label><b class="num">{{ big(overview.valuation.marketCap) }}</b></div>
+            <div class="kv"><label>市盈率 TTM</label><b class="num" :class="negative(overview.valuation.peTtm)">{{ numMax(overview.valuation.peTtm) }}</b></div>
+            <div class="kv"><label>市净率</label><b class="num" :class="negative(overview.valuation.pb)">{{ numMax(overview.valuation.pb) }}</b></div>
+            <div class="kv"><label>每股收益</label><b class="num">{{ numMax(overview.valuation.eps) }}</b></div>
+            <div class="kv"><label>股息率 TTM</label><b class="num">{{ numMax(overview.valuation.dividendYieldTtm) }}%</b></div>
+            <div v-if="overview.valuation.navPerShare !== null" class="kv"><label>净值</label><b class="num">{{ numMax(overview.valuation.navPerShare) }}</b></div>
           </div>
 
           <div v-if="metricRows.length" class="dtable-wrap metrics">
@@ -240,13 +240,6 @@ const title = computed(() => {
 .meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .quote { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .quote__price { font-size: 26px; font-weight: 600; color: var(--el-text-color-primary); }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
-.cell {
-  display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px;
-  background: var(--el-fill-color-lighter);
-}
-.cell label { font-size: 11px; color: var(--el-text-color-secondary); }
-.cell b { font-size: 14px; font-weight: 600; }
 .metrics { margin-top: 10px; }
 .intro { margin-top: 8px; }
 .intro__text { margin: 0; font-size: 12px; line-height: 1.7; color: var(--el-text-color-regular); white-space: pre-wrap; }
