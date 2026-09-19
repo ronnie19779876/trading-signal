@@ -2026,6 +2026,48 @@
           "response": []
         },
         {
+          "name": "全市场估值（筛选表）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/fundamentals/valuations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "fundamentals",
+                "valuations"
+              ]
+            },
+            "description": "某一天全部标的的估值，date 缺省取最新有估值的一天；rows 与单只估值同字段。名称、行业、指数从 /api/universe 合并。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"有 rows 数组\", () => pm.expect(body.rows).to.be.an(\"array\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
           "name": "单只概览",
           "request": {
             "method": "GET",

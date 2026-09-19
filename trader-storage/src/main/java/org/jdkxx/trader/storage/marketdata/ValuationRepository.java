@@ -1,12 +1,15 @@
 package org.jdkxx.trader.storage.marketdata;
 
 import org.jdkxx.trader.domain.Instrument;
+import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.ValuationSnapshot;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.sql.Date;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -65,21 +68,35 @@ public class ValuationRepository {
         return args.size();
     }
 
+    private static final String COLS = """
+            v.as_of, v.suspended, v.market_cap, v.float_market_cap, v.issued_shares, v.outstanding_shares, v.pe, v.pe_ttm,
+            v.pb, v.eps, v.net_asset_per_share, v.net_asset, v.net_profit, v.dividend_ttm, v.dividend_yield_ttm,
+            v.turnover_rate, v.nav_per_share, v.premium""";
+
     public List<ValuationSnapshot> find(Instrument instrument, long instrumentId, LocalDate from, LocalDate to) {
-        return jdbc.query("""
-                SELECT as_of, suspended, market_cap, float_market_cap, issued_shares, outstanding_shares, pe, pe_ttm, pb,
-                       eps, net_asset_per_share, net_asset, net_profit, dividend_ttm, dividend_yield_ttm, turnover_rate,
-                       nav_per_share, premium
-                FROM valuation_snapshot WHERE instrument_id = ? AND trade_date BETWEEN ? AND ? ORDER BY trade_date""",
-                (rs, i) -> new ValuationSnapshot(instrument, rs.getTimestamp("as_of").toInstant(), rs.getBoolean("suspended"),
-                        rs.getBigDecimal("market_cap"), rs.getBigDecimal("float_market_cap"),
-                        (Long) rs.getObject("issued_shares"), (Long) rs.getObject("outstanding_shares"),
-                        rs.getBigDecimal("pe"), rs.getBigDecimal("pe_ttm"), rs.getBigDecimal("pb"), rs.getBigDecimal("eps"),
-                        rs.getBigDecimal("net_asset_per_share"), rs.getBigDecimal("net_asset"), rs.getBigDecimal("net_profit"),
-                        rs.getBigDecimal("dividend_ttm"), rs.getBigDecimal("dividend_yield_ttm"),
-                        rs.getBigDecimal("turnover_rate"), rs.getBigDecimal("nav_per_share"), rs.getBigDecimal("premium"),
-                        null),
+        return jdbc.query("SELECT " + COLS + " FROM valuation_snapshot v WHERE v.instrument_id = ? AND v.trade_date BETWEEN ? AND ? "
+                        + "ORDER BY v.trade_date",
+                (rs, i) -> map(instrument, rs),
                 instrumentId, Date.valueOf(from), Date.valueOf(to));
+    }
+
+    /** 某一天全部标的的估值（全市场筛选表用），按代码排序。 */
+    public List<ValuationSnapshot> findOn(LocalDate date) {
+        return jdbc.query("SELECT i.market, i.symbol, " + COLS + " FROM valuation_snapshot v JOIN instrument i ON i.id = v.instrument_id "
+                        + "WHERE v.trade_date = ? ORDER BY i.symbol",
+                (rs, i) -> map(new Instrument(Market.valueOf(rs.getString("market")), rs.getString("symbol")), rs),
+                Date.valueOf(date));
+    }
+
+    private static ValuationSnapshot map(Instrument instrument, ResultSet rs) throws SQLException {
+        return new ValuationSnapshot(instrument, rs.getTimestamp("as_of").toInstant(), rs.getBoolean("suspended"),
+                rs.getBigDecimal("market_cap"), rs.getBigDecimal("float_market_cap"),
+                (Long) rs.getObject("issued_shares"), (Long) rs.getObject("outstanding_shares"),
+                rs.getBigDecimal("pe"), rs.getBigDecimal("pe_ttm"), rs.getBigDecimal("pb"), rs.getBigDecimal("eps"),
+                rs.getBigDecimal("net_asset_per_share"), rs.getBigDecimal("net_asset"), rs.getBigDecimal("net_profit"),
+                rs.getBigDecimal("dividend_ttm"), rs.getBigDecimal("dividend_yield_ttm"),
+                rs.getBigDecimal("turnover_rate"), rs.getBigDecimal("nav_per_share"), rs.getBigDecimal("premium"),
+                null);
     }
 
     public Optional<LocalDate> maxTradeDate() {

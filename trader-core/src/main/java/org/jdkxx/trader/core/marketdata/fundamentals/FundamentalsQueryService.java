@@ -26,6 +26,10 @@ public class FundamentalsQueryService {
                            List<FinancialReport> mainIndex, Map<String, String> profile) {
     }
 
+    /** 某一天全部标的的估值；date 为 null 表示库里还没有任何估值。 */
+    public record DayValuations(LocalDate date, List<ValuationSnapshot> rows) {
+    }
+
     /** 覆盖情况。 */
     public record Coverage(LocalDate latestDate, long targets, long withValuationOnDate, long reports,
                            long poolWithReports, long poolSize) {
@@ -62,6 +66,12 @@ public class FundamentalsQueryService {
     public List<ValuationSnapshot> valuations(String symbol, LocalDate from, LocalDate to) {
         InstrumentRow row = directory.require(symbol);
         return valuations.find(row.instrument(), row.id(), from, to);
+    }
+
+    /** 全市场估值筛选表：某一天全部标的的估值，date 缺省取最新有估值的一天。 */
+    public DayValuations valuationsOn(LocalDate date) {
+        LocalDate d = date != null ? date : valuations.maxTradeDate().orElse(null);
+        return d == null ? new DayValuations(null, List.of()) : new DayValuations(d, valuations.findOn(d));
     }
 
     public List<FinancialReport> reports(String symbol, FinancialStatement statement, int limit) {

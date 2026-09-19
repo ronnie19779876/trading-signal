@@ -108,6 +108,7 @@
 
 | 方法与路径 | 说明 |
 | --- | --- |
+| `GET /api/fundamentals/valuations?date=` | **全市场估值**（3.0.6）：某一天全部标的的估值快照，`{date, rows[]}`，`rows` 与单只估值同字段、按代码排序；`date` 缺省取最新有估值的一天，库里还没有估值时 `date=null`、`rows=[]`。名称、行业、指数、池角色请从 `GET /api/universe` 合并 |
 | `GET /api/fundamentals/{symbol}` | 概览：最新估值 + 最近 4 期主要指标 + 公司简介 |
 | `GET /api/fundamentals/{symbol}/valuation?from&to` | 估值时间序列（默认最近 90 天）。**亏损股的市盈率市净率为负是真实数据** |
 | `GET /api/fundamentals/{symbol}/reports?statement&limit` | 财报期次与数据项；statement 取 `income`/`balance_sheet`/`cash_flow`/`main_index` |

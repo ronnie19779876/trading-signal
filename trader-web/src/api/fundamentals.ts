@@ -56,6 +56,12 @@ export interface FundamentalsOverview {
   profile: Record<string, string>
 }
 
+/** 某一天全部标的的估值（全市场筛选表）；date 为 null 表示库里还没有估值 */
+export interface DayValuations {
+  date: string | null
+  rows: ValuationSnapshot[]
+}
+
 export interface FundamentalsCoverage {
   latestDate: string | null
   targets: number
@@ -78,6 +84,9 @@ export const fundamentalsApi = {
     (await http.get<FinancialReport[]>(`/api/fundamentals/${encodeURIComponent(symbol)}/reports`, {
       params: { statement, limit },
     })).data,
+  /** 全市场估值：date 缺省取最新有估值的一天 */
+  valuationsOn: async (date?: string) =>
+    (await http.get<DayValuations>('/api/fundamentals/valuations', { params: date ? { date } : {} })).data,
   coverage: async () => (await http.get<FundamentalsCoverage>('/api/fundamentals/coverage')).data,
   refreshValuation: async () => (await http.post<{ jobId: number }>('/api/fundamentals/valuation/refresh')).data,
   /** all=true 做全量成分股，约 41 分钟且不取公司简介；默认只做池与持仓。 */

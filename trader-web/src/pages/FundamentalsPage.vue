@@ -1,90 +1,83 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, nextTick, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
-import StatCard from '../components/StatCard.vue'
+import ValuationScreen from '../components/fundamentals/ValuationScreen.vue'
+import PeChart from '../components/fundamentals/PeChart.vue'
+import ReportsPanel from '../components/fundamentals/ReportsPanel.vue'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
 import { big, errMsg, negative, numMax } from '../lib/format'
-import {
-  fundamentalsApi,
-  type FinancialReport,
-  type FundamentalsCoverage,
-  type FundamentalsOverview,
-  type StatementKind,
-  type ValuationSnapshot,
-} from '../api/fundamentals'
-import { getJobs, type RunningJob } from '../api/marketdata'
+import { sectorCn } from '../lib/sector'
+import { fundamentalsApi, type FundamentalsCoverage, type FundamentalsOverview, type ValuationSnapshot } from '../api/fundamentals'
+import { getJobs, getUniverse, type InstrumentView, type RunningJob } from '../api/marketdata'
 
-const coverage = ref<FundamentalsCoverage | null>(null)
-const running = ref<RunningJob | null>(null)
+/**
+ * 基本面页：上面全市场估值筛选表，下面单只详情（估值、市盈率走势、财报）；维护操作收在页底。
+ * 选中的标的放在 ?symbol=（持仓抽屉的"基本面页 →"也是这样跳过来的）。全部是券商原值，分位与中位数是本系统算的，图上写明。
+ */
+const route = useRoute()
+const router = useRouter()
+
+const universe = ref<InstrumentView[]>([])
+const dayDate = ref<string | null>(null)
+const dayRows = ref<ValuationSnapshot[]>([])
+const overview = ref<FundamentalsOverview | null>(null)
+const loaded = ref(false)
+const loadingOverview = ref(false)
 const error = ref<string | null>(null)
 
-// 从持仓页等处跳过来时带 ?symbol=
-const route = useRoute()
-const symbol = ref(typeof route.query.symbol === 'string' && route.query.symbol ? route.query.symbol : 'NVDA')
-const overview = ref<FundamentalsOverview | null>(null)
-const valuations = ref<ValuationSnapshot[]>([])
-const reports = ref<FinancialReport[]>([])
-const statement = ref<StatementKind>('main_index')
-const loading = ref(false)
+const symbol = computed(() => (typeof route.query.symbol === 'string' && route.query.symbol ? route.query.symbol.toUpperCase() : 'NVDA'))
+const instrument = computed(() => universe.value.find((u) => u.symbol === symbol.value) ?? null)
+const holdings = computed(() => universe.value.filter((u) => u.role === 'HOLDING'))
+const poolOnly = computed(() => universe.value.filter((u) => u.role === 'POOL'))
+const ROLE_LABEL: Record<string, string> = { HOLDING: '持仓', POOL: '池', BENCHMARK: '基准' }
 
-const STATEMENTS: { value: StatementKind; label: string }[] = [
-  { value: 'main_index', label: '主要指标' },
-  { value: 'income', label: '利润表' },
-  { value: 'balance_sheet', label: '资产负债表' },
-  { value: 'cash_flow', label: '现金流量表' },
-]
-
-/** 财报按字段编号横向铺开：一行一个字段，一列一期。券商字段随行业不同，所以列由数据决定而不是写死。 */
-const reportGrid = computed(() => {
-  const periods = reports.value
-  const names = new Map<number, string>()
-  for (const r of periods) {
-    for (const i of r.items) if (i.name) names.set(i.fieldId, i.name)
-  }
-  const fieldIds = [...names.keys()].sort((a, b) => a - b)
-  return fieldIds.map((id) => ({
-    fieldId: id,
-    name: names.get(id) ?? String(id),
-    values: periods.map((r) => r.items.find((i) => i.fieldId === id) ?? null),
-  }))
-})
-
-async function load() {
-  const s = symbol.value.trim().toUpperCase()
-  if (!s) return
-  loading.value = true
+async function loadAll() {
   error.value = null
   try {
-    // 三个请求互不依赖，串着 await 就是三个来回。
-    const [o, v, r] = await Promise.all([
-      fundamentalsApi.overview(s),
-      fundamentalsApi.valuation(s),
-      fundamentalsApi.reports(s, statement.value, 8),
-    ])
-    overview.value = o
-    valuations.value = v
-    reports.value = r
+    const [u, d] = await Promise.all([getUniverse(), fundamentalsApi.valuationsOn()])
+    universe.value = u
+    dayDate.value = d.date
+    dayRows.value = d.rows
   } catch (e) {
     error.value = errMsg(e)
-    overview.value = null
-    valuations.value = []
-    reports.value = []
   } finally {
-    loading.value = false
+    loaded.value = true
   }
 }
 
-async function loadReports() {
-  const s = symbol.value.trim().toUpperCase()
+async function loadOverview(s: string) {
+  loadingOverview.value = true
   try {
-    reports.value = await fundamentalsApi.reports(s, statement.value, 8)
+    overview.value = await fundamentalsApi.overview(s)
   } catch (e) {
-    error.value = errMsg(e)
+    overview.value = null
+    const status = (e as { response?: { status?: number } }).response?.status
+    if (status !== 404) error.value = errMsg(e)
+  } finally {
+    loadingOverview.value = false
+  }
+}
+watch(symbol, (s) => void loadOverview(s), { immediate: true })
+
+const detail = ref<HTMLElement | null>(null)
+async function pick(s: string, scroll = true) {
+  if (!s) return
+  await router.replace({ query: { ...route.query, symbol: s } })
+  if (scroll) {
+    await nextTick()
+    detail.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 }
 
+const v = computed(() => overview.value?.valuation ?? null)
+const displayName = computed(() => instrument.value?.nameCn ?? instrument.value?.name ?? overview.value?.name ?? null)
+
+// ---- 维护：覆盖统计与刷新作业 ----
+const coverage = ref<FundamentalsCoverage | null>(null)
+const running = ref<RunningJob | null>(null)
+const maintenance = ref<string[]>([])
 async function refreshStatus() {
   try {
     coverage.value = await fundamentalsApi.coverage()
@@ -94,6 +87,7 @@ async function refreshStatus() {
     // 状态轮询失败不打扰用户，下一轮会再试
   }
 }
+useAutoRefresh(refreshStatus, 5000)
 
 async function runValuation() {
   try {
@@ -104,7 +98,6 @@ async function runValuation() {
     ElMessage.error(errMsg(e))
   }
 }
-
 async function runFinancials(all: boolean) {
   try {
     const { jobId } = await fundamentalsApi.refreshFinancials(all)
@@ -115,170 +108,104 @@ async function runFinancials(all: boolean) {
   }
 }
 
-useAutoRefresh(refreshStatus, 5000)
-load()
+void loadAll()
 </script>
 
 <template>
   <div class="page">
-    <PageHeader title="基本面" hint="估值快照每交易日全量刷新；财报只对池与持仓每周刷新，可手动全量回补" />
+    <PageHeader title="基本面" hint="估值每个交易日收盘后全量刷新；财报池与持仓每周刷新。全部是券商原值" />
+    <el-alert v-if="error" :title="'取数失败：' + error" type="error" show-icon :closable="false" />
+    <el-alert v-if="running" :title="`作业 #${running.id} ${running.job} 运行中：${running.progress}`" type="info" show-icon :closable="false" />
 
-    <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
+    <ValuationScreen :date="dayDate" :valuations="dayRows" :universe="universe" :selected="symbol" :loaded="loaded" @select="pick" />
 
-    <el-row v-if="coverage" :gutter="12">
-      <el-col :xs="24" :sm="12" :lg="6">
-        <StatCard :value="`${coverage.withValuationOnDate} / ${coverage.targets}`" label="当日有估值快照"
-                  :sub="`最新 ${coverage.latestDate ?? '—'}`" />
-      </el-col>
-      <el-col :xs="24" :sm="12" :lg="6">
-        <StatCard :value="coverage.reports.toLocaleString()" label="财报期数" sub="四类报表合计" />
-      </el-col>
-      <el-col :xs="24" :sm="12" :lg="6">
-        <StatCard :value="`${coverage.poolWithReports} / ${coverage.poolSize}`" label="池与持仓有财报" sub="基金没有财报，属正常" />
-      </el-col>
-      <el-col :xs="24" :sm="12" :lg="6">
-        <el-card shadow="never" class="ops">
-          <div class="actions">
-            <el-button size="small" :disabled="!!running" @click="runValuation">刷新估值</el-button>
-            <el-button size="small" :disabled="!!running" @click="runFinancials(false)">刷新财报（池）</el-button>
+    <!-- 单只详情 -->
+    <div ref="detail" class="detail">
+      <section v-loading="loadingOverview" class="panel">
+        <div class="head">
+          <h2 class="sym">{{ symbol }}</h2>
+          <span v-if="displayName" class="nm">{{ displayName }}</span>
+          <template v-if="instrument">
+            <el-tag v-if="instrument.role" size="small" effect="plain">{{ ROLE_LABEL[instrument.role] }}</el-tag>
+            <el-tooltip v-if="instrument.sector" :content="instrument.subIndustry ?? instrument.sector" :disabled="!instrument.subIndustry">
+              <span class="muted">{{ sectorCn(instrument.sector) }}</span>
+            </el-tooltip>
+            <span v-if="instrument.indexes.length" class="muted">{{ instrument.indexes.join(' / ') }}</span>
+          </template>
+          <span class="grow" />
+          <el-select :model-value="symbol" filterable size="small" placeholder="搜代码或名称" style="width: 240px"
+                     @change="(s: string) => pick(s, false)">
+            <el-option v-for="u in universe" :key="u.symbol" :value="u.symbol" :label="`${u.symbol} ${u.nameCn ?? u.name ?? ''}`" />
+          </el-select>
+        </div>
+        <div v-if="holdings.length || poolOnly.length" class="chips">
+          <span class="muted">持仓</span>
+          <el-check-tag v-for="u in holdings" :key="u.symbol" :checked="u.symbol === symbol" @change="pick(u.symbol, false)">{{ u.symbol }}</el-check-tag>
+          <span class="muted sep">池</span>
+          <el-check-tag v-for="u in poolOnly" :key="u.symbol" :checked="u.symbol === symbol" @change="pick(u.symbol, false)">{{ u.symbol }}</el-check-tag>
+        </div>
+
+        <template v-if="v">
+          <div class="kv-grid">
+            <div class="kv"><label>总市值</label><b class="num">{{ big(v.marketCap) }}</b></div>
+            <div class="kv"><label>流通市值</label><b class="num">{{ big(v.floatMarketCap) }}</b></div>
+            <div class="kv"><label>市盈率</label><b class="num" :class="negative(v.pe)">{{ numMax(v.pe) }}</b></div>
+            <div class="kv"><label>市盈率 TTM</label><b class="num" :class="negative(v.peTtm)">{{ numMax(v.peTtm) }}</b></div>
+            <div class="kv"><label>市净率</label><b class="num" :class="negative(v.pb)">{{ numMax(v.pb) }}</b></div>
+            <div class="kv"><label>每股收益</label><b class="num">{{ numMax(v.eps) }}</b></div>
+            <div class="kv"><label>每股净资产</label><b class="num">{{ numMax(v.netAssetPerShare) }}</b></div>
+            <div class="kv"><label>净利润</label><b class="num" :class="negative(v.netProfit)">{{ big(v.netProfit) }}</b></div>
+            <div class="kv"><label>股息率 TTM</label><b class="num">{{ v.dividendYieldTtm === null ? '—' : numMax(v.dividendYieldTtm) + '%' }}</b></div>
+            <div class="kv"><label>换手率</label><b class="num">{{ v.turnoverRate === null ? '—' : numMax(v.turnoverRate) + '%' }}</b></div>
+            <div v-if="v.navPerShare !== null" class="kv"><label>净值</label><b class="num">{{ numMax(v.navPerShare) }}</b></div>
+            <div v-if="v.premium !== null" class="kv"><label>溢价</label><b class="num" :class="negative(v.premium)">{{ numMax(v.premium) }}%</b></div>
           </div>
-          <el-button size="small" text :disabled="!!running" @click="runFinancials(true)">全量回补财报（约 41 分钟）</el-button>
-        </el-card>
-      </el-col>
-    </el-row>
+          <p class="panel__foot">估值取自 {{ v.asOf.slice(0, 10) }}。市盈率、市净率为负是亏损或资不抵债的真实数据；基金没有市盈率，个股没有净值。</p>
+        </template>
+        <el-empty v-else-if="!loadingOverview" :image-size="60" description="还没有这只标的的估值" />
+      </section>
 
-    <el-alert
-      v-if="running"
-      :title="`作业 #${running.id} ${running.job} 运行中：${running.progress}`"
-      type="info"
-      show-icon
-      :closable="false"
-    />
+      <PeChart :symbol="symbol" />
+      <ReportsPanel :symbol="symbol" />
+    </div>
 
-    <el-card shadow="never">
-      <div class="actions query">
-        <el-input v-model="symbol" size="small" placeholder="代码，如 NVDA" style="width: 160px" @keyup.enter="load" />
-        <el-button type="primary" size="small" :loading="loading" @click="load">查询</el-button>
-        <span v-if="overview?.name" class="muted">{{ overview.name }}</span>
-      </div>
-
-      <template v-if="overview?.valuation">
-        <el-descriptions :column="4" size="small" border>
-          <el-descriptions-item label="总市值">{{ big(overview.valuation.marketCap) }}</el-descriptions-item>
-          <el-descriptions-item label="流通市值">{{ big(overview.valuation.floatMarketCap) }}</el-descriptions-item>
-          <el-descriptions-item label="市盈率">
-            <span :class="negative(overview.valuation.pe)">{{ numMax(overview.valuation.pe) }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="市盈率 TTM">
-            <span :class="negative(overview.valuation.peTtm)">{{ numMax(overview.valuation.peTtm) }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="市净率">
-            <span :class="negative(overview.valuation.pb)">{{ numMax(overview.valuation.pb) }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="每股收益">{{ numMax(overview.valuation.eps) }}</el-descriptions-item>
-          <el-descriptions-item label="每股净资产">{{ numMax(overview.valuation.netAssetPerShare) }}</el-descriptions-item>
-          <el-descriptions-item label="换手率">{{ numMax(overview.valuation.turnoverRate) }}%</el-descriptions-item>
-          <el-descriptions-item label="净资产">{{ big(overview.valuation.netAsset) }}</el-descriptions-item>
-          <el-descriptions-item label="净利润">
-            <span :class="negative(overview.valuation.netProfit)">{{ big(overview.valuation.netProfit) }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="股息 TTM">{{ numMax(overview.valuation.dividendTtm) }}</el-descriptions-item>
-          <el-descriptions-item label="股息率 TTM">{{ numMax(overview.valuation.dividendYieldTtm) }}%</el-descriptions-item>
-          <el-descriptions-item v-if="overview.valuation.navPerShare !== null" label="净值">
-            {{ numMax(overview.valuation.navPerShare) }}
-          </el-descriptions-item>
-          <el-descriptions-item v-if="overview.valuation.premium !== null" label="溢价">
-            <span :class="negative(overview.valuation.premium)">{{ numMax(overview.valuation.premium) }}%</span>
-          </el-descriptions-item>
-        </el-descriptions>
-        <div class="muted hint">
-          市盈率市净率为负是亏损或资不抵债的真实数据。基金没有市盈率，个股没有净值。
-          估值取自 {{ overview.valuation.asOf }}。
+    <!-- 维护 -->
+    <el-collapse v-model="maintenance" class="panel maintenance">
+      <el-collapse-item name="m">
+        <template #title>
+          <span class="m-title">维护</span>
+          <span class="panel__src m-src">覆盖统计 · 刷新估值 · 刷新财报</span>
+          <span v-if="coverage" class="panel__src m-src">当日估值 {{ coverage.withValuationOnDate }} / {{ coverage.targets }} · 池与持仓有财报 {{ coverage.poolWithReports }} / {{ coverage.poolSize }}</span>
+        </template>
+        <div v-if="coverage" class="kv-grid">
+          <div class="kv"><label>当日有估值（{{ coverage.latestDate ?? '—' }}）</label><b class="num">{{ coverage.withValuationOnDate }} / {{ coverage.targets }}</b></div>
+          <div class="kv"><label>财报期数（四类合计）</label><b class="num">{{ coverage.reports.toLocaleString() }}</b></div>
+          <div class="kv"><label>池与持仓有财报（基金没有）</label><b class="num">{{ coverage.poolWithReports }} / {{ coverage.poolSize }}</b></div>
         </div>
-      </template>
-      <el-empty v-else-if="!loading" description="还没有这只标的的估值，先跑一次「刷新估值」" :image-size="60" />
-    </el-card>
-
-    <el-card v-if="valuations.length" shadow="never" header="估值序列（最近 90 天）">
-      <el-table :data="[...valuations].reverse()" size="small" max-height="300">
-        <el-table-column label="日期" width="110">
-          <template #default="{ row }: { row: ValuationSnapshot }">{{ row.asOf.slice(0, 10) }}</template>
-        </el-table-column>
-        <el-table-column label="总市值" width="130">
-          <template #default="{ row }: { row: ValuationSnapshot }">{{ big(row.marketCap) }}</template>
-        </el-table-column>
-        <el-table-column label="市盈率" width="110">
-          <template #default="{ row }: { row: ValuationSnapshot }">
-            <span :class="negative(row.pe)">{{ numMax(row.pe) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="市盈率 TTM" width="120">
-          <template #default="{ row }: { row: ValuationSnapshot }">
-            <span :class="negative(row.peTtm)">{{ numMax(row.peTtm) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="市净率" width="110">
-          <template #default="{ row }: { row: ValuationSnapshot }">
-            <span :class="negative(row.pb)">{{ numMax(row.pb) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="每股收益" width="110">
-          <template #default="{ row }: { row: ValuationSnapshot }">{{ numMax(row.eps) }}</template>
-        </el-table-column>
-        <el-table-column label="换手率" width="100">
-          <template #default="{ row }: { row: ValuationSnapshot }">{{ numMax(row.turnoverRate) }}%</template>
-        </el-table-column>
-        <el-table-column label="停牌" min-width="80">
-          <template #default="{ row }: { row: ValuationSnapshot }">{{ row.suspended ? '是' : '—' }}</template>
-        </el-table-column>
-      </el-table>
-    </el-card>
-
-    <el-card shadow="never">
-      <template #header>
-        <div class="actions">
-          <span>财务报表</span>
-          <el-radio-group v-model="statement" size="small" @change="loadReports">
-            <el-radio-button v-for="s in STATEMENTS" :key="s.value" :value="s.value">{{ s.label }}</el-radio-button>
-          </el-radio-group>
+        <div class="m-actions">
+          <el-button size="small" :disabled="!!running" @click="runValuation">刷新估值</el-button>
+          <el-button size="small" :disabled="!!running" @click="runFinancials(false)">刷新财报（池与持仓）</el-button>
+          <el-button size="small" :disabled="!!running" @click="runFinancials(true)">全量回补财报（约 41 分钟）</el-button>
+          <span class="muted">估值只能在收盘窗口内刷新（交易日美东 16:15 至次日 04:00）；每天自动跑，一般不用手动</span>
         </div>
-      </template>
-
-      <template v-if="reports.length">
-        <el-table :data="reportGrid" size="small" max-height="460" border>
-          <el-table-column label="字段" width="220" fixed>
-            <template #default="{ row }">{{ row.name }}</template>
-          </el-table-column>
-          <el-table-column v-for="(r, idx) in reports" :key="r.periodText" :label="r.periodText" min-width="130">
-            <template #default="{ row }">
-              <span v-if="row.values[idx]">{{ numMax(row.values[idx].value, 4) }}</span>
-              <span v-else>—</span>
-            </template>
-          </el-table-column>
-        </el-table>
-        <div class="muted hint">
-          期别取自券商：年报与四季报的期末可能是同一天，靠期别区分；财年可能领先自然年，排序按期末日期。
-          币种 {{ reports[0].currency ?? '—' }}，准则 {{ reports[0].accountingStandards ?? '—' }}。
-        </div>
-      </template>
-      <el-empty v-else-if="!loading" description="没有这类报表：基金本来就没有财报，个股请先跑「刷新财报」" :image-size="60" />
-    </el-card>
-
-    <el-card v-if="overview && Object.keys(overview.profile).length" shadow="never" header="公司简介">
-      <el-descriptions :column="3" size="small" border>
-        <el-descriptions-item v-for="(v, k) in overview.profile" :key="k" :label="String(k)">{{ v }}</el-descriptions-item>
-      </el-descriptions>
-    </el-card>
+      </el-collapse-item>
+    </el-collapse>
   </div>
 </template>
 
 <style scoped>
-.hint { margin-top: 8px; }
-.query { margin-bottom: 12px; }
-.ops {
-  height: 100%;
-}
-.ops .actions {
-  margin-bottom: 8px;
-}
+.detail { display: flex; flex-direction: column; gap: var(--tr-page-gap); scroll-margin-top: 70px; }
+.head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.sym { margin: 0; font-size: 20px; }
+.nm { font-size: 14px; color: var(--el-text-color-regular); }
+.grow { flex: 1; }
+.chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.chips .sep { margin-left: 10px; }
+.chips :deep(.el-check-tag) { padding: 2px 8px; font-size: 12px; }
+.maintenance { padding-top: 0; padding-bottom: 0; }
+.maintenance :deep(.el-collapse-item__header) { border-bottom: 0; }
+.maintenance :deep(.el-collapse-item__wrap) { border-bottom: 0; }
+.m-title { font-size: 14px; font-weight: 600; color: var(--el-text-color-primary); }
+.m-src { margin-left: 10px; }
+.m-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 </style>

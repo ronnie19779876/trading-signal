@@ -35,6 +35,16 @@ public class FundamentalsController {
         this.audit = audit;
     }
 
+    /**
+     * 全市场估值筛选表：某一天全部标的的估值（名称、行业、指数、池角色由前端从 /api/universe 合并）。
+     * date 缺省取最新有估值的一天。字面路径优先于下面的 {symbol}，FundamentalsControllerTest 守住。
+     */
+    @GetMapping("/api/fundamentals/valuations")
+    public FundamentalsQueryService.DayValuations valuationsOn(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return facade.query().valuationsOn(date);
+    }
+
     /** 一只标的的基本面概览：最新估值 + 最近几期主要指标 + 公司简介。 */
     @GetMapping("/api/fundamentals/{symbol}")
     public FundamentalsQueryService.Overview overview(@PathVariable String symbol) {
