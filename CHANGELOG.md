@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## 3.0.7（未发布）
+## 3.0.7（2026-09-20 发布）
 
 - 修复：标的列表（`GET /api/universe`、`GET /api/universe/{symbol}`、`GET /api/pool`）的 `barCount` 恒为 6。
   它原先取 `bar_sync_state.bar_count`，那是**最近一次同步写入的条数**（每次覆盖写），而每日增量固定每只回拉 6 根
