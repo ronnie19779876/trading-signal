@@ -194,12 +194,14 @@ class IbkrLiveAccountTest {
 
     /** 断线重连是新会话：旧订阅随会话失效，不能再对新会话发取消（那些 reqId 在新会话里不存在）。 */
     @Test
-    void 新会话重订不发旧取消() {
+    void 新会话重订只补发账户汇总的取消() {
         live.subscribe();
         wire.token = new Object();
         live.subscribe();
 
-        verify(wire.client, never()).cancelAccountSummary(anyInt());
+        // 账户汇总要取消：2026-09-21 实测，重连后盈透侧旧订阅仍占着每客户端 2 个的名额，不取消就被 322 拒
+        verify(wire.client).cancelAccountSummary(SUM);
+        // 持仓与账户盈亏没有这个现象，仍然不发（会话已结束，旧 id 对新连接没有意义）
         verify(wire.client, never()).cancelPnL(anyInt());
         verify(wire.client, never()).cancelPositionsMulti(anyInt());
     }
@@ -317,5 +319,60 @@ class IbkrLiveAccountTest {
         }
         assertThat(wire.pending(WATCHDOG)).isZero();
         verify(wire.client, org.mockito.Mockito.times(IbkrLiveAccount.PNL_MAX_RETRIES)).cancelPnL(anyInt());
+    }
+
+    // ---- 账户汇总撞上每客户端 2 个上限（322）：2026-09-21 生产实测，网关每日重启重连后整个上午取不到资金 ----
+
+    /** 守护：换会话（断线重连）重订前，要按上个会话的 id 先取消账户汇总，否则盈透侧旧订阅占着名额。 */
+    @Test
+    void 换会话重订前先取消上个会话的账户汇总() {
+        live.subscribe();
+        wire.token = new Object();      // 断线重连：会话变了
+
+        live.subscribe();
+
+        InOrder o = inOrder(wire.client);
+        o.verify(wire.client).cancelAccountSummary(SUM);                                  // 先取消旧的
+        o.verify(wire.client).reqAccountSummary(anyInt(), eq("All"), eq(IbkrAccounts.SUMMARY_TAGS));   // 再订新的
+    }
+
+    /** 守护：被 322 拒之后自动退订重订，不再一直卡着取不到资金。 */
+    @Test
+    void 账户汇总被322拒后自动重订() {
+        live.subscribe();
+
+        wire.handlers.get(SUM).error(new org.jdkxx.trader.gateway.RequestRejectedException(
+                org.jdkxx.trader.domain.Broker.IBKR, IbkrLiveAccount.SUMMARY_LIMIT_CODE, "Maximum number of account summary requests exceeded"));
+        assertThat(wire.pending(Duration.ofSeconds(IbkrLiveAccount.SUMMARY_RETRY_SECONDS))).isEqualTo(1);
+        wire.fire(Duration.ofSeconds(IbkrLiveAccount.SUMMARY_RETRY_SECONDS));
+
+        verify(wire.client).cancelAccountSummary(SUM);
+        verify(wire.client, org.mockito.Mockito.times(2)).reqAccountSummary(anyInt(), eq("All"), eq(IbkrAccounts.SUMMARY_TAGS));
+    }
+
+    /** 守护：重订有上限，不能无限重试。 */
+    @Test
+    void 账户汇总重订到上限就停() {
+        live.subscribe();
+        for (int i = 0; i < IbkrLiveAccount.SUMMARY_MAX_RETRIES + 2; i++) {
+            int id = SUM + (i == 0 ? 0 : 2 + i);   // 每次重订占一个新 id
+            IbkrSubscriptions.Handler h = wire.handlers.values().stream().findFirst().orElseThrow();
+            live.retrySummary();
+        }
+        // 最多 SUMMARY_MAX_RETRIES 次重订，加上最初那次 = 总请求数
+        verify(wire.client, org.mockito.Mockito.times(1 + IbkrLiveAccount.SUMMARY_MAX_RETRIES))
+                .reqAccountSummary(anyInt(), eq("All"), eq(IbkrAccounts.SUMMARY_TAGS));
+    }
+
+    /** 守护：别的错误码不触发重订（只对 322 自愈）。 */
+    @Test
+    void 非322的错误不重订() {
+        live.subscribe();
+
+        wire.handlers.get(SUM).error(new org.jdkxx.trader.gateway.RequestRejectedException(
+                org.jdkxx.trader.domain.Broker.IBKR, 354, "Requested market data is not subscribed"));
+
+        assertThat(wire.pending(Duration.ofSeconds(IbkrLiveAccount.SUMMARY_RETRY_SECONDS))).isZero();
+        verify(wire.client, org.mockito.Mockito.times(1)).reqAccountSummary(anyInt(), eq("All"), eq(IbkrAccounts.SUMMARY_TAGS));
     }
 }

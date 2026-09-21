@@ -104,6 +104,8 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
     private final Map<String, PositionPnl> singles = new ConcurrentHashMap<>();
     private final Map<String, PositionPrice> prices = new ConcurrentHashMap<>();
     private volatile String lastError;
+    /** lastError 属于哪一路（"实时账户汇总" 等）：那一路再有推送就说明恢复了，把错误清掉 */
+    private volatile String lastErrorWhat;
 
     public LiveAccountService(AccountProperties props, String configuredAccount, BrokerGateway broker, LiveAccountGateway live,
                               Clock clock) {
@@ -175,6 +177,7 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
         singles.clear();
         prices.clear();
         lastError = null;
+        lastErrorWhat = null;
     }
 
     private LiveView unavailable(String reason) {
@@ -244,15 +247,18 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
     @Override
     public void onSummary(AccountSummary s) {
         summary = s;
+        recovered("实时账户汇总");
     }
 
     @Override
     public void onPnl(AccountPnl p) {
         pnl = p;
+        recovered("实时账户盈亏");
     }
 
     @Override
     public void onPositions(List<Position> list) {
+        recovered("实时持仓");
         positions = List.copyOf(list);
         positionsAt = clock.instant();
         Set<String> refs = list.stream().map(Position::brokerRef).collect(Collectors.toSet());
@@ -263,17 +269,31 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
     @Override
     public void onPositionPnl(PositionPnl p) {
         singles.put(p.brokerRef(), p);
+        recovered("逐只盈亏");
     }
 
     @Override
     public void onPositionPrice(PositionPrice p) {
         prices.put(p.brokerRef(), p);
+        recovered("持仓行情");
     }
 
     @Override
     public void onLiveError(String what, GatewayException error) {
         lastError = what + "：" + error.getMessage();
+        lastErrorWhat = what;
         log.warn("实时账户 {} 被拒：{}", what, error.getMessage());
+    }
+
+    /**
+     * 出过错的那一路又有推送了：清掉错误，别让界面一直挂着旧的。
+     * 3.0.7 及以前不清，2026-09-21 断开重连恢复后页面仍显示那条 322。
+     */
+    private void recovered(String what) {
+        if (what.equals(lastErrorWhat)) {
+            lastErrorWhat = null;
+            lastError = null;
+        }
     }
 
     @Override

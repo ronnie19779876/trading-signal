@@ -200,4 +200,34 @@ class LiveAccountServiceTest {
         assertThat(g.changePct()).isNull();
         assertThat(g.portfolioPct()).isNull();   // 市值（逐只盈亏）也还没到
     }
+
+    // ---- 错误恢复（2026-09-21 生产：断开重连恢复后，页面仍挂着那条 322） ----
+
+    /** 出错的那一路再有推送就算恢复：清掉 lastError，别让界面一直挂旧错误。 */
+    @Test
+    void 账户汇总恢复后清掉错误() {
+        service.view();   // 发起订阅
+        when(live.liveActive()).thenReturn(true);   // 订上了，后面的 view() 不再重订（重订会 clear()）
+        service.onLiveError("实时账户汇总", new org.jdkxx.trader.gateway.RequestRejectedException(
+                Broker.IBKR, 322, "Maximum number of account summary requests exceeded"));
+        assertThat(service.view().lastError()).contains("322");
+
+        service.onSummary(summary());
+
+        assertThat(service.view().lastError()).isNull();
+    }
+
+    /** 别的路推送不清账户汇总的错误：问题还在就得留着。 */
+    @Test
+    void 别的推送不清账户汇总的错误() {
+        service.view();
+        when(live.liveActive()).thenReturn(true);
+        service.onLiveError("实时账户汇总", new org.jdkxx.trader.gateway.RequestRejectedException(
+                Broker.IBKR, 322, "Maximum number of account summary requests exceeded"));
+
+        service.onPositions(List.of(pos("1", "SPY", "210", "668.43")));
+        service.onPnl(new AccountPnl(Broker.IBKR, T, new BigDecimal("915.99"), new BigDecimal("22328.76"), BigDecimal.ZERO));
+
+        assertThat(service.view().lastError()).contains("322");
+    }
 }
