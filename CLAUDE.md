@@ -133,6 +133,7 @@ storage → common ；ai → common
 **3.0.5 已在生产**：仪表盘持仓表精简（去掉成本、市值，涨跌拆成金额与百分比），碎股数量显示到 4 位。
 **3.0.6 已在生产**：前端逐页改版（仪表盘、持仓、账户、基本面、入场信号、系统六页）与全市场估值接口 `GET /api/fundamentals/valuations`。
 **3.0.7 已在生产**：修标的列表的 `barCount` 恒为 6（改取 `daily_bar` 真实统计，覆盖区间同源）。
+**3.0.8 已发布，待部署到生产**：修再次订阅时账户汇总被 322 拒、资金取不到（订阅前补发取消、322 自愈、错误恢复后清 `lastError`）。
 每一期的设计决策、实测结论与已知边界都在
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~19 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
 
