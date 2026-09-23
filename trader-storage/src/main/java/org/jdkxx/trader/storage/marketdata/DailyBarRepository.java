@@ -128,6 +128,24 @@ public class DailyBarRepository {
                 zone.getId(), zone.getId(), settledAt.toString(), Math.max(1, Math.min(limit, 1000)));
     }
 
+    /** 最近一根 K 线的收盘价。 */
+    public Optional<java.math.BigDecimal> latestClose(long instrumentId) {
+        return jdbc.query("SELECT close FROM daily_bar WHERE instrument_id = ? ORDER BY trade_date DESC LIMIT 1",
+                (rs, n) -> rs.getBigDecimal("close"), instrumentId).stream().findFirst();
+    }
+
+    /**
+     * 日 K 市盈率的中位数，只算<b>正值</b>。券商在亏损期与基金上给 0（2026-09-19 实测 INTC 日 K 当前 0、
+     * 估值快照 -49.99；SPY 日 K 全是 0），0 是"无数据"不是真值，混进分位统计会把中位数拉低。
+     */
+    public Optional<Double> peMedian(long instrumentId, LocalDate from) {
+        return jdbc.query("""
+                SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY pe) AS median, count(*) AS n
+                FROM daily_bar WHERE instrument_id = ? AND trade_date >= ? AND pe > 0
+                """, (rs, n) -> rs.getLong("n") == 0 ? null : rs.getDouble("median"),
+                instrumentId, java.sql.Date.valueOf(from)).stream().findFirst().filter(java.util.Objects::nonNull);
+    }
+
     public Coverage coverage() {
         return jdbc.queryForObject("SELECT count(*) AS rows, count(DISTINCT instrument_id) AS instruments, min(trade_date) AS mn, max(trade_date) AS mx FROM daily_bar",
                 (rs, i) -> new Coverage(rs.getLong("rows"), rs.getLong("instruments"),

@@ -1939,6 +1939,353 @@
       ]
     },
     {
+      "name": "分部估值 SOTP（第 5 期）",
+      "item": [
+        {
+          "name": "底座（自动带入）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/valuation/sotp/{{symbol}}/inputs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "valuation",
+                "sotp",
+                "{{symbol}}",
+                "inputs"
+              ]
+            },
+            "description": "现价、三种口径的股数（都给，不替使用者选）、净现金拆解（融资租赁单列、默认不计入）、TTM 营收与净利率、近 5 年日 K 市盈率正值中位数、适用性（取不到财报 / 亏损 / 金融业 / REITs 各自给原因）。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"有 shares 与 netCash\", () => { pm.expect(body.shares).to.be.an(\"object\"); pm.expect(body.netCash).to.be.an(\"object\"); });",
+                  "pm.test(\"适用性结论合法\", () => pm.expect(body.applicability.verdict).to.be.oneOf([\"APPLICABLE\",\"CAUTION\",\"NOT_APPLICABLE\"]));",
+                  "pm.test(\"本益比基准要么没有要么为正（0 是无数据不是真值）\", () => { if (body.peMedian !== null) pm.expect(body.peMedian).to.be.above(0); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "已存的方案",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/valuation/sotp/{{symbol}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "valuation",
+                "sotp",
+                "{{symbol}}"
+              ]
+            },
+            "description": "按更新时间倒序，每套都带底座与算好的结果。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "⚠ 写操作（改状态或触发跑批，别对生产整组跑）",
+          "item": [
+            {
+              "name": "试算（不落库）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "text/plain"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/valuation/sotp/calc/{{symbol}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "valuation",
+                    "sotp",
+                    "calc",
+                    "{{symbol}}"
+                  ]
+                },
+                "description": "netMargin 与 discountRate 都传小数（百分之七传 0.07，写成 7 直接 400）；三情景缺一不可；scopeNote 必填。",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"name\": \"2030 基准\", \"asOf\": \"2026-09-19\", \"targetYear\": 2030, \"discountRate\": 0.10, \"targetShares\": 4000000000, \"targetNetCash\": 60000000000, \"note\": \"示意假设，不是预测\", \"segments\": [{\"name\": \"主业\", \"scopeNote\": \"只算主业，不与其他业务重复\", \"cases\": {\"BEAR\": {\"volume\": 1800000, \"price\": 38000, \"netMargin\": 0.05, \"pe\": 12}, \"BASE\": {\"volume\": 2200000, \"price\": 40000, \"netMargin\": 0.07, \"pe\": 15}, \"BULL\": {\"volume\": 2600000, \"price\": 42000, \"netMargin\": 0.09, \"pe\": 18}}}]}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                      "const body = pm.response.json();",
+                      "pm.test(\"三个情景都有\", () => { pm.expect(body.scenarios.BEAR).to.be.an(\"object\"); pm.expect(body.scenarios.BASE).to.be.an(\"object\"); pm.expect(body.scenarios.BULL).to.be.an(\"object\"); });",
+                      "pm.test(\"折现不可绕过：折今必定低于目标年股价\", () => pm.expect(body.scenarios.BASE.presentValue).to.be.below(body.scenarios.BASE.targetPrice));",
+                      "pm.test(\"敏感度按摆幅倒序\", () => { const s = body.sensitivities.map(x => x.swing); pm.expect(s).to.eql(s.slice().sort((a,b) => b-a)); });"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "净利率写成百分数 → 400",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "text/plain"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/valuation/sotp/calc/{{symbol}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "valuation",
+                    "sotp",
+                    "calc",
+                    "{{symbol}}"
+                  ]
+                },
+                "description": "净利率只收小数，7 会被挡下。",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"asOf\": \"2026-09-19\", \"targetYear\": 2030, \"discountRate\": 0.10, \"targetShares\": 4000000000, \"targetNetCash\": 0, \"segments\": [{\"name\": \"主业\", \"scopeNote\": \"只算主业\", \"cases\": {\"BEAR\": {\"volume\": 1, \"price\": 1, \"netMargin\": 7, \"pe\": 10}, \"BASE\": {\"volume\": 1, \"price\": 1, \"netMargin\": 7, \"pe\": 10}, \"BULL\": {\"volume\": 1, \"price\": 1, \"netMargin\": 7, \"pe\": 10}}}]}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                      "pm.test(\"PARAM_INVALID\", () => pm.expect(pm.response.json().code).to.eql(\"PARAM_INVALID\"));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "缺情景 → 400",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "text/plain"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/valuation/sotp/calc/{{symbol}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "valuation",
+                    "sotp",
+                    "calc",
+                    "{{symbol}}"
+                  ]
+                },
+                "description": "期权型业务单点估值没有意义，三情景缺一不可。",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"asOf\": \"2026-09-19\", \"targetYear\": 2030, \"discountRate\": 0.10, \"targetShares\": 4000000000, \"targetNetCash\": 0, \"segments\": [{\"name\": \"主业\", \"scopeNote\": \"只算主业\", \"cases\": {\"BASE\": {\"volume\": 1, \"price\": 1, \"netMargin\": 0.07, \"pe\": 10}}}]}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                      "pm.test(\"PARAM_INVALID\", () => pm.expect(pm.response.json().code).to.eql(\"PARAM_INVALID\"));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "保存 / 更新方案",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "text/plain"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/valuation/sotp/{{symbol}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "valuation",
+                    "sotp",
+                    "{{symbol}}"
+                  ]
+                },
+                "description": "按 name 覆盖，同一标的下唯一。⚠ 会写库。",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\"name\": \"2030 基准\", \"asOf\": \"2026-09-19\", \"targetYear\": 2030, \"discountRate\": 0.10, \"targetShares\": 4000000000, \"targetNetCash\": 60000000000, \"note\": \"示意假设，不是预测\", \"segments\": [{\"name\": \"主业\", \"scopeNote\": \"只算主业，不与其他业务重复\", \"cases\": {\"BEAR\": {\"volume\": 1800000, \"price\": 38000, \"netMargin\": 0.05, \"pe\": 12}, \"BASE\": {\"volume\": 2200000, \"price\": 40000, \"netMargin\": 0.07, \"pe\": 15}, \"BULL\": {\"volume\": 2600000, \"price\": 42000, \"netMargin\": 0.09, \"pe\": 18}}}]}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                      "const body = pm.response.json();",
+                      "pm.test(\"回读到 id 与结果\", () => { pm.expect(body.id).to.be.a(\"number\"); pm.expect(body.result).to.be.an(\"object\"); });"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "删除方案",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/valuation/sotp/{{sotpModelId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "valuation",
+                    "sotp",
+                    "{{sotpModelId}}"
+                  ]
+                },
+                "description": "⚠ 会写库。不存在 404。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"200 或 404\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "基本面（第 2 期·步骤 3）",
       "item": [
         {

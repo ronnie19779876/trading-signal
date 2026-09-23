@@ -201,6 +201,31 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | `GET /api/ai/analyses/{id}` | 一次分析：`purpose`（SIGNAL_VETO / MANUAL）、`signalId`、`promptVersion`、`model`、`reasoningEffort`、`inputHash`、`input`（发给模型的 JSON）、`status`（OK / REFUSED / TRUNCATED / INVALID / FAILED / SKIPPED_BUDGET / FAILED_DATA）、`judgment`（`stance`、`confidence`、`summary`、`bullEvidence[]` / `bearEvidence[]` 每条 `{field, value, point}`、`risks`、`dataGaps`、`vetoReason`）、`outputText`、`verdict`（VETO / ALLOW / ABSENT）与 `verdictReason`、`checks`（逐条证据核对）、`verifiedBear` / `unverified`、`error`、token 用量（输入含缓存命中、输出含推理）与耗时；不存在 404 |
 | `GET /api/ai/usage?from&to` | `settings`（是否配置密钥、模型、开关、每日上限、作业时长预算、推理强度、提示词版本；不含密钥）+ `days[]` 按美东自然日汇总：行数、实际调用次数、OK、失败、预算跳过、否决、各类 token |
 
+## 分部估值 SOTP（第 5 期）
+
+把一家公司按业务线拆开估值：每条业务线 量 × 价 = 营收 → × 净利率 = 净利 → × 本益比 = 业务价值；
+目标年股价 =（Σ 业务价值 + 目标年净现金）÷ 目标年股数，再按要求回报率**折回基准日**才能和现价比。
+设计与实测见 ARCHITECTURE §21。
+
+**这组接口不预测、不给建议，也不联动入场信号与纸面账本。** 券商只给合并报表，没有分部量价、没有一致预期，
+所以各业务线的假设必须使用者自己填；系统负责自动带入公司级底座、做算术、做一致性核对（净利率口径、单因子敏感度、反推）。
+
+口径约定：`netMargin` 与 `discountRate` 都收**小数**（7% 传 0.07），写成百分数直接 400；
+三个情景 `BEAR` / `BASE` / `BULL` 缺一不可（期权型业务单点估值没有意义）；每条业务线的 `scopeNote` 必填，用来挡重复计算。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/valuation/sotp/{symbol}/inputs` | 自动带入的底座：现价与日期；`shares` **三种口径都给、不替使用者选**（券商流通股、市值 ÷ 现价、归母净利 ÷ 稀释每股收益；2026-09-19 实测 TSLA 39.5 亿 vs 35 亿对不上，差额未核实）；`netCash`（现金及短投 − 短期借款 − 长期借款，**融资租赁单列、默认不计入**，带取自哪一期）；TTM 营收与归母净利（只认期别带 `/Q` 的四个季报——年报与四季报期末是同一天）；`netMarginTtm`（小数）；`peMedian`（近 5 年日 K 市盈率**正值**中位数，0 是无数据不是真值）；`applicability`（APPLICABLE / CAUTION / NOT_APPLICABLE + 逐条原因：取不到财报、亏损、金融业该用 PB+ROE、REITs 该用 FFO）|
+| `GET /api/valuation/sotp/{symbol}` | 该标的已存的方案，按更新时间倒序，每套都带底座与算好的结果 |
+| `POST /api/valuation/sotp/calc/{symbol}` | 试算，**不落库**。请求体同下 |
+| `POST /api/valuation/sotp/{symbol}` | 保存 / 更新（按 `name` 覆盖，同一标的下唯一）。请求体：`{name, asOf, targetYear, discountRate, targetShares, targetNetCash, note, segments:[{name, scopeNote, cases:{BEAR:{volume,price,netMargin,pe}, BASE:{…}, BULL:{…}}}]}` |
+| `DELETE /api/valuation/sotp/{id}` | 删一套；不存在 404 |
+
+返回的 `result`：`horizonYears` / `discountFactor`；`scenarios` 三个情景各给逐业务线价值、业务价值合计、股权价值、
+目标年股价、**折回基准日的股价**与相对现价的涨跌幅；`sensitivities` 单因子敏感度（只动一条、其余保持基准，按摆幅倒序）；
+`marginCheck`（基准情景的隐含合并净利率 vs 最近一期实际，偏离超过 10 个百分点 `ok=false`）；
+`reverse` 反推（现价按要求回报率隐含的目标年股价、市值、按本益比基准倒推的所需净利与所需年化增长）——**缺本益比基准时整个为 null，不硬编倍数**。
+
 ## 实时报价（第 2 期·步骤 2，不落库）
 
 报价里有三个价格字段，别混用：`price` 是按时段取的有效价，`rthPrice` 是常规时段价（盘前盘后冻结在上个收盘），

@@ -247,6 +247,43 @@ ENDPOINTS = [
         ],
     },
     {
+        "folder": "分部估值 SOTP（第 5 期）",
+        "items": [
+            {"name": "底座（自动带入）", "method": "GET", "path": "/api/valuation/sotp/{{symbol}}/inputs",
+             "desc": "现价、三种口径的股数（都给，不替使用者选）、净现金拆解（融资租赁单列、默认不计入）、TTM 营收与净利率、"
+                     "近 5 年日 K 市盈率正值中位数、适用性（取不到财报 / 亏损 / 金融业 / REITs 各自给原因）。",
+             "tests": T_200 + T_JSON + ['pm.test("有 shares 与 netCash", () => { pm.expect(body.shares).to.be.an("object"); pm.expect(body.netCash).to.be.an("object"); });',
+                                        'pm.test("适用性结论合法", () => pm.expect(body.applicability.verdict).to.be.oneOf(["APPLICABLE","CAUTION","NOT_APPLICABLE"]));',
+                                        'pm.test("本益比基准要么没有要么为正（0 是无数据不是真值）", () => { if (body.peMedian !== null) pm.expect(body.peMedian).to.be.above(0); });']},
+            {"name": "已存的方案", "method": "GET", "path": "/api/valuation/sotp/{{symbol}}",
+             "desc": "按更新时间倒序，每套都带底座与算好的结果。",
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
+            {"name": "试算（不落库）", "method": "POST", "path": "/api/valuation/sotp/calc/{{symbol}}",
+             "body": "{\"name\": \"2030 基准\", \"asOf\": \"2026-09-19\", \"targetYear\": 2030, \"discountRate\": 0.10, \"targetShares\": 4000000000, \"targetNetCash\": 60000000000, \"note\": \"示意假设，不是预测\", \"segments\": [{\"name\": \"主业\", \"scopeNote\": \"只算主业，不与其他业务重复\", \"cases\": {\"BEAR\": {\"volume\": 1800000, \"price\": 38000, \"netMargin\": 0.05, \"pe\": 12}, \"BASE\": {\"volume\": 2200000, \"price\": 40000, \"netMargin\": 0.07, \"pe\": 15}, \"BULL\": {\"volume\": 2600000, \"price\": 42000, \"netMargin\": 0.09, \"pe\": 18}}}]}",
+             "desc": "netMargin 与 discountRate 都传小数（百分之七传 0.07，写成 7 直接 400）；三情景缺一不可；scopeNote 必填。",
+             "tests": T_200 + T_JSON + ['pm.test("三个情景都有", () => { pm.expect(body.scenarios.BEAR).to.be.an("object"); pm.expect(body.scenarios.BASE).to.be.an("object"); pm.expect(body.scenarios.BULL).to.be.an("object"); });',
+                                        'pm.test("折现不可绕过：折今必定低于目标年股价", () => pm.expect(body.scenarios.BASE.presentValue).to.be.below(body.scenarios.BASE.targetPrice));',
+                                        'pm.test("敏感度按摆幅倒序", () => { const s = body.sensitivities.map(x => x.swing); pm.expect(s).to.eql(s.slice().sort((a,b) => b-a)); });']},
+            {"name": "净利率写成百分数 → 400", "method": "POST", "path": "/api/valuation/sotp/calc/{{symbol}}",
+             "body": "{\"asOf\": \"2026-09-19\", \"targetYear\": 2030, \"discountRate\": 0.10, \"targetShares\": 4000000000, \"targetNetCash\": 0, \"segments\": [{\"name\": \"主业\", \"scopeNote\": \"只算主业\", \"cases\": {\"BEAR\": {\"volume\": 1, \"price\": 1, \"netMargin\": 7, \"pe\": 10}, \"BASE\": {\"volume\": 1, \"price\": 1, \"netMargin\": 7, \"pe\": 10}, \"BULL\": {\"volume\": 1, \"price\": 1, \"netMargin\": 7, \"pe\": 10}}}]}",
+             "desc": "净利率只收小数，7 会被挡下。",
+             "tests": ['pm.test("HTTP 400", () => pm.response.to.have.status(400));',
+                       'pm.test("PARAM_INVALID", () => pm.expect(pm.response.json().code).to.eql("PARAM_INVALID"));']},
+            {"name": "缺情景 → 400", "method": "POST", "path": "/api/valuation/sotp/calc/{{symbol}}",
+             "body": "{\"asOf\": \"2026-09-19\", \"targetYear\": 2030, \"discountRate\": 0.10, \"targetShares\": 4000000000, \"targetNetCash\": 0, \"segments\": [{\"name\": \"主业\", \"scopeNote\": \"只算主业\", \"cases\": {\"BASE\": {\"volume\": 1, \"price\": 1, \"netMargin\": 0.07, \"pe\": 10}}}]}",
+             "desc": "期权型业务单点估值没有意义，三情景缺一不可。",
+             "tests": ['pm.test("HTTP 400", () => pm.response.to.have.status(400));',
+                       'pm.test("PARAM_INVALID", () => pm.expect(pm.response.json().code).to.eql("PARAM_INVALID"));']},
+            {"name": "保存 / 更新方案", "method": "POST", "path": "/api/valuation/sotp/{{symbol}}",
+             "body": "{\"name\": \"2030 基准\", \"asOf\": \"2026-09-19\", \"targetYear\": 2030, \"discountRate\": 0.10, \"targetShares\": 4000000000, \"targetNetCash\": 60000000000, \"note\": \"示意假设，不是预测\", \"segments\": [{\"name\": \"主业\", \"scopeNote\": \"只算主业，不与其他业务重复\", \"cases\": {\"BEAR\": {\"volume\": 1800000, \"price\": 38000, \"netMargin\": 0.05, \"pe\": 12}, \"BASE\": {\"volume\": 2200000, \"price\": 40000, \"netMargin\": 0.07, \"pe\": 15}, \"BULL\": {\"volume\": 2600000, \"price\": 42000, \"netMargin\": 0.09, \"pe\": 18}}}]}",
+             "desc": "按 name 覆盖，同一标的下唯一。⚠ 会写库。",
+             "tests": T_200 + T_JSON + ['pm.test("回读到 id 与结果", () => { pm.expect(body.id).to.be.a("number"); pm.expect(body.result).to.be.an("object"); });']},
+            {"name": "删除方案", "method": "DELETE", "path": "/api/valuation/sotp/{{sotpModelId}}",
+             "desc": "⚠ 会写库。不存在 404。",
+             "tests": ['pm.test("200 或 404", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));']},
+        ],
+    },
+    {
         "folder": "基本面（第 2 期·步骤 3）",
         "items": [
             {"name": "基本面审计（收盘后必查）", "method": "GET", "path": "/api/fundamentals/audit",
@@ -453,6 +490,8 @@ def build_environment(name, base_url, symbol):
             # 同理不给默认信号 id：改信号状态拿它当参数
             {"key": "signalId", "value": "1" if name == "dev" else "", "enabled": True},
             {"key": "analysisId", "value": "1" if name == "dev" else "", "enabled": True},
+            # 同理不给默认方案 id：删除方案拿它当参数
+            {"key": "sotpModelId", "value": "1" if name == "dev" else "", "enabled": True},
         ],
         "_postman_variable_scope": "environment",
     }

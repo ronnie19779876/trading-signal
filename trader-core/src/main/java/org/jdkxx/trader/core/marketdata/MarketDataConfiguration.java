@@ -36,6 +36,9 @@ import org.jdkxx.trader.storage.marketdata.ValuationRepository;
 import org.jdkxx.trader.storage.marketdata.FinancialRepository;
 import org.jdkxx.trader.storage.marketdata.CompanyProfileRepository;
 import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
+import org.jdkxx.trader.core.marketdata.valuation.SotpBasisService;
+import org.jdkxx.trader.core.marketdata.valuation.SotpService;
+import org.jdkxx.trader.storage.valuation.SotpModelRepository;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -194,6 +197,21 @@ public class MarketDataConfiguration {
     public MarketDataScheduler marketDataScheduler(MarketDataFacade facade, FundamentalsFacade fundamentals,
                                                    JobRunRepository jobRuns, CatchUpService catchUpService) {
         return new MarketDataScheduler(facade, fundamentals, jobRuns, catchUpService);
+    }
+
+    // ------------------------------------------------------------------ 分部估值（第 5 期，只读 + 手工假设，不联动信号与账本）
+
+    @Bean
+    public SotpBasisService sotpBasisService(InstrumentDirectory directory, DailyBarRepository bars,
+                                             ValuationRepository valuations, FinancialRepository financials,
+                                             IndexConstituentRepository constituents) {
+        return new SotpBasisService(directory, bars, valuations, financials, constituents);
+    }
+
+    @Bean
+    public SotpService sotpService(InstrumentDirectory directory, SotpBasisService sotpBasisService,
+                                   SotpModelRepository sotpModels, com.fasterxml.jackson.databind.ObjectMapper json) {
+        return new SotpService(directory, sotpBasisService, sotpModels, json);
     }
 
     // ------------------------------------------------------------------ 实时报价（步骤 2，不落库）
