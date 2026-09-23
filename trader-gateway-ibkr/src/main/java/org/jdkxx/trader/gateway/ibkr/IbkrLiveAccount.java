@@ -39,6 +39,9 @@ import java.util.function.Consumer;
  * 1101（连接恢复、订阅数据丢失）时会话不变，旧订阅还挂在网关上：先取消再重订，否则账户汇总会撞上每客户端 2 个的上限（322）。
  * <b>账户汇总不在这里</b>：它改成了连接周期内只订一次的常驻订阅（{@link IbkrAccountSummaryFeed}，3.0.9），
  * 实时账户与每日快照共用那一条。原因见该类的注释——盈透的名额不随取消释放，订了又退迟早撞 322。
+ *
+ * <p><b>账户盈亏的核对要扣掉已实现</b>（3.0.10）：账户当日含已平仓标的的当日已实现部分，而逐只之和只覆盖当前持有的。
+ * 2026-09-23 卖出一只持仓后，当日盈亏整天判不通过、界面一直空着——在此之前没有一天发生过平仓，所以从 3.0.3 起一直没暴露。
  */
 final class IbkrLiveAccount {
 
@@ -94,6 +97,8 @@ final class IbkrLiveAccount {
     private final Map<String, IbkrAccounts.PnlSingleRow> singleRows = new LinkedHashMap<>();
     private int pnlRetries;
     private Runnable pnlWatchdog;
+    /** 核对不通过的日志每次订阅只记一条，免得 5 秒一推刷屏。 */
+    private boolean pnlMismatchLogged;
 
     IbkrLiveAccount(String accountId, LiveAccountListener listener, Wire wire) {
         this.accountId = accountId;
@@ -230,6 +235,7 @@ final class IbkrLiveAccount {
         lastAndClose.clear();
         singleRows.clear();
         pnlPending = null;
+        pnlMismatchLogged = false;
         if (pnlWatchdog != null) {
             pnlWatchdog.run();   // 取消
             pnlWatchdog = null;
@@ -420,11 +426,38 @@ final class IbkrLiveAccount {
             daily += r.daily();
             unreal += r.unrealized();
         }
-        if (Math.abs(row.daily() - daily) <= PNL_TOLERANCE && Math.abs(row.unrealized() - unreal) <= PNL_TOLERANCE) {
+        // 账户当日含<b>已平仓标的</b>的当日已实现，逐只之和只覆盖在持的：有平仓的日子必须把已实现扣掉再比。
+        // realized 未设时不作调整（等同于不扣）——这是安全方向：宁可判不通过、当日盈亏空着，也不放行一条对不上的推送。
+        java.math.BigDecimal realizedAmount = IbkrAccounts.amount(row.realized());
+        Double realized = realizedAmount == null ? null : realizedAmount.doubleValue();
+        double accountDaily = row.daily() - (realized == null ? 0 : realized);
+        if (Math.abs(accountDaily - daily) <= PNL_TOLERANCE && Math.abs(row.unrealized() - unreal) <= PNL_TOLERANCE) {
             pnlValid = true;
             pnlPending = null;
+            pnlMismatchLogged = false;
             listener.onPnl(IbkrAccounts.pnl(row, wire.now()));
+            return;
         }
+        logPnlMismatch(row, realized, daily, unreal);
+    }
+
+    /**
+     * 核对不通过时把数字记下来，每次订阅最多一条。
+     *
+     * <p>2026-09-23 生产上当日盈亏整天空着，日志里只有"没有有效推送，重订第 N 次"，<b>一个数字都没有</b>，
+     * 事后只能靠净值反推去猜盈透的口径。这条日志就是为了让下一次失败留下证据而不是沉默。
+     */
+    private void logPnlMismatch(IbkrAccounts.PnlRow row, Double realized, double singlesDaily, double singlesUnrealized) {
+        if (pnlMismatchLogged) {
+            return;
+        }
+        pnlMismatchLogged = true;
+        log.warn("实时账户盈亏核对不通过（{} 只持仓）：账户 当日={} 浮盈={} 已实现={}；逐只之和 当日={} 浮盈={}；"
+                        + "扣除已实现后当日差={} 浮盈差={}（容差 {}）",
+                positions.size(), row.daily(), row.unrealized(), realized == null ? "未设" : realized,
+                singlesDaily, singlesUnrealized,
+                (realized == null ? row.daily() : row.daily() - realized) - singlesDaily,
+                row.unrealized() - singlesUnrealized, PNL_TOLERANCE);
     }
 
     @Override
