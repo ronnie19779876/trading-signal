@@ -37,21 +37,14 @@ import java.util.function.Consumer;
  *   <li>持仓 End 之后成交会再推变动行，数量为 0 表示清仓 → 维护完整列表，每次变动发一次全量，并同步逐只盈亏的订阅。</li>
  * </ul>
  * 1101（连接恢复、订阅数据丢失）时会话不变，旧订阅还挂在网关上：先取消再重订，否则账户汇总会撞上每客户端 2 个的上限（322）。
- * <b>每次订阅前都要补发一次取消</b>：盈透侧上一次的汇总订阅不随我们退订立刻释放。2026-09-21 实测（934 条逐分钟采样）：
- * 网关 03:45 每日重启后 1 分钟就恢复、资金正常，<b>不是重连引起的</b>；10:30 停止读取、闲置退订之后，13:18 再次订阅才撞上 322，
- * 之后资金一直取不到、直到人工断开重连。所以跨会话保留上一个汇总请求 id，<b>换会话重连与闲置退订后再订都先按它发一次取消</b>；
- * 真被 322 拒时再自动退订重订（{@value #SUMMARY_MAX_RETRIES} 次）。
+ * <b>账户汇总不在这里</b>：它改成了连接周期内只订一次的常驻订阅（{@link IbkrAccountSummaryFeed}，3.0.9），
+ * 实时账户与每日快照共用那一条。原因见该类的注释——盈透的名额不随取消释放，订了又退迟早撞 322。
  */
 final class IbkrLiveAccount {
 
     private static final Logger log = LoggerFactory.getLogger(IbkrLiveAccount.class);
-    static final long SUMMARY_DEBOUNCE_MS = 300;
     static final long PNL_WATCHDOG_SECONDS = 10;
     static final int PNL_MAX_RETRIES = 3;
-    /** 账户汇总撞上每客户端 2 个上限时的错误码 */
-    static final int SUMMARY_LIMIT_CODE = 322;
-    static final long SUMMARY_RETRY_SECONDS = 3;
-    static final int SUMMARY_MAX_RETRIES = 3;
     /** 核对容差：对的推送实测与逐只之和精确相等，错的差几十到上千；留一点余量给盘中两边不在同一时刻的抖动。 */
     static final double PNL_TOLERANCE = 1.0;
 
@@ -85,7 +78,6 @@ final class IbkrLiveAccount {
     /** 订上时所在的会话（{@link Wire#sessionToken()}）；null = 当前没有订阅 */
     private Object bound;
     private Sub positionsSub;
-    private Sub summarySub;
     private Sub pnlSub;
     private final Map<String, Sub> singles = new LinkedHashMap<>();
     private final Map<String, Sub> quotes = new LinkedHashMap<>();
@@ -95,8 +87,6 @@ final class IbkrLiveAccount {
 
     private final Map<String, IbkrAccounts.PositionRow> positions = new LinkedHashMap<>();
     private boolean positionsReady;
-    private final Map<String, IbkrAccounts.SummaryRow> summaryRows = new LinkedHashMap<>();
-    private Runnable summaryFlush;
     private boolean pnlValid;
     /** 还没通过核对的最近一条账户盈亏推送 */
     private IbkrAccounts.PnlRow pnlPending;
@@ -104,13 +94,6 @@ final class IbkrLiveAccount {
     private final Map<String, IbkrAccounts.PnlSingleRow> singleRows = new LinkedHashMap<>();
     private int pnlRetries;
     private Runnable pnlWatchdog;
-    /**
-     * 上一次账户汇总的请求 id，<b>跨会话保留</b>：盈透侧的旧订阅可能还挂着，直接重订会被 322 拒
-     * （2026-09-21 实测：闲置退订后再订就撞上，资金几小时取不到）。每次订阅前先按这个 id 发一次取消，再订。
-     */
-    private Integer staleSummaryId;
-    private int summaryRetries;
-    private Runnable summaryRetry;
 
     IbkrLiveAccount(String accountId, LiveAccountListener listener, Wire wire) {
         this.accountId = accountId;
@@ -139,59 +122,17 @@ final class IbkrLiveAccount {
         pnlValid = false;
         pnlPending = null;
         pnlRetries = 0;
-        summaryRetries = 0;
-        cancelStaleSummary();
 
         positionsSub = open("实时持仓", positionsHandler(),
                 id -> c -> c.reqPositionsMulti(id, accountId, ""), id -> c -> c.cancelPositionsMulti(id));
-        summarySub = openSummary();
         pnlSub = openPnl();
-        if (positionsSub == null || summarySub == null || pnlSub == null) {
+        if (positionsSub == null || pnlSub == null) {
             cancelAll();        // 发一半就断了：退掉已发的，等下一次连上整组重订
             bound = null;
             return false;
         }
         schedulePnlWatchdog();
         return true;
-    }
-
-    private Sub openSummary() {
-        Sub sub = open("实时账户汇总", summaryHandler(),
-                id -> c -> c.reqAccountSummary(id, "All", IbkrAccounts.SUMMARY_TAGS), id -> c -> c.cancelAccountSummary(id));
-        if (sub != null) {
-            staleSummaryId = sub.id();
-        }
-        return sub;
-    }
-
-    /** 盈透侧可能还挂着上个会话的汇总订阅：按记下的 id 发一次取消（它不认识这个 id 时只回一条系统消息，无害）。 */
-    private void cancelStaleSummary() {
-        Integer id = staleSummaryId;
-        if (id == null) {
-            return;
-        }
-        staleSummaryId = null;
-        wire.unsubscribe("实时账户汇总（上个会话）", c -> c.cancelAccountSummary(id));
-    }
-
-    /**
-     * 账户汇总被 322 拒：退掉当前这条、连同上个会话残留的一起取消，隔几秒重订，最多 {@value #SUMMARY_MAX_RETRIES} 次。
-     * 3.0.7 及以前只记一条错误就一直卡在 WARMING（资金取不到），要人工断开重连才好。
-     */
-    void retrySummary() {
-        summaryRetry = null;
-        if (bound == null || bound != wire.sessionToken() || summaryRetries >= SUMMARY_MAX_RETRIES) {
-            return;
-        }
-        summaryRetries++;
-        log.info("实时账户汇总被 {} 拒，重订（第 {} 次）", SUMMARY_LIMIT_CODE, summaryRetries);
-        if (summarySub != null && staleSummaryId != null && staleSummaryId == summarySub.id()) {
-            staleSummaryId = null;      // 当前这条和记着的是同一个 id，别取消两次
-        }
-        cancel(summarySub);
-        summarySub = null;
-        cancelStaleSummary();
-        summarySub = openSummary();
     }
 
     private Sub openPnl() {
@@ -257,7 +198,6 @@ final class IbkrLiveAccount {
 
     private void cancelAll() {
         cancel(positionsSub);
-        cancel(summarySub);
         cancel(pnlSub);
         singles.values().forEach(this::cancel);
         quotes.values().forEach(this::cancel);
@@ -274,7 +214,7 @@ final class IbkrLiveAccount {
     private List<Sub> allSubs() {
         List<Sub> all = new ArrayList<>(singles.values());
         all.addAll(quotes.values());
-        for (Sub s : new Sub[] {positionsSub, summarySub, pnlSub}) {
+        for (Sub s : new Sub[] {positionsSub, pnlSub}) {
             if (s != null) {
                 all.add(s);
             }
@@ -283,7 +223,7 @@ final class IbkrLiveAccount {
     }
 
     private void clearState() {
-        positionsSub = summarySub = pnlSub = null;
+        positionsSub = pnlSub = null;
         singles.clear();
         quotes.clear();
         delayed.clear();
@@ -295,15 +235,6 @@ final class IbkrLiveAccount {
             pnlWatchdog = null;
         }
         positions.clear();
-        summaryRows.clear();
-        if (summaryFlush != null) {
-            summaryFlush.run();   // later() 返回的是取消动作
-            summaryFlush = null;
-        }
-        if (summaryRetry != null) {
-            summaryRetry.run();
-            summaryRetry = null;
-        }
         positionsReady = false;
     }
 
@@ -447,51 +378,6 @@ final class IbkrLiveAccount {
     }
 
     // ------------------------------------------------------------------ 账户汇总
-
-    private IbkrSubscriptions.Handler summaryHandler() {
-        return new IbkrSubscriptions.Handler() {
-            @Override
-            public void item(Object item) {
-                IbkrAccounts.SummaryRow r = (IbkrAccounts.SummaryRow) item;
-                if (r.tag() == null) {
-                    return;
-                }
-                summaryRows.put(r.account() + "|" + r.tag(), r);   // "All" 组可能含多个账户，按账户 + 标签存
-                if (summaryFlush == null) {
-                    summaryFlush = wire.later(Duration.ofMillis(SUMMARY_DEBOUNCE_MS), IbkrLiveAccount.this::flushSummary);
-                }
-            }
-
-            @Override
-            public void end() {
-                if (summaryFlush != null) {
-                    summaryFlush.run();
-                    summaryFlush = null;
-                }
-                flushSummary();
-            }
-
-            @Override
-            public void error(RequestRejectedException e) {
-                listener.onLiveError("实时账户汇总", e);
-                if (e.code() == SUMMARY_LIMIT_CODE && summaryRetry == null && summaryRetries < SUMMARY_MAX_RETRIES) {
-                    summaryRetry = wire.later(Duration.ofSeconds(SUMMARY_RETRY_SECONDS), IbkrLiveAccount.this::retrySummary);
-                }
-            }
-        };
-    }
-
-    private void flushSummary() {
-        summaryFlush = null;
-        if (summaryRows.isEmpty()) {
-            return;
-        }
-        try {
-            listener.onSummary(IbkrAccounts.summary(accountId, new ArrayList<>(summaryRows.values()), wire.now()));
-        } catch (GatewayException e) {
-            listener.onLiveError("实时账户汇总", e);
-        }
-    }
 
     // ------------------------------------------------------------------ 账户盈亏
 
