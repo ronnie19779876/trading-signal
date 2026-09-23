@@ -330,7 +330,8 @@ watch(() => props.symbol, load, { immediate: true })
       </template>
     </template>
 
-    <el-empty v-else-if="!loading && !error" :image-size="60" description="没有底座数据" />
+    <div v-else-if="loading" v-loading="true" class="loading-box" />
+    <el-empty v-else-if="!error" :image-size="60" description="没有底座数据" />
 
     <p class="panel__foot warn">
       券商只给合并报表，<b>没有分部量价、没有一致预期</b>，所以每条业务线的假设都是你自己的判断。
@@ -340,6 +341,7 @@ watch(() => props.symbol, load, { immediate: true })
 </template>
 
 <style scoped>
+.loading-box { min-height: 120px; }
 .reasons { margin: 4px 0 0; padding-left: 18px; }
 .shares { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
