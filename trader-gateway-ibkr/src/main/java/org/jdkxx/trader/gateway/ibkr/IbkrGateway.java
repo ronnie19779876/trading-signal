@@ -47,14 +47,14 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
     private static final Logger log = LoggerFactory.getLogger(IbkrGateway.class);
 
     private final IbkrProperties props;
-    /** 进行中的账户汇总请求，按账户合并并发调用。 */
-    private final ConcurrentHashMap<String, CompletableFuture<AccountSummary>> summaries = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler;
     private final ExecutorService dispatch;
     private final IbkrFacts facts = new IbkrFacts();
     private final IbkrConnection connection;
     private final IbkrSubscriptions subscriptions;
     private final ConnectionSupervisor supervisor;
+    /** 账户汇总的常驻订阅：随连接建立、随断开释放，实时账户与每日快照共用（3.0.9）。只在 dispatch 线程上读写。 */
+    private IbkrAccountSummaryFeed summaryFeed;
     /** 实时账户订阅：只在 dispatch 线程上读写。 */
     private IbkrLiveAccount live;
     private volatile boolean liveIntent;
@@ -84,10 +84,20 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
             @Override
             public void onConnected(Broker broker, boolean reconnected) {
                 verifyConfiguredAccount();
-                // 首次连上、断线重连、1101 数据丢失都走这里：有订阅意图就（重）订
+                // 首次连上、断线重连、1101 数据丢失都走这里
                 dispatch.execute(() -> {
+                    summaryFeed().subscribe();      // 账户汇总常驻：一个连接周期只订一次
                     if (live != null) {
                         live.subscribe();
+                    }
+                });
+            }
+
+            @Override
+            public void onDisconnected(Broker broker, String reason) {
+                dispatch.execute(() -> {
+                    if (summaryFeed != null) {
+                        summaryFeed.stop();     // 等待中的快照请求立刻失败，不干等 90 秒
                     }
                 });
             }
@@ -215,8 +225,14 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
     }
 
     /**
-     * 同一账户的并发调用合并成一次券商请求：网关对账户汇总订阅有全局并发上限（官方文档为 2），
-     * 反复请求-取消还会被警告。每个调用方拿到各自的 future 副本，互不影响。
+     * 账户汇总：读<b>常驻订阅</b>的最新值（3.0.9 改），不再每次自己发 {@code reqAccountSummary}。
+     *
+     * <p>盈透的每客户端 2 个上限算的是订过的次数、取消不释放名额（2026-09-23 生产实测，见
+     * {@link IbkrAccountSummaryFeed}），所以"用完就退"这条路走不通：快照作业每天订一次，
+     * 迟早把名额耗光，之后连实时账户都订不上。现在整个连接周期只订一次，两边共用。
+     *
+     * <p>代价：拿到的是最近一次推送的值（券商约 3 分钟一批），不是"当场查"。还没收到首批时
+     * 最多等 {@link IbkrAccountSummaryFeed#WAIT}，超时抛异常由调用方处理（快照作业记 FAILED，21:00 补偿重试）。
      */
     @Override
     public CompletableFuture<AccountSummary> accountSummary(String accountId) {
@@ -224,22 +240,17 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
         if (!isConnected()) {
             return CompletableFuture.failedFuture(new NotConnectedException(Broker.IBKR, status().detail()));
         }
-        CompletableFuture<AccountSummary> mine = new CompletableFuture<>();
-        CompletableFuture<AccountSummary> running = summaries.putIfAbsent(accountId, mine);
-        if (running != null) {
-            return running.copy();
+        CompletableFuture<AccountSummary> out = new CompletableFuture<>();
+        dispatch.execute(() -> summaryFeed().request(accountId, out));
+        return out;
+    }
+
+    /** 常驻汇总订阅，懒建；只在 dispatch 线程上调用。 */
+    private IbkrAccountSummaryFeed summaryFeed() {
+        if (summaryFeed == null) {
+            summaryFeed = new IbkrAccountSummaryFeed(new LiveWire());
         }
-        connection.accountSummary(IbkrAccounts.SUMMARY_TAGS)
-                .thenApply(rows -> IbkrAccounts.summary(accountId, rows, Instant.now()))
-                .whenComplete((summary, ex) -> {
-                    summaries.remove(accountId, mine);
-                    if (ex == null) {
-                        mine.complete(summary);
-                    } else {
-                        mine.completeExceptionally(ex instanceof CompletionException && ex.getCause() != null ? ex.getCause() : ex);
-                    }
-                });
-        return mine.copy();
+        return summaryFeed;
     }
 
     // ------------------------------------------------------------------ 实时账户
@@ -252,6 +263,8 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
         }
         liveIntent = true;
         dispatch.execute(() -> {
+            summaryFeed().listener(accountId, listener);   // 资金由常驻订阅供给，已有数据会立刻补一条
+            summaryFeed().subscribe();
             if (live != null && live.accountId.equals(accountId)) {
                 live.listener(listener);
                 if (!live.subscribed() && isConnected()) {
@@ -276,6 +289,9 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
         }
         liveIntent = false;
         dispatch.execute(() -> {
+            if (summaryFeed != null) {
+                summaryFeed.listener(null, null);   // 只摘监听器，常驻订阅不退——退了名额也不还
+            }
             if (live != null) {
                 live.stop();
                 live = null;
