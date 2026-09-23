@@ -6,6 +6,7 @@ import PageHeader from '../components/PageHeader.vue'
 import ValuationScreen from '../components/fundamentals/ValuationScreen.vue'
 import PeChart from '../components/fundamentals/PeChart.vue'
 import ReportsPanel from '../components/fundamentals/ReportsPanel.vue'
+import SotpPanel from '../components/fundamentals/SotpPanel.vue'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
 import { big, errMsg, negative, numMax } from '../lib/format'
 import { sectorCn } from '../lib/sector'
@@ -167,6 +168,7 @@ void loadAll()
 
       <PeChart :symbol="symbol" />
       <ReportsPanel :symbol="symbol" />
+      <SotpPanel :symbol="symbol" />
     </div>
 
     <!-- 维护 -->
