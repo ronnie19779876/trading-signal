@@ -97,6 +97,7 @@ storage → common ；ai → common
 | 券商的**交易日历只能回到约 2016-09**（实测请求 21 年与 27 年返回完全相同的 2591 天），更早的取不到 | 早年日历从池/持仓/基准的日 K 线反推，`trading_day.source` 标 DERIVED |
 | 富途给 SPY 在美股假日留了**脏 K 线**（实测 2011-07-04、2012-04-06、2012-05-28：成交额 0、最低价异常） | 反推日历要求当天≥2 只标的同时成交；真实交易日有 13 只以上，脏数据只有 1 只 |
 | 富途的 SPY 历史**缺 26 个交易日**（2009~2012），而且它自己的 `last_close` 与缺口自洽，所以**前收连续性检查查不出来** | 查历史缺口必须拿交易日历比对，别只信连续性检查 |
+| JdbcTemplate 的 RowMapper **返回 null 表示「没有」会炸**：`jdbc.query(...).stream().findFirst()` 在 `Optional.of(null)` 上抛 NPE，写在后面的 `.filter(Objects::nonNull)` 根本来不及执行。3.1.0 的 `peMedian` 就是这么写的，**单测里仓库是替身、这条路径只有真实数据才走得到**，生产上 SPY（日 K 的 pe 全是 0 → 一条正值都没有）直接 500（2026-09-24 实测） | 把「空」下推给 SQL：聚合查询加 `HAVING count(*) > 0`，没有就不返回行，`findFirst()` 自然得到空。别用 null 当哨兵值。仓库层没有数据库测试基础设施，这类洞只能靠**对真实数据逐类标的打一遍**发现——新增仓库方法后至少覆盖：正常股、ETF（无财报无正 PE）、亏损股、金融、REITs |
 | Spring 组件有**两个公开构造器**（一个给容器、一个给测试）时，容器选不出来就去找无参构造器并在启动时炸；只在生产装配的 bean（`@ConditionalOnProperty`）本地压根不创建，发现不了 | 只留一个公开构造器，测试要替换依赖就用可写字段；`SpringBeanConstructorTest` 会守住。注意别用 Spring 的类路径扫描写这种检查——它会评估 `@Conditional` 跳过这些类，测试会假通过 |
 | 盈透账户汇总的 `$LEDGER-AccountOrGroup` 值是**明文账户号**（2026-09-14 探针首跑就漏打过一次） | 映射时剔除（`IbkrAccounts`），日志、异常、返回都不带；临时探针脚本也要打码 |
 | 盈透 `reqAccountUpdates` 同一账户同时只允许一个客户端订阅；`reqPnL`/`reqPnLSingle` 休市时首条不完整、行情连上后改用盘外价重算 | 持仓用 `reqPositionsMulti`、资金用一次性 `reqAccountSummary`；盈亏不进快照 |
