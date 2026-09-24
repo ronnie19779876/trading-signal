@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 3.1.1（2026-09-24 发布）
+
+- 修复：**`GET /api/valuation/sotp/{symbol}/inputs` 对「没有一条正 PE」的标的返回 500**（3.1.0 部署当天在生产数据上发现）。
+  `DailyBarRepository.peMedian` 用 RowMapper 返回 null 表示「没有」，而 `jdbc.query(...).stream().findFirst()`
+  会在 `Optional.of(null)` 上抛 NPE——写在后面的 `.filter(Objects::nonNull)` 根本来不及执行。
+  改为把「空」下推给 SQL（`HAVING count(*) > 0`，没有就不返回行）。
+- 影响面：SPY、QQQ 这类真 ETF（日 K 的 pe 全是 0），以及任何近 5 年一条正 PE 都没有的标的；
+  基本面页选中这些标的时分部估值面板会显示 500。**其余接口、跑批、账户与信号都不受影响。**
+- **单测抓不到这个洞**：测试里仓库是替身，空结果这条路径只有真实数据才走得到。
+  修复后对六类标的逐一实测（TSLA 正常、SPY / QQQ 真 ETF、BRK.B 金融、O 的 REITs、INTC 亏损）全部 200；
+  反证：换回旧写法 SPY 立刻 500、TSLA 仍 200。坑表已记。
+
 ## 3.1.0（2026-09-24 发布）
 
 **第 5 期：分部估值（SOTP）**。把一家公司按业务线拆开估值：每条业务线 量 × 价 = 营收 → × 净利率 = 净利 →

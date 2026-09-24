@@ -139,11 +139,15 @@ public class DailyBarRepository {
      * 估值快照 -49.99；SPY 日 K 全是 0），0 是"无数据"不是真值，混进分位统计会把中位数拉低。
      */
     public Optional<Double> peMedian(long instrumentId, LocalDate from) {
+        // HAVING 把"一条正 PE 都没有"下推给数据库：没有就<b>不返回行</b>。
+        // 3.1.0 里用 RowMapper 返回 null 表示没有，结果 findFirst() 在 Optional.of(null) 上抛 NPE——
+        // 生产上 SPY（日 K 的 pe 全是 0）因此 500。单测里仓库是替身，这条路径只有真实数据才走得到。
         return jdbc.query("""
-                SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY pe) AS median, count(*) AS n
+                SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY pe) AS median
                 FROM daily_bar WHERE instrument_id = ? AND trade_date >= ? AND pe > 0
-                """, (rs, n) -> rs.getLong("n") == 0 ? null : rs.getDouble("median"),
-                instrumentId, java.sql.Date.valueOf(from)).stream().findFirst().filter(java.util.Objects::nonNull);
+                HAVING count(*) > 0
+                """, (rs, n) -> rs.getDouble("median"),
+                instrumentId, java.sql.Date.valueOf(from)).stream().findFirst();
     }
 
     public Coverage coverage() {
