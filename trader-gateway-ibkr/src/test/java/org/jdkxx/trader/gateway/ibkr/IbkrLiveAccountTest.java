@@ -131,6 +131,62 @@ class IbkrLiveAccountTest {
     }
 
     /**
+     * 守护（3.0.10）：当天有平仓时，账户当日含已平仓标的的当日已实现，逐只之和只覆盖在持的——扣掉已实现才对得上。
+     *
+     * <p>取自 2026-09-23 生产实况：卖掉 TSLA 之后当日盈亏整天判不通过、界面一直空着。
+     * 这里用同一形态造数：逐只之和当日 915.99，账户当日 1280.50 = 915.99 + 已实现 364.51（TSLA 卖出对当日的贡献，
+     * 由当天净值反推核出：(384.9752 − 378.90) × 60 = 364.51）。
+     */
+    @Test
+    void 有平仓时扣掉已实现再核对() {
+        positionsAndSingles(true);
+
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(1280.50, 22328.76, 364.51));
+
+        assertThat(rec.pnls).extracting(x -> x.daily().toPlainString()).containsExactly("1280.5");
+        assertThat(rec.pnls.get(0).realized().toPlainString()).isEqualTo("364.51");   // 显示仍是盈透原值
+    }
+
+    /** 守护：无平仓的日子 realized = 0，行为与 3.0.9 之前完全一致（零回归）。 */
+    @Test
+    void 无平仓时口径不变() {
+        positionsAndSingles(true);
+
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(25.67, 183.65, 0));       // 首条只含一只：仍不采用
+        assertThat(rec.pnls).isEmpty();
+
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(915.99, 22328.76, 0));
+        assertThat(rec.pnls).hasSize(1);
+    }
+
+    /**
+     * 守护：realized 未设（Double.MAX_VALUE → null）时不作调整，于是当日对不上就判不通过。
+     * 这是安全方向——宁可当日盈亏空着，也不放行一条对不上的推送；日志里会写"已实现=未设"便于事后分辨。
+     */
+    @Test
+    void 已实现未设时不作调整_对不上就不采用() {
+        positionsAndSingles(true);
+
+        // 当日比逐只之和多 364.51，但 realized 未设：无从扣除，判不通过
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(1280.50, 22328.76, Double.MAX_VALUE));
+        assertThat(rec.pnls).isEmpty();
+
+        // 不需要调整就对得上的照常采用
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(915.99, 22328.76, Double.MAX_VALUE));
+        assertThat(rec.pnls).hasSize(1);
+    }
+
+    /** 守护：浮盈那一半不因为扣已实现而放松——只有当日含已实现，浮盈两边口径本来就一致。 */
+    @Test
+    void 浮盈对不上仍然不采用() {
+        positionsAndSingles(true);
+
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(1280.50, 99999.99, 364.51));
+
+        assertThat(rec.pnls).isEmpty();
+    }
+
+    /**
      * 守护：逐只盈亏稳定运行后再订，账户盈亏只推一条而且是对的、价格静止时不再有第二条（09-19 实测）——
      * 这一条必须采用。3.0.3 一律丢首条，结果当日盈亏一直"等待盈透推送"。
      */
