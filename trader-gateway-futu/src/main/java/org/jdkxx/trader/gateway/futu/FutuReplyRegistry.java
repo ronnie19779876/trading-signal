@@ -2,6 +2,7 @@ package org.jdkxx.trader.gateway.futu;
 
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.gateway.GatewayException;
+import org.jdkxx.trader.gateway.NotConnectedException;
 import org.jdkxx.trader.gateway.RequestRejectedException;
 import org.jdkxx.trader.gateway.RequestTimeoutException;
 
@@ -33,6 +34,18 @@ final class FutuReplyRegistry {
     private final Duration timeout;
     private final ConcurrentHashMap<Integer, Entry<?>> pending = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, Object> early = new ConcurrentHashMap<>();
+    /**
+     * 会话代数，{@link #reset} 时递增（由 this 保护）。
+     *
+     * <p>「发出去」与「登记进 pending」不在同一把锁里：{@code send} 返回序列号之后、
+     * {@code pending.put} 之前，会话可能正好结束，于是这个请求<b>逃过</b> {@code reset} 的
+     * 「在途请求全部失败」保证，然后被登记到新会话的 pending 里。而序列号按连接从 1 重新数，
+     * 新连接很快会用掉同一个序列号并把它顶替掉——被顶替的那个 Entry 的超时任务执行
+     * {@code pending.remove(seq, entry)} 比对失败，future <b>永远不会被完成</b>，调用方一直挂着
+     * （2026-09-25 全项目审查发现）。
+     * 记下发送前的代数，登记时发现代数变了就当场失败。
+     */
+    private int generation;
 
     private static final class Entry<R> {
         final String what;
@@ -60,6 +73,10 @@ final class FutuReplyRegistry {
     <R> CompletableFuture<R> call(String what, Class<R> type, IntSupplier send) {
         CompletableFuture<R> future = new CompletableFuture<>();
         Entry<R> entry = new Entry<>(what, type, future);
+        int gen;
+        synchronized (this) {
+            gen = generation;
+        }
         int seq;
         try {
             seq = send.getAsInt();
@@ -74,6 +91,13 @@ final class FutuReplyRegistry {
         }
         Object earlyReply;
         synchronized (this) {
+            if (generation != gen) {
+                // 会话在「发出去」与「登记」之间结束了：这一条已经错过 reset 的失败通知，
+                // 登记进去只会被新会话的同序列号顶替掉，然后永远挂着
+                dispatch.execute(() -> future.completeExceptionally(new NotConnectedException(Broker.FUTU,
+                        what + " 发出后连接就断了")));
+                return future;
+            }
             earlyReply = early.remove(seq);
             if (earlyReply == null) {
                 pending.put(seq, entry);
@@ -129,6 +153,7 @@ final class FutuReplyRegistry {
     /** 会话结束：在途请求全部失败，暂存的回复作废（新连接的序列号从 1 重新数）。 */
     void reset(Throwable error) {
         synchronized (this) {
+            generation++;
             early.clear();
         }
         failAll(error);

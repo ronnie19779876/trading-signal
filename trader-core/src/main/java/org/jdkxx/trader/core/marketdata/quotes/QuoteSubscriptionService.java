@@ -57,6 +57,22 @@ public class QuoteSubscriptionService implements GatewayListener, RotationRefres
     private volatile String lastError;
     private volatile SubscriptionInfo lastQuota;
 
+    /**
+     * 对账自己的线程。
+     *
+     * <p>{@link GatewayListener} 的回调跑在富途网关的 {@code futu-scheduler} 上
+     * （{@code ConnectionSupervisor.dispatch → scheduler.execute}），而那个池只有 2 条线程，
+     * 同时还要跑两条通道的心跳、建连超时、重连任务和两张 {@code FutuReplyRegistry} 的全部回复超时任务。
+     * {@link #reconcile()} 里是 {@code .get(30, SECONDS)} 的串行阻塞，一次对账最多能把一条线程占住几十秒——
+     * 心跳排不上就会被判断线（2026-09-25 全项目审查发现）。所以连上/重连只在监听线程上做清空，
+     * 真正的对账转到这里。单线程，多次重连的对账自然排队，不会并发。
+     */
+    private final java.util.concurrent.ExecutorService worker = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "quote-reconcile");
+        t.setDaemon(true);
+        return t;
+    });
+
     public QuoteSubscriptionService(MarketDataProperties.Realtime props, MarketDataGateway gateway, UniverseScope scope,
                                     QuoteCache cache, Clock clock) {
         this(props, gateway, scope, cache, clock, Sleeper.REAL);
@@ -253,8 +269,15 @@ public class QuoteSubscriptionService implements GatewayListener, RotationRefres
             cache.clear();
         }
         if (reconnected || props.autoSubscribe()) {
-            Result r = reconcile();
-            log.info("富途{}，实时订阅对账：{}", reconnected ? "重连" : "连上", r);
+            // 转到自己的线程：别在只有 2 条线程的 futu-scheduler 上阻塞几十秒，心跳排不上会被判断线
+            worker.execute(() -> {
+                try {
+                    Result r = reconcile();
+                    log.info("富途{}，实时订阅对账：{}", reconnected ? "重连" : "连上", r);
+                } catch (RuntimeException e) {
+                    log.warn("富途{}后的实时订阅对账失败：{}", reconnected ? "重连" : "连上", e.toString());
+                }
+            });
         }
     }
 
@@ -265,6 +288,21 @@ public class QuoteSubscriptionService implements GatewayListener, RotationRefres
         }
         synchronized (this) {
             subscribed.clear();
+        }
+    }
+
+    /**
+     * 等 {@link #worker} 上排着的对账跑完。<b>只给测试用</b>：连上/重连后的对账是异步的，
+     * 测试要断言订阅结果就得先等它跑完，否则是竞态。
+     */
+    void awaitReconcile() {
+        try {
+            worker.submit(() -> { }).get(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
         }
     }
 

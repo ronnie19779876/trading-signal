@@ -107,6 +107,7 @@ class QuoteSubscriptionServiceTest {
     void 暂停释放全部订阅_恢复后重订_重连后清空并重订() {
         QuoteSubscriptionService s = service(true);
         s.onConnected(Broker.FUTU, false);                   // auto-subscribe
+        s.awaitReconcile();                                  // 连上后的对账跑在自己的线程上
         assertThat(s.status().subscribed()).isEqualTo(2);
 
         // 手工暂停：订阅刚满 10 秒 → 未满 1 分钟，全部延后，不调券商
@@ -132,6 +133,7 @@ class QuoteSubscriptionServiceTest {
         s.onDisconnected(Broker.FUTU, "断线");
         assertThat(s.status().subscribed()).isZero();
         s.onConnected(Broker.FUTU, true);
+        s.awaitReconcile();
         assertThat(s.status().subscribed()).isEqualTo(2);
         assertThat(subs).hasSize(3);
     }
@@ -213,6 +215,46 @@ class QuoteSubscriptionServiceTest {
         assertThat(s.paused()).isTrue();
         assertThat(s.status().subscribed()).isZero();
         assertThat(subs).hasSize(1);
+    }
+
+    /**
+     * 连上事件不能在监听线程上阻塞。
+     *
+     * <p>{@code GatewayListener} 的回调跑在富途的 {@code futu-scheduler} 上，而那个池只有 2 条线程，
+     * 同时还要跑两条通道的心跳、建连超时、重连任务和两张 FutuReplyRegistry 的全部回复超时任务。
+     * {@code reconcile()} 里是 {@code .get(30, SECONDS)} 的串行阻塞，一次对账能把一条线程占住几十秒，
+     * 心跳排不上就会被判断线（2026-09-25 全项目审查发现）。
+     */
+    @Test
+    void 连上事件立刻返回_对账阻塞也不占监听线程() throws Exception {
+        java.util.concurrent.CountDownLatch blocked = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        // 先建服务再改桩：service(...) 内部会重新 stub subscribeQuotes，
+        // 顺序反了会把下面这个阻塞桩覆盖掉，反证就不会变红（本测试第一版就是这么写的）
+        QuoteSubscriptionService s = service(true);
+        when(gateway.subscribeQuotes(anyList())).thenAnswer(inv -> {
+            subs.add(List.copyOf(inv.getArgument(0)));
+            blocked.countDown();
+            return CompletableFuture.supplyAsync(() -> {
+                try {
+                    release.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return null;
+            });
+        });
+
+        long start = System.nanoTime();
+        s.onConnected(Broker.FUTU, false);
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+
+        assertThat(blocked.await(5, java.util.concurrent.TimeUnit.SECONDS)).as("对账确实在别的线程上跑起来了").isTrue();
+        assertThat(elapsedMs).as("监听线程必须立刻返回，不能等对账（实际 %d ms）", elapsedMs).isLessThan(1000);
+
+        release.countDown();
+        s.awaitReconcile();
+        assertThat(s.status().subscribed()).isEqualTo(2);
     }
 
     @Test
