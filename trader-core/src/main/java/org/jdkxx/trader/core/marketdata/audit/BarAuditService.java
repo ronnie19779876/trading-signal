@@ -188,8 +188,9 @@ public class BarAuditService {
         // 只看最近 GAP_WINDOW_DAYS 天：这段是运维能补的（增量重跑）；更早的多是券商侧的洞，
         // 补不回来，天天报红会让整个巡检失去意义，改由 GET /api/bars/gaps 按需深扫。
         // 判为提示项而非关键项，同样因为常见成因是券商缺数而不是我们漏跑。
-        List<DailyBarRepository.InstrumentGap> gaps = bars.gaps(d.minusDays(GAP_WINDOW_DAYS), d, 20).stream()
-                .filter(g -> targets.containsKey(g.instrumentId())).toList();
+        // 过滤下推到 SQL：先 LIMIT 20 再在内存里按 targets 过滤，等于「先截断再筛选」——
+        // 前 20 条恰好都不是我们关心的标的时结果是空的，巡检会报「没有缺口」（3.1.2 修）
+        List<DailyBarRepository.InstrumentGap> gaps = bars.gaps(d.minusDays(GAP_WINDOW_DAYS), d, 20, targets.keySet());
         List<String> gapSamples = gaps.stream()
                 .map(g -> symbolOf(targets, g.instrumentId()) + " 缺 " + g.missing() + " 天（"
                         + g.firstMissing() + " ~ " + g.lastMissing() + "）").toList();

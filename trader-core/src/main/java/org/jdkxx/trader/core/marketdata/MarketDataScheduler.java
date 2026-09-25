@@ -40,23 +40,23 @@ public class MarketDataScheduler {
 
     @Scheduled(cron = "${trader.marketdata.increment-cron}", zone = "${trader.marketdata.zone}")
     public void increment() {
-        submitter.submit("每日增量", Jobs.DAILY_INCREMENT, () -> facade.increment("SCHEDULE"));
+        submitter.submit("每日增量", Jobs.DAILY_INCREMENT, "SCHEDULE", () -> facade.increment("SCHEDULE"));
     }
 
     @Scheduled(cron = "${trader.marketdata.universe.sync-cron}", zone = "${trader.marketdata.zone}")
     public void weekly() {
-        submitter.submit("成分股同步", Jobs.UNIVERSE_SYNC, () -> facade.syncUniverse("SCHEDULE"));
+        submitter.submit("成分股同步", Jobs.UNIVERSE_SYNC, "SCHEDULE", () -> facade.syncUniverse("SCHEDULE"));
     }
 
     /** 排在每日增量之后：市值与市盈率随价格走，收盘后取到的才是当日值。 */
     @Scheduled(cron = "${trader.marketdata.valuation-cron}", zone = "${trader.marketdata.zone}")
     public void valuation() {
-        submitter.submit("估值快照", Jobs.VALUATION_SNAPSHOT, () -> fundamentals.refreshValuation("SCHEDULE"));
+        submitter.submit("估值快照", Jobs.VALUATION_SNAPSHOT, "SCHEDULE", () -> fundamentals.refreshValuation("SCHEDULE"));
     }
 
     @Scheduled(cron = "${trader.marketdata.financials-cron}", zone = "${trader.marketdata.zone}")
     public void financials() {
-        submitter.submit("财报刷新", Jobs.FINANCIALS_REFRESH, () -> fundamentals.refreshFinancials("SCHEDULE", false));
+        submitter.submit("财报刷新", Jobs.FINANCIALS_REFRESH, "SCHEDULE", () -> fundamentals.refreshFinancials("SCHEDULE", false));
     }
 
     /**
@@ -90,10 +90,10 @@ public class MarketDataScheduler {
         note("OK", gap.describe() + "；已提交补跑："
                 + (gap.barsMissing() ? "每日增量 " : "") + (gap.valuationMissing() ? "估值快照" : ""));
         if (gap.barsMissing()) {
-            submitter.submit("补跑每日增量", Jobs.DAILY_INCREMENT, () -> facade.increment("CATCHUP"));
+            submitter.submit("补跑每日增量", Jobs.DAILY_INCREMENT, "CATCHUP", () -> facade.increment("CATCHUP"));
         }
         if (gap.valuationMissing()) {
-            submitter.submit("补跑估值快照", Jobs.VALUATION_SNAPSHOT, () -> fundamentals.refreshValuation("CATCHUP"));
+            submitter.submit("补跑估值快照", Jobs.VALUATION_SNAPSHOT, "CATCHUP", () -> fundamentals.refreshValuation("CATCHUP"));
         }
     }
 

@@ -49,7 +49,7 @@ public class AccountScheduler {
             log.info("{} 非交易日，不拍账户快照", today);
             return;
         }
-        submitter.submit("账户快照", Jobs.ACCOUNT_SNAPSHOT, () -> facade.snapshot("SCHEDULE", false));
+        submitter.submit("账户快照", Jobs.ACCOUNT_SNAPSHOT, "SCHEDULE", () -> facade.snapshot("SCHEDULE", false));
     }
 
     @Scheduled(cron = "${trader.marketdata.catchup-cron}", zone = "${trader.marketdata.zone}")
@@ -68,7 +68,7 @@ public class AccountScheduler {
             return;
         }
         log.warn("{} 没有账户快照，补拍", today);
-        submitter.submit("补拍账户快照", Jobs.ACCOUNT_SNAPSHOT, () -> facade.snapshot("CATCHUP", false));
+        submitter.submit("补拍账户快照", Jobs.ACCOUNT_SNAPSHOT, "CATCHUP", () -> facade.snapshot("CATCHUP", false));
     }
 
     @PreDestroy

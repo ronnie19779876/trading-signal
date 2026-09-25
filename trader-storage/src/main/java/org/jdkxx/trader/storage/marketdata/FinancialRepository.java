@@ -33,7 +33,15 @@ public class FinancialRepository {
         this.jdbc = jdbc;
     }
 
-    /** 幂等写入一只标的的若干期，返回写入的期数。数据项整期替换，避免券商改字段后留下孤儿行。 */
+    /**
+     * 幂等写入一只标的的若干期，返回写入的期数。数据项整期替换，避免券商改字段后留下孤儿行。
+     *
+     * <p><b>必须在事务里</b>（3.1.2 加）：整期替换是「先 DELETE 再批量 INSERT」，
+     * 没有事务时批插入一旦失败，{@code financial_report} 里留着期次行、{@code financial_item} 却是空的——
+     * 一个只剩空壳的期次。而基本面审计的财报新鲜度只看 {@code period_end}，
+     * 空壳期次反而让它认为「这期已经有了」，谁都发现不了（2026-09-25 全项目审查发现）。
+     */
+    @org.springframework.transaction.annotation.Transactional
     public int upsertAll(long instrumentId, List<FinancialReport> reports) {
         int n = 0;
         for (FinancialReport r : reports) {

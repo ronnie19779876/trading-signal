@@ -180,7 +180,13 @@ public class DailyBarRepository {
     public record ContinuityIssue(long instrumentId, LocalDate tradeDate, java.math.BigDecimal lastClose, java.math.BigDecimal prevClose) {
     }
 
-    /** 区间内 last_close 与上一根 close 不等的记录（不等 = 中间漏了交易日，或券商数据有误）。 */
+    /**
+     * 区间内 last_close 与上一根 close 不等的记录（不等 = 中间漏了交易日，或券商数据有误）。
+     *
+     * <p>内层把下界往前挪 7 天只是为了给 {@code lag()} 垫一根前值；
+     * 外层<b>必须再按 from 过滤一次</b>，否则会把调用者没要的那 7 天里的问题
+     * 也当成窗口内的报出来（2026-09-25 全项目审查发现）。
+     */
     public List<ContinuityIssue> continuityIssues(LocalDate from, LocalDate to, int limit) {
         return jdbc.query("""
                 SELECT instrument_id, trade_date, last_close, prev FROM (
@@ -188,9 +194,10 @@ public class DailyBarRepository {
                            lag(close) OVER (PARTITION BY instrument_id ORDER BY trade_date) AS prev
                     FROM daily_bar WHERE trade_date BETWEEN ? AND ?
                 ) x WHERE prev IS NOT NULL AND last_close IS NOT NULL AND abs(last_close - prev) > 0.0005
+                  AND trade_date >= ?
                 ORDER BY trade_date DESC, instrument_id LIMIT ?""",
                 (rs, i) -> new ContinuityIssue(rs.getLong(1), rs.getDate(2).toLocalDate(), rs.getBigDecimal(3), rs.getBigDecimal(4)),
-                Date.valueOf(from.minusDays(7)), Date.valueOf(to), Math.max(1, limit));
+                Date.valueOf(from.minusDays(7)), Date.valueOf(to), Date.valueOf(from), Math.max(1, limit));
     }
 
     public record DaySanity(long bars, long ohlcInconsistent, long nonPositiveClose, long blank, long zeroVolume, long nullTurnover) {
@@ -245,10 +252,32 @@ public class DailyBarRepository {
      * @param to   截止日（含）
      */
     public List<InstrumentGap> gaps(LocalDate from, LocalDate to, int limit) {
+        return gaps(from, to, limit, null);
+    }
+
+    /**
+     * @param onlyInstruments 只看这些标的；传 null 表示不限。
+     *     <b>过滤必须下推到 SQL</b>：调用方先取 {@code LIMIT n} 再在内存里按标的过滤，
+     *     等于「先截断再筛选」——前 n 条恰好都不是关心的标的时结果是空的，
+     *     巡检会报「没有缺口」（2026-09-25 全项目审查发现）。
+     */
+    public List<InstrumentGap> gaps(LocalDate from, LocalDate to, int limit, java.util.Collection<Long> onlyInstruments) {
+        if (onlyInstruments != null && onlyInstruments.isEmpty()) {
+            return List.of();
+        }
+        List<Object> args = new ArrayList<>();
+        String filter = "";
+        if (onlyInstruments != null) {
+            filter = " WHERE instrument_id = ANY (?)";
+            args.add(onlyInstruments.toArray(Long[]::new));
+        }
+        args.add(Date.valueOf(from));
+        args.add(Date.valueOf(to));
+        args.add(limit);
         return jdbc.query("""
                 WITH span AS (
                     SELECT instrument_id, min(trade_date) AS first_bar, max(trade_date) AS last_bar
-                    FROM daily_bar GROUP BY instrument_id)
+                    FROM daily_bar%s GROUP BY instrument_id)
                 SELECT s.instrument_id,
                        count(*) AS missing,
                        min(t.trade_date) AS first_missing,
@@ -261,10 +290,10 @@ public class DailyBarRepository {
                     WHERE b.instrument_id = s.instrument_id AND b.trade_date = t.trade_date)
                 GROUP BY s.instrument_id
                 ORDER BY missing DESC
-                LIMIT ?""",
+                LIMIT ?""".formatted(filter),
                 (rs, i) -> new InstrumentGap(rs.getLong("instrument_id"), rs.getLong("missing"),
                         rs.getDate("first_missing").toLocalDate(), rs.getDate("last_missing").toLocalDate()),
-                Date.valueOf(from), Date.valueOf(to), limit);
+                args.toArray());
     }
 
     /** 一只标的对照日历缺失的交易日。 */

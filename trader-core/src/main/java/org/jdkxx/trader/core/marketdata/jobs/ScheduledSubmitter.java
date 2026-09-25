@@ -45,12 +45,17 @@ public class ScheduledSubmitter implements AutoCloseable {
         });
     }
 
-    public void submit(String what, String job, LongSupplier action) {
-        attempt(what, job, action, 0);
+    /**
+     * @param trigger 留痕用的触发来源（SCHEDULE / CATCHUP / …）。
+     *     原先 {@link #record} 把它硬编码成 "SCHEDULE"，补偿检查提交的作业被放弃时也记成定时触发，
+     *     事后分不出是哪一路（2026-09-25 全项目审查发现）。
+     */
+    public void submit(String what, String job, String trigger, LongSupplier action) {
+        attempt(what, job, trigger, action, 0);
     }
 
     /** 提交一次；被占用就排下一次重试，次数用尽写 SKIPPED。 */
-    private void attempt(String what, String job, LongSupplier action, int tried) {
+    private void attempt(String what, String job, String trigger, LongSupplier action, int tried) {
         try {
             long id = action.getAsLong();
             log.info("定时触发{}，作业 #{}{}", what, id, tried > 0 ? "（第 " + (tried + 1) + " 次尝试）" : "");
@@ -58,24 +63,24 @@ public class ScheduledSubmitter implements AutoCloseable {
             String reason = e.getMessage() == null ? e.toString() : e.getMessage();
             if (tried + 1 >= RETRY_TIMES) {
                 log.error("定时触发{}最终放弃（已试 {} 次）：{}", what, tried + 1, reason);
-                record(job, "重试 " + (tried + 1) + " 次仍无法提交：" + reason);
+                record(job, trigger, "重试 " + (tried + 1) + " 次仍无法提交：" + reason);
                 return;
             }
             log.warn("定时触发{}失败，{} 秒后重试（第 {}/{} 次）：{}",
                     what, retryEvery.toSeconds(), tried + 1, RETRY_TIMES, reason);
             try {
-                retries.schedule(() -> attempt(what, job, action, tried + 1), retryEvery.toMillis(), TimeUnit.MILLISECONDS);
+                retries.schedule(() -> attempt(what, job, trigger, action, tried + 1), retryEvery.toMillis(), TimeUnit.MILLISECONDS);
             } catch (RuntimeException scheduleFailed) {
                 log.error("排重试失败（{}）：{}", what, scheduleFailed.toString());
-                record(job, "无法排重试：" + scheduleFailed);
+                record(job, trigger, "无法排重试：" + scheduleFailed);
             }
         }
     }
 
     /** 留痕失败不能连累调度线程。 */
-    private void record(String job, String reason) {
+    private void record(String job, String trigger, String reason) {
         try {
-            jobRuns.skipped(job, "SCHEDULE", reason);
+            jobRuns.skipped(job, trigger, reason);
         } catch (RuntimeException e) {
             log.warn("写 SKIPPED 记录失败：{}", e.toString());
         }

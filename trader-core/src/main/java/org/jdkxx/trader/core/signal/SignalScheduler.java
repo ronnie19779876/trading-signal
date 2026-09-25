@@ -49,7 +49,7 @@ public class SignalScheduler {
             log.info("{} 非交易日，不做信号评估", today);
             return;
         }
-        submitter.submit("信号评估", Jobs.SIGNAL_EVALUATION, () -> facade.evaluate("SCHEDULE", today));
+        submitter.submit("信号评估", Jobs.SIGNAL_EVALUATION, "SCHEDULE", () -> facade.evaluate("SCHEDULE", today));
     }
 
     @Scheduled(cron = "${trader.signal.catchup-cron}", zone = "${trader.marketdata.zone}")
@@ -71,7 +71,7 @@ public class SignalScheduler {
             log.error("信号补偿检查失败：{}", e.toString());
             return;
         }
-        submitter.submit("补跑信号评估", Jobs.SIGNAL_EVALUATION, () -> facade.evaluate("CATCHUP", today));
+        submitter.submit("补跑信号评估", Jobs.SIGNAL_EVALUATION, "CATCHUP", () -> facade.evaluate("CATCHUP", today));
     }
 
     @PreDestroy

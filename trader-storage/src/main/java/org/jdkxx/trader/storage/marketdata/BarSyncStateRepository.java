@@ -41,12 +41,20 @@ public class BarSyncStateRepository {
     }
 
     /** 成功后更新覆盖区间与深度（深度只升不降：HIST20Y 不会被 KL1000 覆盖）。 */
+    /**
+     * 写一次成功。<b>depth 只升不降</b>：每日增量每只只取 6 根（缺 1 + overlap 5），
+     * {@code n < fullCount} 于是传 NONE，原先会把已经达到的 KL1000 覆盖成 NONE，
+     * 全量标的的「深度」永久显示 NONE——与 3.0.7 修掉的 barCount 恒为 6 是同一个根因
+     * （2026-09-25 全项目审查发现）。原先只保护了 HIST20Y，没保护 KL1000。
+     */
     public void success(long instrumentId, String depth, LocalDate earliest, LocalDate latest, int barCount, boolean usedHistQuota) {
         jdbc.update("""
                 INSERT INTO bar_sync_state (instrument_id, depth, earliest_date, latest_date, bar_count, last_success_at, last_error, hist_quota_used_at)
                 VALUES (?, ?, ?, ?, ?, now(), NULL, ?)
                 ON CONFLICT (instrument_id) DO UPDATE SET
-                    depth = CASE WHEN bar_sync_state.depth = 'HIST20Y' THEN 'HIST20Y' ELSE EXCLUDED.depth END,
+                    depth = CASE WHEN array_position(ARRAY['NONE', 'KL1000', 'HIST20Y'], bar_sync_state.depth)
+                                      >= array_position(ARRAY['NONE', 'KL1000', 'HIST20Y'], EXCLUDED.depth)
+                                 THEN bar_sync_state.depth ELSE EXCLUDED.depth END,
                     earliest_date = LEAST(COALESCE(bar_sync_state.earliest_date, EXCLUDED.earliest_date), EXCLUDED.earliest_date),
                     latest_date = GREATEST(COALESCE(bar_sync_state.latest_date, EXCLUDED.latest_date), EXCLUDED.latest_date),
                     bar_count = EXCLUDED.bar_count, last_success_at = now(), last_error = NULL,

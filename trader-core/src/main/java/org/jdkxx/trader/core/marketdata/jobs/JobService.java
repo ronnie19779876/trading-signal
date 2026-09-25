@@ -95,17 +95,28 @@ public class JobService {
             }
         };
         log.info("作业 {} #{} 开始（{}）", r.job(), r.id(), r.trigger());
+        // 先把结论定下来，再落库：finish 写在 try 里的话，作业已经跑成功、只是结果落库时抖了一下，
+        // 会被同一个 catch 接住并把这次运行记成 FAILED——巡检与健康指标跟着报假警
+        // （2026-09-25 全项目审查发现）。
+        String status;
+        String text;
         try {
             String summary = body.run(ctx);
-            String status = partial[0] == null ? "OK" : "PARTIAL";
-            String text = partial[0] == null ? summary : summary + "；部分失败：" + partial[0];
-            repo.finish(r.id(), status, text);
-            log.info("作业 {} #{} {}：{}", r.job(), r.id(), status, text);
+            status = partial[0] == null ? "OK" : "PARTIAL";
+            text = partial[0] == null ? summary : summary + "；部分失败：" + partial[0];
         } catch (Throwable t) {
             log.error("作业 {} #{} 失败", r.job(), r.id(), t);
-            repo.finish(r.id(), "FAILED", t.toString());
+            status = "FAILED";
+            text = t.toString();
         } finally {
             running.set(null);
+        }
+        try {
+            repo.finish(r.id(), status, text);
+            log.info("作业 {} #{} {}：{}", r.job(), r.id(), status, text);
+        } catch (RuntimeException e) {
+            // 落不了库就让这一行留在 RUNNING，由作业健康指标发现；绝不改写已经定下的结论
+            log.error("作业 {} #{} 的结果落库失败（作业本身是 {}：{}）", r.job(), r.id(), status, text, e);
         }
     }
 

@@ -169,7 +169,7 @@ public class HoldingSyncService implements AutoCloseable {
         if (done > 0) {
             poolService.notifyChanged();
             if (needBackfill) {
-                submitter.submit("持仓新增标的的深度回补", Jobs.DEEP_BACKFILL, () -> marketData.backfillPending(trigger));
+                submitter.submit("持仓新增标的的深度回补", Jobs.DEEP_BACKFILL, trigger, () -> marketData.backfillPending(trigger));
             }
         }
         return new Result(true, plan, List.copyOf(errors), describe(plan, true, errors));
