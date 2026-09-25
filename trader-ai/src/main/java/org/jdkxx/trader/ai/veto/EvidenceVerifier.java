@@ -38,6 +38,9 @@ public final class EvidenceVerifier {
         return out;
     }
 
+    /** 整串数字（严口径用）。 */
+    private static final Pattern PURE_NUMBER = Pattern.compile("[+-]?\\d+(?:\\.\\d+)?");
+
     static Checked checkOne(JsonNode input, Side side, VetoJudgment.Evidence e) {
         if (e == null || e.field() == null || e.field().isBlank()) {
             return new Checked(side, e, false, "没有字段路径");
@@ -61,8 +64,15 @@ public final class EvidenceVerifier {
         }
         if (node.isTextual() || node.isBoolean()) {
             String actual = node.asText().trim();
-            boolean ok = actual.equals(claimed) || (number(actual) != null && number(claimed) != null
-                    && Math.abs(number(actual) - number(claimed)) <= TOLERANCE * Math.max(1e-9, Math.abs(number(actual))));
+            // 数字回落必须用「整串就是一个数」的严口径。
+            // 原先用 number()（抽第一个数字）：日期、期别这类以同一个年份开头的文本
+            // 只要年份相同就判「一致」——"2026-09-17" 与 "2026-03-31" 都抽出 2026，
+            // 核对器对这类字段形同虚设，AI 否决门槛（≥2 条核对通过的看空证据）被削弱
+            // （2026-09-25 全项目审查发现）。
+            Double a = strictNumber(actual);
+            Double c = strictNumber(claimed);
+            boolean ok = actual.equalsIgnoreCase(claimed)
+                    || (a != null && c != null && Math.abs(a - c) <= TOLERANCE * Math.max(1e-9, Math.abs(a)));
             return new Checked(side, e, ok, ok ? "一致" : "原值 " + actual + "，引用 " + claimed);
         }
         return new Checked(side, e, false, "字段 " + e.field() + " 不是单个值");
@@ -100,6 +110,20 @@ public final class EvidenceVerifier {
         String cleaned = s.replace(",", "").replace("，", "").replace("％", "%").replace("＄", "$").replace("−", "-");
         Matcher m = NUMBER.matcher(cleaned);
         return m.find() ? Double.valueOf(m.group()) : null;
+    }
+
+    /**
+     * 严口径：去掉千分位、货币符号、百分号与空白之后，<b>整串</b>就是一个数才算数字。
+     * {@code "2026-09-17"}、{@code "2026Q3"}、{@code "约 12 倍"} 都不算——
+     * 它们交给字符串相等去判，别被「抽第一个数字」糊过去。
+     */
+    static Double strictNumber(String s) {
+        if (s == null) {
+            return null;
+        }
+        String cleaned = s.replace(",", "").replace("，", "").replace("％", "%").replace("＄", "$").replace("−", "-")
+                .replace("%", "").replace("$", "").replace("￥", "").replace("¥", "").trim();
+        return PURE_NUMBER.matcher(cleaned).matches() ? Double.valueOf(cleaned) : null;
     }
 
     private static <T> List<T> nonNull(List<T> list) {

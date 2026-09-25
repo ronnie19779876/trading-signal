@@ -265,8 +265,11 @@ ENDPOINTS = [
                                         'pm.test("适用性结论合法", () => pm.expect(body.applicability.verdict).to.be.oneOf(["APPLICABLE","CAUTION","NOT_APPLICABLE"]));',
                                         'pm.test("本益比基准要么没有要么为正（0 是无数据不是真值）", () => { if (body.peMedian !== null) pm.expect(body.peMedian).to.be.above(0); });']},
             {"name": "已存的方案", "method": "GET", "path": "/api/valuation/sotp/{{symbol}}",
-             "desc": "按更新时间倒序，每套都带底座与算好的结果。",
-             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
+             "desc": "按更新时间倒序，每套都带底座与算好的结果。asOf 是存下来的估值基准日（原样回显），"
+                     "valuedAt 是本次实际折算到的日期 = 现价所属交易日与 asOf 中较晚的那个——现值与它比较的现价要属于同一天。",
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));',
+                                        'pm.test("每套都带 valuedAt 且不早于 asOf", () => body.forEach(m => { '
+                                        'pm.expect(m.valuedAt).to.be.a("string"); pm.expect(m.valuedAt >= m.asOf).to.be.true; }));']},
             {"name": "试算（不落库）", "method": "POST", "path": "/api/valuation/sotp/calc/{{symbol}}",
              "body": "{\"name\": \"2030 基准\", \"asOf\": \"2026-09-19\", \"targetYear\": 2030, \"discountRate\": 0.10, \"targetShares\": 4000000000, \"targetNetCash\": 60000000000, \"note\": \"示意假设，不是预测\", \"segments\": [{\"name\": \"主业\", \"scopeNote\": \"只算主业，不与其他业务重复\", \"cases\": {\"BEAR\": {\"volume\": 1800000, \"price\": 38000, \"netMargin\": 0.05, \"pe\": 12}, \"BASE\": {\"volume\": 2200000, \"price\": 40000, \"netMargin\": 0.07, \"pe\": 15}, \"BULL\": {\"volume\": 2600000, \"price\": 42000, \"netMargin\": 0.09, \"pe\": 18}}}]}",
              "desc": "netMargin 与 discountRate 都传小数（百分之七传 0.07，写成 7 直接 400）；三情景缺一不可；scopeNote 必填。",

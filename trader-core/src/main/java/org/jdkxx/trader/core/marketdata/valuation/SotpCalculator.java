@@ -61,7 +61,10 @@ public final class SotpCalculator {
         double target = equity / a.targetShares();
         double present = target * factor;
         Double upside = basis.currentPrice() > 0 ? (present / basis.currentPrice() - 1.0d) * 100.0d : null;
-        return new SotpResult.ScenarioValue(Map.copyOf(values), total, equity, target, present, upside);
+        // 用 LinkedHashMap 包一层，别用 Map.copyOf——它丢掉插入顺序，而 ScenarioValue 的 javadoc
+        // 明写「按输入顺序」；实际顺序会由 JVM 每次启动随机化的 SALT 决定（2026-09-25 全项目审查发现）
+        return new SotpResult.ScenarioValue(java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(values)),
+                total, equity, target, present, upside);
     }
 
     /** 只动一条业务线（熊 ↔ 牛），其余保持基准。 */

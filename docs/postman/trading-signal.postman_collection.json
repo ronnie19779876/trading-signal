@@ -2026,7 +2026,7 @@
                 "{{symbol}}"
               ]
             },
-            "description": "按更新时间倒序，每套都带底座与算好的结果。"
+            "description": "按更新时间倒序，每套都带底座与算好的结果。asOf 是存下来的估值基准日（原样回显），valuedAt 是本次实际折算到的日期 = 现价所属交易日与 asOf 中较晚的那个——现值与它比较的现价要属于同一天。"
           },
           "event": [
             {
@@ -2036,7 +2036,8 @@
                 "exec": [
                   "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));"
+                  "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));",
+                  "pm.test(\"每套都带 valuedAt 且不早于 asOf\", () => body.forEach(m => { pm.expect(m.valuedAt).to.be.a(\"string\"); pm.expect(m.valuedAt >= m.asOf).to.be.true; }));"
                 ]
               }
             }

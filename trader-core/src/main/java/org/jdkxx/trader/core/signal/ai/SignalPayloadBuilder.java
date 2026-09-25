@@ -247,7 +247,16 @@ public class SignalPayloadBuilder {
         BigDecimal current = history.isEmpty() ? null : history.get(history.size() - 1).pe();
         if (current == null || current.signum() <= 0) {
             m.put("peStaticPercentile5y", null);
-            caveats.add(current == null ? "没有静态市盈率" : "静态市盈率为负（亏损），不计算历史分位");
+            // 0 与负数不是一回事：券商的日 K 市盈率在亏损期与基金/Trust 上给 0（不给负数），
+            // 负数只出现在估值快照。原先把 0 也说成「为负（亏损）」，等于把一条虚假的基本面断言
+            // 喂给模型，而且这条 caveat 自身是可核对的字段路径（2026-09-25 全项目审查发现）。
+            if (current == null) {
+                caveats.add("没有静态市盈率");
+            } else if (current.signum() == 0) {
+                caveats.add("日 K 的静态市盈率为 0：券商对亏损期与基金/Trust 都给 0，不代表估值为零，也不能据此断定亏损；不计算历史分位");
+            } else {
+                caveats.add("静态市盈率为负（亏损），不计算历史分位");
+            }
         } else if (pes.size() < 500) {
             m.put("peStaticPercentile5y", null);
             caveats.add("静态市盈率历史不足两年，不计算分位");

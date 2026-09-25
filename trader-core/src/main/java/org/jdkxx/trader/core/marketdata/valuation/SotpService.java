@@ -57,9 +57,16 @@ public class SotpService {
     }
 
     /** 一套已存的假设连同算出来的结果。 */
-    public record SavedModel(long id, String symbol, String name, LocalDate asOf, int targetYear, double discountRate,
-                             double targetShares, double targetNetCash, String note, List<SegmentRequest> segments,
-                             SotpBasisService.Basis basis, SotpResult result) {
+    /**
+     * @param asOf     存下来的估值基准日（用户当初填的假设，原样回显）
+     * @param valuedAt 本次<b>实际</b>折算到的日期 = 现价所属交易日与 asOf 中较晚的那个。
+     *     两者不同就说明方案存了一段时间了：折现期从旧基准日算起、涨跌幅却拿今天的收盘比，
+     *     两个日期对不上，方案存得越久偏差越大（2026-09-25 全项目审查发现）。
+     *     折算改到现价所属日，比较的两边就属于同一天；asOf 仍然原样留着，不改用户存的东西。
+     */
+    public record SavedModel(long id, String symbol, String name, LocalDate asOf, LocalDate valuedAt, int targetYear,
+                             double discountRate, double targetShares, double targetNetCash, String note,
+                             List<SegmentRequest> segments, SotpBasisService.Basis basis, SotpResult result) {
     }
 
     public SotpBasisService.Basis inputs(String symbol) {
@@ -104,11 +111,24 @@ public class SotpService {
 
     private SavedModel toSaved(SotpModelRow r, SotpBasisService.Basis b) {
         List<SegmentRequest> segments = read(r.segments());
-        ModelRequest request = new ModelRequest(r.name(), r.asOf(), r.targetYear(), r.discountRate().doubleValue(),
+        LocalDate valuedAt = valuationDate(r.asOf(), b.priceDate(), r.targetYear());
+        ModelRequest request = new ModelRequest(r.name(), valuedAt, r.targetYear(), r.discountRate().doubleValue(),
                 r.targetShares().doubleValue(), r.targetNetCash().doubleValue(), r.note(), segments);
         SotpResult result = SotpCalculator.calculate(assumptions(request), b.forCalculator());
-        return new SavedModel(r.id(), r.symbol(), r.name(), r.asOf(), r.targetYear(), r.discountRate().doubleValue(),
+        return new SavedModel(r.id(), r.symbol(), r.name(), r.asOf(), valuedAt, r.targetYear(), r.discountRate().doubleValue(),
                 r.targetShares().doubleValue(), r.targetNetCash().doubleValue(), r.note(), segments, b, result);
+    }
+
+    /**
+     * 实际折算到哪一天：取现价所属交易日与存下来的基准日中<b>较晚</b>的那个。
+     * 现值与它要比较的现价必须属于同一天，否则方案存得越久偏差越大。
+     * 现价日已经跨过目标年时退回 asOf——{@link SotpAssumptions} 不接受目标年早于基准日所在年。
+     */
+    static LocalDate valuationDate(LocalDate asOf, LocalDate priceDate, int targetYear) {
+        if (priceDate == null || !priceDate.isAfter(asOf) || priceDate.getYear() > targetYear) {
+            return asOf;
+        }
+        return priceDate;
     }
 
     private SotpAssumptions assumptions(ModelRequest request) {

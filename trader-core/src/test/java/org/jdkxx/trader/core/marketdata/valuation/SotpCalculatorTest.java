@@ -161,6 +161,21 @@ class SotpCalculatorTest {
                 .hasMessageContaining("小数");
     }
 
+    /**
+     * {@code segmentValues} 的 javadoc 明写「按输入顺序」，实现却用 {@code Map.copyOf} 封装，
+     * 把 LinkedHashMap 的插入顺序丢掉了——实际顺序由 JVM 每次启动随机化的 SALT 决定
+     * （2026-09-25 全项目审查发现）。三个情景都要保序。
+     */
+    @Test
+    void 逐业务线的金额按输入顺序() {
+        SotpResult r = SotpCalculator.calculate(tsla2030(), basis());
+        List<String> input = List.of("卖车", "FSD 订阅", "Robotaxi", "能源", "Semi 卡车");
+        for (SotpScenario sc : SotpScenario.values()) {
+            assertThat(r.scenarios().get(sc).segmentValues().keySet())
+                    .as("%s 情景的逐业务线金额要按输入顺序", sc).containsExactlyElementsOf(input);
+        }
+    }
+
     private static SotpSegment segment(String name, String scope, SotpSegment.SegmentCase bear,
                                        SotpSegment.SegmentCase base, SotpSegment.SegmentCase bull) {
         Map<SotpScenario, SotpSegment.SegmentCase> cases = new EnumMap<>(SotpScenario.class);

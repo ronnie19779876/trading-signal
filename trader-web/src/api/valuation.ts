@@ -83,12 +83,18 @@ export interface SotpBasis {
   applicability: { verdict: 'APPLICABLE' | 'CAUTION' | 'NOT_APPLICABLE'; reasons: string[] }
 }
 
-/** 已存的方案：落库的一定有名称，所以这里的 name 不是可空的。 */
+/**
+ * 已存的方案：落库的一定有名称，所以这里的 name 不是可空的。
+ * asOf 是当初存下来的估值基准日（原样回显）；valuedAt 是本次实际折算到的日期
+ * （= 现价所属交易日与 asOf 中较晚的那个）。两者不同说明方案存了一段时间，
+ * 现值已经按现价所属日重算，好让「现值」与它比较的「现价」属于同一天。
+ */
 export interface SavedModel {
   id: number
   symbol: string
   name: string
   asOf: string
+  valuedAt: string
   targetYear: number
   discountRate: number
   targetShares: number

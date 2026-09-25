@@ -216,7 +216,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/valuation/sotp/{symbol}/inputs` | 自动带入的底座：现价与日期；`shares` **三种口径都给、不替使用者选**（券商流通股、市值 ÷ 现价、归母净利 ÷ 稀释每股收益；2026-09-19 实测 TSLA 39.5 亿 vs 35 亿对不上，差额未核实）；`netCash`（现金及短投 − 短期借款 − 长期借款，**融资租赁单列、默认不计入**，带取自哪一期）；TTM 营收与归母净利（只认期别带 `/Q` 的四个季报——年报与四季报期末是同一天）；`netMarginTtm`（小数）；`peMedian`（近 5 年日 K 市盈率**正值**中位数，0 是无数据不是真值）；`applicability`（APPLICABLE / CAUTION / NOT_APPLICABLE + 逐条原因：取不到财报、亏损、金融业该用 PB+ROE、REITs 该用 FFO）|
-| `GET /api/valuation/sotp/{symbol}` | 该标的已存的方案，按更新时间倒序，每套都带底座与算好的结果 |
+| `GET /api/valuation/sotp/{symbol}` | 该标的已存的方案，按更新时间倒序，每套都带底座与算好的结果。`asOf` 是存下来的估值基准日（原样回显），`valuedAt` 是**本次实际折算到的日期** = 现价所属交易日与 `asOf` 中较晚的那个；3.1.2 前一律按冻结的 `asOf` 折现却拿今天的现价比涨跌幅，两个日期对不上，方案存得越久偏差越大 |
 | `POST /api/valuation/sotp/calc/{symbol}` | 试算，**不落库**。请求体同下 |
 | `POST /api/valuation/sotp/{symbol}` | 保存 / 更新（按 `name` 覆盖，同一标的下唯一）。请求体：`{name, asOf, targetYear, discountRate, targetShares, targetNetCash, note, segments:[{name, scopeNote, cases:{BEAR:{volume,price,netMargin,pe}, BASE:{…}, BULL:{…}}}]}` |
 | `DELETE /api/valuation/sotp/{id}` | 删一套；不存在 404 |
