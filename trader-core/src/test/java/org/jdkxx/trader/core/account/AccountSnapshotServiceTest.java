@@ -62,7 +62,7 @@ class AccountSnapshotServiceTest {
     private static final LocalDate MON = LocalDate.of(2026, 9, 14);
     /** 美东 2026-09-14 18:00。 */
     private static final Clock AT_18_ET = Clock.fixed(Instant.parse("2026-09-14T22:00:00Z"), ZoneOffset.UTC);
-    private static final String SECRET = "test-only-secret-0123456789";
+    private static final String SECRET = "test-only-secret-0123456789";   // secrets-ok 测试常量，不是真密钥
 
     private final BrokerGateway broker = mock(BrokerGateway.class);
     private final AccountGateway accounts = mock(AccountGateway.class);

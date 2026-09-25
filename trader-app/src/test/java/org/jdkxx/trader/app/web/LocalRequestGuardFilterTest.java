@@ -47,7 +47,7 @@ class LocalRequestGuardFilterTest {
 
     @Test
     void 非回环Host拒绝_防DNS重绑定() throws Exception {
-        for (String host : List.of("evil.example:8093", "127.0.0.1.evil.example", "192.0.2.1:8093")) {
+        for (String host : List.of("evil.example:8093", "127.0.0.1.evil.example", "192.0.2.1:8093")) {   // secrets-ok 192.0.2.x 是 RFC 5737 文档保留地址
             mvc.perform(get("/api/ping").header("Host", host))
                     .andExpect(status().isForbidden())
                     .andExpect(content().string(containsString("REQUEST_REJECTED")));

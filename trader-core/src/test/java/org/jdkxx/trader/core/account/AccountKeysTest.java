@@ -9,7 +9,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /** 账户号是虚构的，不能长得像真账户号（扫描器会拦）。 */
 class AccountKeysTest {
 
-    private static final String SECRET = "test-only-secret-0123456789";
+    private static final String SECRET = "test-only-secret-0123456789";   // secrets-ok 测试常量，不是真密钥
 
     @Test
     void 同一密钥同一账户结果稳定_32位十六进制_不含账户号() {

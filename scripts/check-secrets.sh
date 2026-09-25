@@ -11,6 +11,11 @@
 #   2. 文件清单经 xargs 按空白切分，带空格的文件名（.run/TraderApplication (local).run.xml）从来没扫到；
 #   3. --staged 扫的是工作区文件，不是暂存区里真正要提交的内容；
 #   4. 注释行整行豁免，`# password: xxx` 能混过去。
+# 3.1.2 又修两处（2026-09-25 全项目审查发现，均以探针文件实证）：
+#   5. 关键词模式全小写而 grep 不带 -i：本项目实际使用的 TRADER_DB_PASSWORD / OPENAI_API_KEY /
+#      TRADER_ACCOUNT_KEY_SECRET 以及 .run/*.run.xml 的 <env name=.. value=..> 形式全部静默漏报；
+#   6. IPv4 命中按「整行含回环就跳过整行」豁免，而隧道命令行里回环与真实主机地址同在一行，
+#      真实公网地址被连带放行——改成逐个地址判定。
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,15 +31,17 @@ while IFS= read -r -d '' f; do
 done < <(if $staged; then git diff --cached --name-only -z --diff-filter=ACMR; else git ls-files -z -co --exclude-standard; fi)
 (( ${#files[@]} > 0 )) || { echo "没有需要扫描的文件"; exit 0; }
 
-# 输出"路径:行号:内容"。用系统 grep -E（git grep 的正则引擎不认 \b）
+# 输出"路径:行号:内容"。用系统 grep -E（git grep 的正则引擎不认 \b）。
+# -i 不可少：本项目的口令/密钥都以大写环境变量出现（TRADER_DB_PASSWORD、OPENAI_API_KEY、
+# TRADER_ACCOUNT_KEY_SECRET），全小写模式 + 无 -i 会全部静默漏报（2026-09-25 探针实测）。
 scan() {
     local pattern="$1" f
     if $staged; then
         for f in "${files[@]}"; do
-            git show ":$f" 2>/dev/null | grep -nIE -- "$pattern" | awk -v p="$f" '{ print p ":" $0 }'
+            git show ":$f" 2>/dev/null | grep -niIE -- "$pattern" | awk -v p="$f" '{ print p ":" $0 }'
         done
     else
-        printf '%s\0' "${files[@]}" | xargs -0 grep -nHIE -- "$pattern"
+        printf '%s\0' "${files[@]}" | xargs -0 grep -niHIE -- "$pattern"
     fi
 }
 
@@ -46,7 +53,8 @@ patterns=(
     'sk-[A-Za-z0-9_-]{16,}|OpenAI API key'
     '-----BEGIN [A-Z ]*PRIVATE KEY-----|私钥'
     '\b[a-z0-9-]+\.jdkxx\.org\b|私有主机名'
-    '(password|passwd|pwd|pwd_md5|api[-_]?key|secret|token)[[:space:]]*[:=][[:space:]]*["'"'"']?[^"'"'"'$#{[:space:]]{6,}|疑似明文口令'
+    '(password|passwd|pwd|pwd_md5|api[-_]?key|secret|token)[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9][^"'"'"'$#{[:space:]]{5,}|疑似明文口令'
+    '(password|passwd|pwd|api[-_]?key|secret|token)[A-Za-z0-9_]*["'"'"'][[:space:]]*(value|content)[[:space:]]*=[[:space:]]*["'"'"'][A-Za-z0-9][^"'"'"'$#{]{5,}|疑似明文口令（属性形式）'
 )
 
 hits=0
@@ -62,8 +70,17 @@ for entry in "${patterns[@]}"; do
         [[ -z "$line" ]] && continue
         # 豁免：显式标记；IPv4 里的回环与广播地址
         [[ "$line" == *secrets-ok* ]] && continue
-        if [[ "$label" == "IPv4 地址" ]] && echo "$line" | grep -qE '(127\.0\.0\.1|0\.0\.0\.0|255\.255\.255\.[0-9]+)'; then
-            continue
+        # IPv4 逐个地址判定，不能整行豁免：隧道命令行里回环与真实主机地址同在一行，
+        # 整行豁免会把真实公网地址一起放过（2026-09-25 探针实测：ssh -L 5432:127.0.0.1:5432 user@<公网IP> 静默通过）
+        if [[ "$label" == "IPv4 地址" ]]; then
+            content="${line#*:}"; content="${content#*:}"     # 去掉 路径:行号: 前缀
+            unexempt=0
+            while IFS= read -r ip; do
+                [[ -z "$ip" ]] && continue
+                [[ "$ip" == 127.* || "$ip" == "0.0.0.0" || "$ip" == 255.255.255.* ]] && continue
+                unexempt=1
+            done < <(printf '%s\n' "$content" | grep -oE '\b(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}\b')
+            (( unexempt )) || continue
         fi
         echo "  [$label] $line"
         hits=$((hits + 1))
