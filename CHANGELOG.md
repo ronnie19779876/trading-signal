@@ -47,6 +47,28 @@
   - 接口：`POST /api/universe/sync` 与 `POST /api/universe/import` 加 `force`（默认 false），
     已同步 `docs/API.md`、Postman `ENDPOINTS`（**需重新导入集合**）、前端 `api/marketdata.ts`。
     前端**故意不做 force 按钮**：一键放行等于把守护变成摆设，要放行请走 curl / Postman 显式带参。
+- 修复：**信号审计的 `signalConsistency` 在最该报警的情形下抛 NPE**（2026-09-25 全项目审查发现）。
+  `Set.of("SIGNAL","BLOCKED_BY_AI").contains(r.outcome())`，而 `Set.of(...).contains(null)` 抛 NPE；
+  跳过的评估 `outcome` **落库就是 NULL**（`SignalEvaluationService`：`outcome == null ? null : outcome.name()`）。
+  这条检查存在的意义恰恰是报告"信号还在、评估结论已经变了"，而最常见的那种不一致——评估重跑成 SKIPPED——
+  正好让它崩：整个 `GET /api/signals/audit` 500，巡检第五段跟着挂。
+  改成对 `outcome` 逐个 `equals` 判定，null 直接算不一致。
+  - **当时没触发**：生产上 24 行 NULL outcome 全是 `SKIPPED_INSUFFICIENT_BARS`，都没有配对的信号行。
+  - 测试：新增 `SignalAuditServiceTest` 4 条。先写测试复现（红：`NullPointerException`），再改代码；
+    反证把判定改成恒真 → 红 3 条。
+- 修复：**`check-daily.sh` 把"接口报 500"当成"接口不可达"，并当场掐掉后面几段**（同次审查发现，探针实证）。
+  用的是 `curl -sf`，而 `-f` 对 HTTP 4xx/5xx 与连不上返回**同一个非零码**，于是：
+  - 某个审计接口 500（例如上面那个 NPE）→ 打印"接口不可达"→ `exit 2`，**后面四段一条都不跑**。
+    这恰好是脚本开头注释立的规矩（"几段一起跑"）被自己破坏。
+  - 系统真的 DOWN 时 actuator 返回 **503**（项目只把 `DEGRADED` 显式映射成 200，`DOWN` 仍是默认 503），
+    于是**真·故障被报成"健康接口不可达"**——最该看清楚的时候信息最少。
+  - 改：拿 `-w '%{http_code}'` 把状态码与正文分开取；`000` 判连不上、其余非 200 判接口报错并打出错误正文前 5 行，
+    两种都**记下来接着往下跑**；健康接口额外接受 503。退出码语义随之写清：0 全通过 / 1 关键项失败、接口报错或健康降级 / 2 有接口连不上。
+  - 改动第一版把标志位写在 `body="$(fetch ...)"` 的命令替换里——那是**子 shell，赋值出不来**，
+    `FAILED` / `UNREACHABLE` 会永远是 0。改成正文走全局变量。
+  - 反证（起探针 HTTP 服务，6 个场景）：注入 500 → 新脚本四段照跑、退出 1，旧脚本第二段就 `exit 2`；
+    端口无人监听 → 五段各报一行、退出 2；健康 DOWN(503) → 新脚本打出 `jobs DOWN` 与原因、退出 1，
+    旧脚本"健康接口不可达"、退出 2；全部正常 → 退出 0。
 
 ## 3.1.1（2026-09-24 发布）
 

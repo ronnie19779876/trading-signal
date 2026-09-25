@@ -25,7 +25,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -110,10 +109,7 @@ public class SignalAuditService {
             Map<Long, SignalEvaluationRow> byInstrument = rows.stream()
                     .collect(Collectors.toMap(SignalEvaluationRow::instrumentId, r -> r));
             List<String> mismatched = daySignals.stream()
-                    .filter(s -> {
-                        SignalEvaluationRow r = byInstrument.get(s.instrumentId());
-                        return r == null || !Set.of("SIGNAL", "BLOCKED_BY_AI").contains(r.outcome());
-                    })
+                    .filter(s -> !consistent(byInstrument.get(s.instrumentId())))
                     .map(EntrySignalRow::symbol).toList();
             checks.add(new Check("signalConsistency", mismatched.isEmpty(), false,
                     mismatched.isEmpty() ? daySignals.size() + " 条信号与当天评估结论一致"
@@ -148,6 +144,21 @@ public class SignalAuditService {
 
         boolean ok = checks.stream().filter(Check::critical).allMatch(Check::ok);
         return new Report(d, ok, clock.instant(), summary, checks);
+    }
+
+    /**
+     * 评估结论与「存在信号」是否自洽。
+     *
+     * <p>{@code outcome} 在跳过的评估上<b>落库为 NULL</b>（见 {@code SignalEvaluationService}：
+     * {@code outcome == null ? null : outcome.name()}），而这条检查存在的意义就是报告
+     * 「信号还在、评估结论已经变了」——最常见的那种不一致恰好就是重跑成 SKIPPED。
+     * 原先写成 {@code Set.of("SIGNAL","BLOCKED_BY_AI").contains(r.outcome())}，
+     * 而 {@code Set.of(...).contains(null)} 抛 NPE：整个审计 500，巡检第五段跟着挂
+     * （2026-09-25 全项目审查发现；当时生产上 24 行 NULL outcome 全是
+     * SKIPPED_INSUFFICIENT_BARS 且没有配对信号，所以一直没触发）。
+     */
+    private static boolean consistent(SignalEvaluationRow r) {
+        return r != null && ("SIGNAL".equals(r.outcome()) || "BLOCKED_BY_AI".equals(r.outcome()));
     }
 
     private static List<String> symbols(List<SignalEvaluationRow> rows) {

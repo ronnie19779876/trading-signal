@@ -215,7 +215,7 @@ systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `Wor
 4. `GET /api/signals/audit` 信号审计：当天评估是否存在（美东 19:00 前只提示）、覆盖是否完整、未平仓纸面账本是否算到当天为关键项；过期跳过超过 2%、缺日与公司行动口径失败、信号与重算结论不一致（多半是 K 线被订正，信号保留）、最近一次评估作业为提示项。缺评估时 22:00 补偿检查会补跑；手工补跑 `POST /api/signals/evaluate?date=`（过去的日期产生的信号记 BACKFILL）。
 5. `GET /actuator/health` 运行健康：`jobs` 组件在任一定时作业 FAILED / SKIPPED / 逾期（`overdue` 每日增量、`catchupOverdue` 补偿检查、`accountSnapshotOverdue` 账户快照、`signalEvaluationOverdue` 信号评估）时降级，`gateways` 在网关掉线时降级。
 
-`ok=false` 时看 `checks` 里失败项与样本；退出码 0 全通过 / 1 有关键项失败或健康降级 / 2 接口不可达。假日（如劳工节）不带参数跑会自动审计上一个交易日；显式传休市日则回"当天休市"并判通过。
+`ok=false` 时看 `checks` 里失败项与样本；退出码 0 全通过 / 1 有关键项失败、某段接口报错或健康降级 / 2 有接口连不上。**一段出问题不掐掉后面几段**：某个审计接口 500 会原样打出状态码与错误正文，其余四段照跑（3.1.2 修；此前用 `curl -sf`，HTTP 500 与连不上同一个非零码，500 被打成"接口不可达"并当场 `exit 2`，后面一条都不跑。健康接口在系统 DOWN 时返回 503，同样被误报成"健康接口不可达"）。假日（如劳工节）不带参数跑会自动审计上一个交易日；显式传休市日则回"当天休市"并判通过。
 
 - `GET /api/gateways`：两家 CONNECTED，`lastHeartbeatAt` 在 1 分钟内，`reconnectAttempts` 为 0；盈透 facts 里各 `farm.*` 为 OK 或 INACTIVE（INACTIVE 正常）。
 - `GET /api/gateways/events?limit=20`：盈透每日自动重启会留下一对 DISCONNECTED / RECONNECTED，属正常；频繁出现则查隧道或网关。
