@@ -74,26 +74,29 @@ class SpringBeanConstructorTest {
     }
 
     /**
-     * classpath 上属于本仓库的模块编译目录。
-     * trader-app 的 target/classes 形如 {@code <仓库>/trader-app/target/classes}，往上三级就是仓库根；
-     * 只认仓库根下的目录，外部依赖（jar、本地仓库里的路径）一律不扫。
+     * 本仓库各模块的编译目录（仓库根下每个模块的 {@code target/classes}）。
+     *
+     * <p><b>不能从 classpath 上挑</b>：reactor 在 {@code package} 之后给下游模块的是 <b>jar</b> 而不是
+     * {@code target/classes} 目录，于是 {@code mvn test} 下扫得到九个模块、{@code mvn verify} 下只剩
+     * trader-app 一个——本地跑 test 全绿、发布前跑 verify 才炸（2026-09-25 发布 3.1.2 时实际发生）。
+     * 直接按仓库布局找目录，两种阶段下都一样：模块编译产物在哪个阶段都在 {@code target/classes} 里。
+     *
+     * <p>surefire 的工作目录是模块 basedir（同包的 {@code SpaForwardControllerTest} 也依赖这一点），
+     * 所以往上一级就是仓库根。
      */
-    private static List<Path> moduleClassRoots(Path appClasses) {
+    private static List<Path> moduleClassRoots(Path appClasses) throws IOException {
+        Path repo = Path.of("..").toAbsolutePath().normalize();
         List<Path> roots = new ArrayList<>();
-        Path repo = appClasses.getParent() == null ? null : appClasses.getParent().getParent();
-        repo = repo == null ? null : repo.getParent();
-        for (String entry : System.getProperty("java.class.path", "").split(java.io.File.pathSeparator)) {
-            Path p = Path.of(entry).toAbsolutePath().normalize();
-            if (!Files.isDirectory(p) || !p.endsWith(Path.of("target", "classes"))) {
-                continue;
+        if (Files.isDirectory(repo)) {
+            try (var modules = Files.list(repo)) {
+                modules.map(m -> m.resolve("target").resolve("classes"))
+                        .filter(Files::isDirectory)
+                        .sorted()
+                        .forEach(roots::add);
             }
-            if (repo != null && !p.startsWith(repo)) {
-                continue;
-            }
-            roots.add(p);
         }
         if (roots.isEmpty() && Files.isDirectory(appClasses)) {
-            roots.add(appClasses);      // 兜底：classpath 上只有 jar 时至少还扫本模块
+            roots.add(appClasses);      // 兜底：布局不符时至少还扫本模块
         }
         return roots;
     }

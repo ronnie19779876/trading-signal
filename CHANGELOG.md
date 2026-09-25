@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## 3.1.2（未发布）
+## 3.1.2（2026-09-25 发布）
 
 - 修复：**`check-secrets.sh` 的两个静默漏报**（2026-09-25 全项目审查发现，全部以探针文件实证）。
   这是提交前的最后一道闸，而本仓库**公开托管在 GitHub**，所以按最高优先级先修：
@@ -175,6 +175,11 @@
 
 - `package.sh` 打包后打印的升级指引（只替换 `lib/` 与 `bin/`）与 `docs/OPERATIONS.md` §3 相互矛盾，
   按脚本做会让随版本更新的 `config/application.yml` 永远进不了生产——正是「新 cron 只写在记录默认值上」那个坑的翻版。
+
+**发布时才暴露的一条**：`SpringBeanConstructorTest` 的多模块扫描原先从 classpath 上挑 `target/classes` 目录，
+而 reactor 在 `package` 之后给下游模块的是 **jar**——`mvn test` 下扫到九个模块、`mvn clean verify` 下只剩 trader-app 一个。
+是我加的「扫得太少就判失败」那条断言把它挡下的。改成按仓库布局直接找各模块的 `target/classes`，两种阶段下一致。
+**教训：发布前必须跑 `./mvnw clean verify`，只跑 `test` 不够。**
 
 **接口变化**（均已同步 `docs/API.md` + Postman + 前端，**需重新导入 Postman 集合**）：
 `POST /api/universe/sync`、`POST /api/universe/import` 加 `force`；
