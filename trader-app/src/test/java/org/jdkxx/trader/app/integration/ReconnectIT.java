@@ -70,7 +70,7 @@ class ReconnectIT {
     void 盈透断线自动重连() throws Exception {
         String host = IntegrationEnv.env("TRADER_IBKR_HOST");
         int port = Integer.parseInt(IntegrationEnv.env("TRADER_IBKR_PORT"));
-        int clientId = IntegrationEnv.envInt("TRADER_IBKR_TEST_CLIENT_ID", 91) + 1;
+        int clientId = IntegrationEnv.envInt("TRADER_IBKR_TEST_CLIENT_ID") + 1;
         try (TcpRelay relay = new TcpRelay(host, port);
              IbkrGateway gateway = new IbkrGateway(IntegrationEnv.ibkr("127.0.0.1", relay.port(), clientId, Duration.ofSeconds(1)))) {
             exercise(gateway, relay, new Events());

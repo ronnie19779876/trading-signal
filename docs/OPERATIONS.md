@@ -73,7 +73,7 @@ curl -s http://127.0.0.1:8083/api/system/info
 
 手动验证：导入 `docs/postman/` 下的集合与 `dev` 环境，按 [docs/postman/README.md](postman/README.md) 的顺序点一遍；或 `npx --yes newman run docs/postman/trading-signal.postman_collection.json -e docs/postman/trading-signal.dev.postman_environment.json` 整套跑。
 
-集成测试（对真实网关，只读；连接参数只从环境变量读，缺失即跳过）：
+集成测试（对真实网关，只读；连接参数只从环境变量读）。**五个变量全是必填，缺一个判失败不跳过**（3.1.2 改）——原先缺失静默跳过，叠上类级 `@EnabledIfSystemProperty` 与 `-Dsurefire.failIfNoSpecifiedTests=false`，整条命令可以在一次网关都没连的情况下 BUILD SUCCESS。不想跑就别加 `-Dtrader.integration=true`（整类跳过）：
 
 ```bash
 export TRADER_IBKR_HOST=127.0.0.1 TRADER_IBKR_PORT=<隧道端口> TRADER_IBKR_TEST_CLIENT_ID=<临时 id> \

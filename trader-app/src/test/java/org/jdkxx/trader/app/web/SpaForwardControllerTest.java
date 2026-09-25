@@ -40,11 +40,11 @@ class SpaForwardControllerTest {
 
     @Test
     void 前端路由表里的路径都能深链接打开() throws Exception {
-        Path router = Path.of("../trader-web/src/router/index.ts");
-        if (!Files.exists(router)) {
-            return;   // 只在完整仓库里检查；单独构建后端时跳过
+        java.util.Optional<String> router = FrontendSources.read("router/index.ts");
+        if (router.isEmpty()) {
+            return;   // 整棵前端源码树都不在：单独构建后端
         }
-        Matcher m = Pattern.compile("path:\\s*'([^']+)'").matcher(Files.readString(router));
+        Matcher m = Pattern.compile("path:\\s*'([^']+)'").matcher(router.get());
         List<String> paths = new ArrayList<>();
         while (m.find()) {
             paths.add(m.group(1));

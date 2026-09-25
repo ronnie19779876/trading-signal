@@ -291,4 +291,50 @@ class BarAuditServiceTest {
         assertThat(c.samples()).as("样本仍然封顶").hasSize(20);
         assertThat(r.summary()).containsEntry("phantomBars", 5000);
     }
+
+    /**
+     * 三个关键项同时判不通过，总判定必须是 false。
+     *
+     * <p>3.1.1 前这条路径<b>零覆盖</b>：5 个测试里 completeness / sanity / continuity 全程只走通过分支，
+     * {@code r.ok()} 只被断言过 isTrue()——也就是 check-daily.sh 第一段「❌ 未通过」的那条路
+     * 一次都没跑过（2026-09-25 全项目审查发现）。
+     */
+    @Test
+    void 关键项失败时总判定为false() {
+        TradingDayRepository days = mock(TradingDayRepository.class);
+        when(days.covers(eq(Market.US), any())).thenReturn(false);
+        when(days.coverage(Market.US)).thenReturn(
+                new TradingDayRepository.Coverage(LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 18), 5051, 2519, 2532));
+        DailyBarRepository bars = mock(DailyBarRepository.class);
+        when(bars.instrumentIdsWithBarOn(any())).thenReturn(Set.of());                    // 全都缺 K 线
+        when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(2, 1, 1, 0, 0, 1));  // bars, OHLC 不一致, 非正收盘, blank, 零成交量, 成交额为空
+        when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of(
+                new DailyBarRepository.ContinuityIssue(1L, LocalDate.of(2026, 9, 9),
+                        new java.math.BigDecimal("100"), new java.math.BigDecimal("101"))));
+        when(bars.coverageByInstrument()).thenReturn(List.of(
+                new DailyBarRepository.InstrumentCoverage(1L, 5000, LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 9))));
+        when(bars.phantomBarCount()).thenReturn(0);
+        when(bars.phantomBars(anyInt())).thenReturn(List.of());
+        UniverseScope scope = mock(UniverseScope.class);
+        when(scope.universe()).thenReturn(List.of(row(1, "AAPL"), row(2, "MSFT")));
+        when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "AAPL")));
+        BarSyncStateRepository states = mock(BarSyncStateRepository.class);
+        when(states.findAll()).thenReturn(List.of());
+        JobRunRepository jobs = mock(JobRunRepository.class);
+        when(jobs.latestOf(any())).thenReturn(Optional.empty());
+
+        BarAuditService.Report r = new BarAuditService(props(), scope, bars, days, states, jobs, null, Clock.systemUTC())
+                .audit(LocalDate.of(2026, 9, 9));
+
+        assertThat(r.ok()).as("关键项有失败，总判定必须是 false").isFalse();
+        assertThat(check(r, "completeness").ok()).isFalse();
+        assertThat(check(r, "completeness").count()).isEqualTo(2);
+        assertThat(check(r, "completeness").samples()).containsExactly("AAPL", "MSFT");
+        assertThat(check(r, "sanity").ok()).isFalse();
+        assertThat(check(r, "sanity").count()).as("OHLC 不一致 + 非正收盘 + 成交额为空").isEqualTo(3);
+        assertThat(check(r, "continuity").ok()).isFalse();
+        assertThat(check(r, "continuity").samples()).singleElement().asString().contains("AAPL").contains("2026-09-09");
+        assertThat(r.checks()).filteredOn(BarAuditService.Check::critical).allSatisfy(
+                c -> assertThat(c.critical()).isTrue());
+    }
 }

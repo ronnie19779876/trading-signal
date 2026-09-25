@@ -31,7 +31,8 @@ import java.util.function.Consumer;
  * 它只记得实时账户自己上一次的 reqId，取消不掉快照作业留下的那一个。
  *
  * <p><b>这是规避不是修复</b>：盈透为什么不释放名额仍然不知道。这里只保证我们一个连接周期内只订一次，
- * 让"释放与否"不再影响正确性。1101 数据丢失后的重订仍会再占一个名额，那一次若被拒只能重连——待实测。
+ * 让"释放与否"不再影响正确性。1101 数据丢失后会重订（{@link #subscribe(boolean)}），那一次仍会再占一个名额，
+ * 若被拒则走 322 重试、三次都拒只能等重连——生产至今没出现过 1101，这条路径未经真实数据验证。
  */
 final class IbkrAccountSummaryFeed {
 
@@ -102,21 +103,63 @@ final class IbkrAccountSummaryFeed {
 
     /** 订阅。已经订着就什么都不做——<b>常驻的意义就在于不重复订</b>。 */
     boolean subscribe() {
-        if (subscribed()) {
-            return true;
-        }
+        return subscribe(false);
+    }
+
+    /**
+     * @param afterRecovery 连接刚恢复：断线重连，或 1101「连接恢复、订阅数据丢失」。
+     *
+     * <p>为什么需要这个参数（2026-09-25 全项目审查发现）：<b>1101 时会话对象不变</b>
+     * （{@code ConnectionSupervisor.notifyDataLost} 只改 detail 再 dispatch {@code onConnected(broker, true)}，
+     * 不动会话），于是 {@link #subscribed()} 仍为 true、{@code subscribe()} 在第一行就短路返回，
+     * 既不取消也不重发——而券商那边已经把这条订阅丢了。后果是资金数据从此冻结：
+     * {@code updatedAt} 不再推进，过了 {@link #MAX_AGE} 后取数走 90 秒等待并抛错，
+     * 18:00 的账户快照作业 FAILED、22:00 补偿同样失败，而 {@code GET /api/account/live}
+     * 的净值停在 1101 之前、状态却还是 LIVE。本类注释与 ARCHITECTURE §20.7 写的都是
+     * 「1101 后会重订」，代码里那次重订<b>根本不存在</b>；同包的 {@code IbkrLiveAccount.subscribe()}
+     * 对同一会话是显式先 {@code cancelAll()} 再订的，两边本该一致。
+     *
+     * <p>真正断线重连时会话已经换了，{@code subscribed()} 本来就是 false，走的还是老路径。
+     *
+     * <p><b>代价明说</b>：这次重订会再占一个「每客户端 2 个」的名额，而名额取消不释放（实测）。
+     * 也就是一个连接周期内出现第二次 1101 时，重订会被 322 拒、走 {@link #retrySubscribe()}，
+     * 三次都拒就只能等重连。这仍然比「悄悄冻结」好：322 会进日志、也会被巡检看见。
+     * <b>生产至今没发生过 1101，这条路径未经真实数据验证。</b>
+     */
+    boolean subscribe(boolean afterRecovery) {
         Object current = wire.sessionToken();
         if (current == null) {
             return false;
         }
-        if (bound != null && bound == current && subId != null) {
+        if (subscribed() && !afterRecovery) {
             return true;
+        }
+        if (subscribed()) {
+            log.info("连接恢复（会话未变，多半是 1101 数据丢失）：重订账户汇总常驻订阅，这一次会再占一个名额");
+            releaseForResubscribe();
         }
         forget();
         bound = current;
         retries = 0;
         cancelStale();
         return open();
+    }
+
+    /**
+     * 同一会话里重订之前，先把旧的那条退掉。
+     * 名额不会因此释放（2026-09-23 实测），但不退会在券商侧留一条我们已经不认的订阅继续推。
+     */
+    private void releaseForResubscribe() {
+        if (subId == null) {
+            return;
+        }
+        wire.close(subId);
+        int id = subId;
+        if (staleId != null && staleId == id) {
+            staleId = null;             // 同一个 id 别取消两次
+        }
+        wire.unsubscribe("账户汇总（连接恢复前的那条）", c -> c.cancelAccountSummary(id));
+        subId = null;
     }
 
     /** 断开 / 关停时退订。 */

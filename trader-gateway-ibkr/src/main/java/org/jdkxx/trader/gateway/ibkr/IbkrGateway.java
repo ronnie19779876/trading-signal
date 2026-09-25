@@ -86,7 +86,9 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
                 verifyConfiguredAccount();
                 // 首次连上、断线重连、1101 数据丢失都走这里
                 dispatch.execute(() -> {
-                    summaryFeed().subscribe();      // 账户汇总常驻：一个连接周期只订一次
+                    // 账户汇总常驻：一个连接周期只订一次。但 1101（数据丢失）时会话不变、券商已丢弃订阅，
+                    // 必须显式重订——reconnected 为 true 的两种情形都要传进去，见 subscribe(boolean)
+                    summaryFeed().subscribe(reconnected);
                     if (live != null) {
                         live.subscribe();
                     }

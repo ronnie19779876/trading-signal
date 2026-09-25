@@ -30,7 +30,7 @@ class IbkrGatewayIT {
     void 连接查询断开() throws Exception {
         String host = IntegrationEnv.env("TRADER_IBKR_HOST");
         int port = Integer.parseInt(IntegrationEnv.env("TRADER_IBKR_PORT"));
-        int clientId = IntegrationEnv.envInt("TRADER_IBKR_TEST_CLIENT_ID", 91);
+        int clientId = IntegrationEnv.envInt("TRADER_IBKR_TEST_CLIENT_ID");
 
         try (IbkrGateway gateway = new IbkrGateway(IntegrationEnv.ibkr(host, port, clientId, Duration.ofSeconds(2)))) {
             gateway.connect().get(20, TimeUnit.SECONDS);
@@ -68,7 +68,7 @@ class IbkrGatewayIT {
     void 持仓与账户汇总() throws Exception {
         String host = IntegrationEnv.env("TRADER_IBKR_HOST");
         int port = Integer.parseInt(IntegrationEnv.env("TRADER_IBKR_PORT"));
-        int clientId = IntegrationEnv.envInt("TRADER_IBKR_TEST_CLIENT_ID", 91);
+        int clientId = IntegrationEnv.envInt("TRADER_IBKR_TEST_CLIENT_ID");
 
         try (IbkrGateway gateway = new IbkrGateway(IntegrationEnv.ibkr(host, port, clientId, Duration.ofSeconds(2)))) {
             gateway.connect().get(20, TimeUnit.SECONDS);

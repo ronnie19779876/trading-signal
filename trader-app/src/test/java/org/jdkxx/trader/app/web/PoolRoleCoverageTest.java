@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -29,15 +30,20 @@ class PoolRoleCoverageTest {
                 .contains("PoolRole.values()");
     }
 
+    /**
+     * 角色下拉在 3.0.6 改版后搬到了 {@code components/system/MarketDataTab.vue}，
+     * 而这个测试一直指着已被删除的 {@code pages/MarketDataPage.vue}，靠"文件不存在就 return"
+     * 每次都跳过——永久绿灯、一条断言没跑（2026-09-25 全项目审查发现）。
+     * 现在走 {@link FrontendSources}：树在而文件不在直接判失败。
+     */
     @Test
     void 前端角色下拉覆盖全部取值() throws Exception {
-        Path page = Path.of("../trader-web/src/pages/MarketDataPage.vue");
-        if (!Files.exists(page)) {
-            return;   // 只在完整仓库里检查；单独构建后端时跳过
+        Optional<String> src = FrontendSources.read("components/system/MarketDataTab.vue");
+        if (src.isEmpty()) {
+            return;   // 整棵前端源码树都不在：单独构建后端
         }
-        String src = Files.readString(page);
         for (PoolRole role : PoolRole.values()) {
-            assertThat(src).as("前端角色下拉缺少 %s", role).contains("value=\"" + role.name() + "\"");
+            assertThat(src.get()).as("前端角色下拉缺少 %s", role).contains("value=\"" + role.name() + "\"");
         }
     }
 }

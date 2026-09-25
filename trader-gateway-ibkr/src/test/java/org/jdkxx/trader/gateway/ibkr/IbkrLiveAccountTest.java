@@ -71,7 +71,19 @@ class IbkrLiveAccountTest {
         long pending(Duration delay) {
             return timers.stream().filter(t -> t.getKey().equals(delay)).count();
         }
-        @Override public Instant now() { return Instant.parse("2026-09-21T14:00:00Z"); }
+        /**
+         * 可推进的时钟。原先 now() 返回定值且没有可写字段，于是
+         * IbkrAccountSummaryFeed 的 MAX_AGE=10 分钟陈旧判定<b>在构造上不可能</b>被触发——
+         * 13 个 feed 测试全落在 age=0 的新鲜分支（2026-09-25 全项目审查发现）。
+         */
+        Instant clock = Instant.parse("2026-09-21T14:00:00Z");
+
+        /** 把时钟往前拨，用来跨过 MAX_AGE。 */
+        void advance(Duration by) {
+            clock = clock.plus(by);
+        }
+
+        @Override public Instant now() { return clock; }
     }
 
     /** 记下推送的监听器。 */

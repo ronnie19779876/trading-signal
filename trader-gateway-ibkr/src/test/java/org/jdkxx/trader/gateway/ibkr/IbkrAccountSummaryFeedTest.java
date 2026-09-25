@@ -58,6 +58,40 @@ class IbkrAccountSummaryFeedTest {
     }
 
     /** 实时账户闲置退订时只摘监听器，常驻订阅不动——退了名额也不还。 */
+    /**
+     * 1101「连接恢复、订阅数据丢失」：会话对象不变，但券商已经把订阅丢了，必须重订。
+     *
+     * <p>3.1.1 前这里会走短路（subscribed() 仍为 true）什么都不做，资金数据从此冻结到下次真断线：
+     * 快照作业等 90 秒后 FAILED，而 /api/account/live 的净值停在 1101 之前、状态还是 LIVE
+     * （2026-09-25 全项目审查发现）。
+     */
+    @Test
+    void 数据丢失后重订_会话不变也要重发请求() {
+        feed.subscribe();
+        pushBatchAndFlush();
+        Object sameSession = wire.sessionToken();
+
+        feed.subscribe(true);
+
+        assertThat(wire.sessionToken()).as("1101 不换会话").isSameAs(sameSession);
+        InOrder o = inOrder(wire.client);
+        o.verify(wire.client).reqAccountSummary(anyInt(), eq("All"), eq(IbkrAccounts.SUMMARY_TAGS));
+        o.verify(wire.client).cancelAccountSummary(anyInt());      // 先退掉旧的那条
+        o.verify(wire.client).reqAccountSummary(anyInt(), eq("All"), eq(IbkrAccounts.SUMMARY_TAGS));
+        verify(wire.client, times(2)).reqAccountSummary(anyInt(), eq("All"), eq(IbkrAccounts.SUMMARY_TAGS));
+    }
+
+    /** 没有数据丢失的普通调用仍然只订一次——常驻的性质不能被上面那条破坏。 */
+    @Test
+    void 普通重复调用仍然只订一次() {
+        feed.subscribe();
+        feed.subscribe();
+        feed.subscribe(false);
+
+        verify(wire.client, times(1)).reqAccountSummary(anyInt(), eq("All"), eq(IbkrAccounts.SUMMARY_TAGS));
+        verify(wire.client, never()).cancelAccountSummary(anyInt());
+    }
+
     @Test
     void 摘掉监听器不退订() {
         feed.subscribe();
@@ -157,6 +191,44 @@ class IbkrAccountSummaryFeedTest {
         assertThat(out).isCompleted();
         assertThat(out.join().netLiquidation()).isEqualByComparingTo("508729.25");
         verify(wire.client, times(1)).reqAccountSummary(anyInt(), eq("All"), eq(IbkrAccounts.SUMMARY_TAGS));
+    }
+
+    /**
+     * 数据超过 MAX_AGE 就不能直接给，要等下一批。
+     *
+     * <p>这条分支此前**在构造上不可能**被测到：{@code FakeWire.now()} 返回定值，
+     * 13 个 feed 测试全落在 age=0 的新鲜分支（2026-09-25 全项目审查发现）。
+     * 它守的是真实故障形态——常驻订阅停推（1101 之后就是这样），
+     * 快照不能拿十分钟前的净值当当天的。
+     */
+    @Test
+    void 数据过了MAX_AGE就不算新鲜_要等下一批() {
+        feed.subscribe();
+        pushBatchAndFlush();
+        wire.advance(IbkrAccountSummaryFeed.MAX_AGE.plusSeconds(1));
+
+        CompletableFuture<AccountSummary> out = new CompletableFuture<>();
+        feed.request(ACCT, out);
+
+        assertThat(out).as("十分钟前的数据不能直接给").isNotCompleted();
+        assertThat(wire.pending(IbkrAccountSummaryFeed.WAIT)).isEqualTo(1);
+        verify(wire.client, times(1)).reqAccountSummary(anyInt(), eq("All"), eq(IbkrAccounts.SUMMARY_TAGS));
+
+        pushBatchAndFlush();
+        assertThat(out).isCompleted();
+    }
+
+    /** 边界：刚好卡在 MAX_AGE 上仍算新鲜（判定是 <=）。 */
+    @Test
+    void 正好等于MAX_AGE仍算新鲜() {
+        feed.subscribe();
+        pushBatchAndFlush();
+        wire.advance(IbkrAccountSummaryFeed.MAX_AGE);
+
+        CompletableFuture<AccountSummary> out = new CompletableFuture<>();
+        feed.request(ACCT, out);
+
+        assertThat(out).isCompleted();
     }
 
     /** 刚重连还没收到首批：等下一批，到了就完成。 */

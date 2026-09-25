@@ -34,7 +34,8 @@ class SpringBeanConstructorTest {
     @Test
     void 组件只能有一个公开构造器() throws Exception {
         List<Class<?>> components = scanCompiledClasses();
-        assertThat(components).as("至少要扫到几个组件，否则是扫描本身失效了").hasSizeGreaterThan(2);
+        // 只扫 trader-app 时约 10 个；扫全九个模块应该远多于此。数字定低一点，但必须能挡住"只扫到一个模块"
+        assertThat(components).as("组件扫得太少，多半是只扫到了 trader-app 一个模块（全模块应有数十个）").hasSizeGreaterThan(25);
 
         List<String> bad = new ArrayList<>();
         for (Class<?> type : components) {
@@ -54,14 +55,52 @@ class SpringBeanConstructorTest {
         assertThat(bad).as("这些组件启动时会因为选不出构造器而失败（本地不装配的 bean 尤其危险）").isEmpty();
     }
 
-    /** 遍历本模块的编译产物，挑出标了 {@code @Component}（含 {@code @RestController} 等元注解）的类。 */
+    /**
+     * 遍历<b>全部模块</b>的编译产物，挑出标了 {@code @Component}（含 {@code @RestController} 等元注解）的类。
+     *
+     * <p>原先只扫 trader-app 自己的 {@code target/classes}（取自 {@code TraderApplication} 的 code source），
+     * 而 {@code @SpringBootApplication(scanBasePackages = "org.jdkxx.trader")} 扫的是九个模块——
+     * core / storage / gateway 里被扫描的组件一个都没检查到（2026-09-25 全项目审查发现）。
+     * 现在从 classpath 里挑出本仓库各模块的 {@code target/classes} 一起扫。
+     */
     private static List<Class<?>> scanCompiledClasses() throws Exception {
-        // 用主类定位编译产物：测试类的 code source 在 surefire 下未必是 target/test-classes
-        Path root = Path.of(TraderApplication.class.getProtectionDomain()
+        Path appClasses = Path.of(TraderApplication.class.getProtectionDomain()
                 .getCodeSource().getLocation().toURI());
         List<Class<?>> found = new ArrayList<>();
+        for (Path root : moduleClassRoots(appClasses)) {
+            scanInto(root, found);
+        }
+        return found;
+    }
+
+    /**
+     * classpath 上属于本仓库的模块编译目录。
+     * trader-app 的 target/classes 形如 {@code <仓库>/trader-app/target/classes}，往上三级就是仓库根；
+     * 只认仓库根下的目录，外部依赖（jar、本地仓库里的路径）一律不扫。
+     */
+    private static List<Path> moduleClassRoots(Path appClasses) {
+        List<Path> roots = new ArrayList<>();
+        Path repo = appClasses.getParent() == null ? null : appClasses.getParent().getParent();
+        repo = repo == null ? null : repo.getParent();
+        for (String entry : System.getProperty("java.class.path", "").split(java.io.File.pathSeparator)) {
+            Path p = Path.of(entry).toAbsolutePath().normalize();
+            if (!Files.isDirectory(p) || !p.endsWith(Path.of("target", "classes"))) {
+                continue;
+            }
+            if (repo != null && !p.startsWith(repo)) {
+                continue;
+            }
+            roots.add(p);
+        }
+        if (roots.isEmpty() && Files.isDirectory(appClasses)) {
+            roots.add(appClasses);      // 兜底：classpath 上只有 jar 时至少还扫本模块
+        }
+        return roots;
+    }
+
+    private static void scanInto(Path root, List<Class<?>> found) throws IOException {
         if (!Files.isDirectory(root)) {
-            return found;
+            return;
         }
         Files.walkFileTree(root, new SimpleFileVisitor<>() {
             @Override
@@ -83,7 +122,6 @@ class SpringBeanConstructorTest {
                 return FileVisitResult.CONTINUE;
             }
         });
-        return found;
     }
 
     /**
