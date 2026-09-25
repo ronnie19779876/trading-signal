@@ -1142,7 +1142,7 @@
                     }
                   ]
                 },
-                "description": "列出落在交易日历之外的 K 线（券商在美股假日给过脏数据：成交额 0、价格离谱）。apply=false 只试跑，确认清单无误后再改 true 真删。"
+                "description": "列出落在交易日历之外的 K 线（券商在美股假日给过脏数据：成交额 0、价格离谱）。apply=false 只试跑，确认清单无误后再改 true 真删。只删试跑列出来的那些，一次最多 200 条：found 是总数、listed（= bars 长度）是本次列出也是本次最多会删的条数、deleted 只可能是 0 或 listed、remaining 是删完还剩多少；found > listed 时再跑一轮。"
               },
               "event": [
                 {
@@ -1152,7 +1152,8 @@
                     "exec": [
                       "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
                       "const body = pm.response.json();",
-                      "pm.test(\"试跑不应删除\", () => { pm.expect(body.applied).to.eql(false); pm.expect(body.deleted).to.eql(0); });"
+                      "pm.test(\"试跑不应删除\", () => { pm.expect(body.applied).to.eql(false); pm.expect(body.deleted).to.eql(0); });",
+                      "pm.test(\"三个数字自洽\", () => { pm.expect(body.listed).to.eql(body.bars.length); pm.expect(body.found).to.be.at.least(body.listed); pm.expect(body.remaining).to.eql(body.found - body.deleted); });"
                     ]
                   }
                 }

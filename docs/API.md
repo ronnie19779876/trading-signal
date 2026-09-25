@@ -96,7 +96,7 @@
 | `POST /api/bars/calendar/backfill` | 交易日历回补作业：券商段（约 2016-09 起）+ 更早的从日 K 线反推。幂等，几秒 |
 | `GET /api/bars/calendar?from&to` | 交易日列表（默认最近一年）。`source=FUTU` 券商给的，`DERIVED` 从日 K 线反推 |
 | `GET /api/bars/gaps?from&to&limit` | 对照交易日历深扫缺口（默认全历史）。**前收连续性检查查不出这类问题**：券商缺数时它自己的前收与缺口自洽 |
-| `POST /api/bars/cleanup/phantom?apply=false` | 幽灵 K 线订正：落在交易日历之外的 K 线（券商在美股假日给过脏数据）。默认只试跑列清单，`apply=true` 才真删 |
+| `POST /api/bars/cleanup/phantom?apply=false` | 幽灵 K 线订正：落在交易日历之外的 K 线（券商在美股假日给过脏数据）。默认只试跑列清单，`apply=true` 才真删。**只删试跑列出来的那些**，一次最多 200 条：`found` 是总数、`listed`（= `bars` 长度）是本次列出也是本次最多会删的条数、`deleted` 只可能是 0 或 `listed`、`remaining` 是删完还剩多少；`found > listed` 时再跑一轮。3.1.2 前三处口径不一：审计按 20 封顶报条数、试跑按 200 封顶列清单、删除却按条件全删 |
 | `GET /api/bars/audit?date=` | 日线数据审计（默认最近应有收盘 K 的交易日）：传入的日期若在日历里是休市日，只回一条 `calendar` 检查并判通过；completeness / sanity / continuity 为关键项，rehab / syncErrors / incrementJob / calendarCoverage / historyGaps / phantomBars / unsettledBars / gateway 为提示项；`ok` = 关键项全过。`unsettledBars`：收盘落定（美东 16:15）前写入的当天 K 线，可能是盘中价，下一次增量自动重拉覆盖 |
 | `GET /api/bars/coverage` | 行数/标的数/最早最新、全量/池/持仓规模、已覆盖数、复权因子覆盖数、未解析数、错误数、历史额度、运行中的作业 |
 | `GET /api/bars/quota` | 历史额度（7 天滚动） |

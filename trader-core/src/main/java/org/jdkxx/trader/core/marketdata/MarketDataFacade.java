@@ -137,16 +137,22 @@ public class MarketDataFacade {
      * 幽灵 K 线订正：默认只试跑列出清单，apply=true 才真删。
      * 券商在美股假日给过脏 K 线（成交额 0、价格离谱），日历里没有这些天，留着会让按标的自身序列
      * 遍历的回测多出交易日。
+     *
+     * <p><b>三个数字口径一致</b>（3.1.2 修）：{@code found} 是总数、{@code listed}（= {@code bars} 的长度）
+     * 是本次列出并可删的条数、{@code deleted} 只可能等于 0 或 {@code listed}。
+     * 此前试跑按 200 封顶列清单、删除却按条件全删，"看到 200 条、删掉几千条"是可能的；
+     * 审计那边又按 20 封顶报条数，三处互不相同。
      */
     public PhantomCleanup cleanupPhantomBars(boolean apply) {
-        List<DailyBarRepository.PhantomBar> found = bars.phantomBars(200);
+        int total = bars.phantomBarCount();
+        List<DailyBarRepository.PhantomBar> found = bars.phantomBars(DailyBarRepository.PHANTOM_BATCH);
         List<PhantomView> view = found.stream().map(p -> {
             InstrumentRow row = instruments.findById(p.instrumentId()).orElse(null);
             return new PhantomView(row == null ? "#" + p.instrumentId() : row.symbol(), p.tradeDate(),
                     p.open(), p.high(), p.low(), p.close(), p.volume(), p.turnover());
         }).toList();
-        int deleted = apply && !found.isEmpty() ? bars.deletePhantomBars() : 0;
-        return new PhantomCleanup(apply, view.size(), deleted, view);
+        int deleted = apply ? bars.deletePhantomBars(found) : 0;
+        return new PhantomCleanup(apply, total, view.size(), deleted, total - deleted, view);
     }
 
     public record PhantomView(String symbol, java.time.LocalDate tradeDate, java.math.BigDecimal open,
@@ -154,8 +160,12 @@ public class MarketDataFacade {
                               long volume, java.math.BigDecimal turnover) {
     }
 
-    /** applied=false 表示只是试跑；deleted 只有真删时才非零。 */
-    public record PhantomCleanup(boolean applied, int found, int deleted, List<PhantomView> bars) {
+    /**
+     * applied=false 表示只是试跑；deleted 只有真删时才非零。
+     * found 是总数，listed 是本次列出（也就是本次最多会删）的条数，remaining 是删完还剩多少。
+     * found &gt; listed 时要再跑一轮。
+     */
+    public record PhantomCleanup(boolean applied, int found, int listed, int deleted, int remaining, List<PhantomView> bars) {
     }
 
     public List<UniverseSyncService.IndexResult> importCsv(String csv) {

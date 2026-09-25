@@ -128,6 +128,7 @@ storage → common ；ai → common
 | 成分股同步是**纯集合差**，来源少给多少就退出多少；`WikipediaUniverseSource` 只在解析少于 50 行时才报错，而标普 500 有 503 只——只解析出 60 行仍算"可信"，一次同步就标记 440 多只退出。而且**看不见**：日线审计完整性检查的分母与成分股同源，分母跟着掉、检查照样全绿 | 入口：`UniverseSyncService.apply` 先算退出集合再过守护，超过 `max(5, 现有 5%)` **整个指数跳过、不做部分应用**，作业记 PARTIAL，人工确认后 `force=true` 放行（CSV 导入同路径）。出口：审计关键项 `universeSize` 比**绝对数量**与名义规模，低于 95% 判失败。阈值依据：SP500 历史退出 0 次、NDX100 1 次 |
 | `Set.of(...).contains(null)` **抛 NPE**。信号审计的 `signalConsistency` 就栽在这里：跳过的评估 `outcome` 落库为 NULL，而这条检查存在的意义恰恰是报「信号还在、结论已变」，最常见的那种不一致（评估重跑成 SKIPPED）正好让它崩，`GET /api/signals/audit` 500、巡检第五段跟着挂 | 判定可空字段用逐个 `equals`，别用 `Set.of(...).contains()`；`Map.of` / `List.of` 同样不接受 null。新写检查类逻辑先想「这个字段为 null 时会怎样」 |
 | `curl -f` 对 **HTTP 4xx/5xx 与连不上返回同一个非零码**。`check-daily.sh` 因此把审计接口 500 报成「接口不可达」并 `exit 2`，后面四段一条都不跑；系统真 DOWN 时 actuator 返回 503（项目只把 `DEGRADED` 映射成 200），真故障也被报成「健康接口不可达」 | 用 `-w '%{http_code}'` 把状态码与正文分开取：`000` 判连不上、其余非 200 判接口报错并打出正文，两种都**记下来接着往下跑**；健康接口额外接受 503。注意标志位别写在 `$(...)` 命令替换里——子 shell 里的赋值出不来 |
+| 幽灵 K 线订正的三个数字**曾是三个口径**：审计按 `phantomBars(20).size()` 报条数、试跑按 `phantomBars(200).size()` 列清单、删除按条件**全删**——试跑给你看 200 条、点下去可能删掉几千条。删 K 线要重新回补才能恢复，回补又会把脏 K 线拉回来；日历自身坏掉时全库都会被判成幽灵 | 条数用 `phantomBarCount()`（无上限），清单只当样本；`deletePhantomBars(清单)` **只删列出来的那些**且仍带幽灵条件，一次 200 条、多的下一轮。改仓库层 SQL 必须对 `db_trader_dev` 实测（事务里跑完 ROLLBACK）——单测里仓库是替身，SQL 一行都验不到 |
 | 同一份输入模型立场会摇摆（实测 HWM 连调 4 次：NEUTRAL、BULLISH×3）；OpenAI SDK 的类在 core 模块不可见（optional），Mockito 替身不了引用它的类 | 否决要设门槛（非 LOW + ≥2 条核对通过的证据）；core 只认 `VetoClient` 接口，`com.openai.*` 只在 `OpenAiVetoClient` |
 
 ## 当前状态

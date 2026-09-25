@@ -119,11 +119,17 @@ export const getGaps = async (limit = 50) =>
   (await http.get<GapView[]>('/api/bars/gaps', { params: { limit } })).data
 export const backfillCalendar = async () => (await http.post<{ jobId: number }>('/api/bars/calendar/backfill')).data
 
-/** 落在交易日历之外的 K 线（券商在美股假日给过脏数据）。 */
+/**
+ * 落在交易日历之外的 K 线（券商在美股假日给过脏数据）。
+ * found 是总数，listed（= bars.length）是本次列出、也是本次最多会删的条数，
+ * deleted 只可能是 0 或 listed，remaining 是删完还剩多少——found > listed 时要再跑一轮。
+ */
 export interface PhantomCleanup {
   applied: boolean
   found: number
+  listed: number
   deleted: number
+  remaining: number
   bars: {
     symbol: string
     tradeDate: string
@@ -136,7 +142,7 @@ export interface PhantomCleanup {
   }[]
 }
 
-/** apply 默认 false 只试跑列清单；确认无误后传 true 才真删。 */
+/** apply 默认 false 只试跑列清单；确认无误后传 true 才真删——只删试跑列出来的那些，多的留到下一轮。 */
 export const cleanupPhantomBars = async (apply = false) =>
   (await http.post<PhantomCleanup>('/api/bars/cleanup/phantom', null, { params: { apply } })).data
 export const getJobs = async (limit = 15) => (await http.get<{ running: RunningJob | Record<string, never>; recent: JobRun[] }>('/api/jobs', { params: { limit } })).data

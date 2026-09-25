@@ -103,6 +103,7 @@ class BarAuditServiceTest {
         when(bars.gaps(any(), any(), anyInt())).thenReturn(List.of());
         when(bars.coverageByInstrument()).thenReturn(List.of(
                 new DailyBarRepository.InstrumentCoverage(1L, 5000, LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 9))));
+        when(bars.phantomBarCount()).thenReturn(1);
         when(bars.phantomBars(anyInt())).thenReturn(List.of(new DailyBarRepository.PhantomBar(
                 1L, LocalDate.of(2011, 7, 4), new java.math.BigDecimal("128.24"), new java.math.BigDecimal("129.30"),
                 new java.math.BigDecimal("109.57"), new java.math.BigDecimal("109.57"), 285890054L, java.math.BigDecimal.ZERO)));
@@ -245,5 +246,49 @@ class BarAuditServiceTest {
 
         return new BarAuditService(props(), scope, bars, days, states, jobs, null, Clock.systemUTC())
                 .audit(LocalDate.of(2026, 9, 9));
+    }
+
+    /**
+     * 幽灵 K 线的条数取总数，不能是样本清单的长度。
+     * 3.1.1 前审计报的是 {@code phantomBars(20).size()}：几千条也只报 20，
+     * 而订正那边按条件全删——你按"20 条"做的决定，删掉的是几千条（2026-09-25 全项目审查发现）。
+     */
+    @Test
+    void 幽灵K线条数取总数_不被样本上限截断() {
+        TradingDayRepository days = mock(TradingDayRepository.class);
+        when(days.covers(eq(Market.US), any())).thenReturn(false);
+        when(days.coverage(Market.US)).thenReturn(
+                new TradingDayRepository.Coverage(LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 18), 5051, 2519, 2532));
+        DailyBarRepository bars = mock(DailyBarRepository.class);
+        when(bars.instrumentIdsWithBarOn(any())).thenReturn(Set.of(1L));
+        when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(1, 0, 0, 0, 0, 0));
+        when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
+        when(bars.coverageByInstrument()).thenReturn(List.of(
+                new DailyBarRepository.InstrumentCoverage(1L, 5000, LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 9))));
+        // 日历坏掉的样子：总数几千，样本清单只有 20 条
+        when(bars.phantomBarCount()).thenReturn(5000);
+        List<DailyBarRepository.PhantomBar> samples = new java.util.ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            samples.add(new DailyBarRepository.PhantomBar(1L, LocalDate.of(2011, 7, 4).plusDays(i),
+                    java.math.BigDecimal.ONE, java.math.BigDecimal.ONE, java.math.BigDecimal.ONE,
+                    java.math.BigDecimal.ONE, 0L, java.math.BigDecimal.ZERO));
+        }
+        when(bars.phantomBars(anyInt())).thenReturn(samples);
+        UniverseScope scope = mock(UniverseScope.class);
+        when(scope.universe()).thenReturn(List.of(row(1, "SPY")));
+        when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "SPY")));
+        BarSyncStateRepository states = mock(BarSyncStateRepository.class);
+        when(states.findAll()).thenReturn(List.of());
+        JobRunRepository jobs = mock(JobRunRepository.class);
+        when(jobs.latestOf(any())).thenReturn(Optional.empty());
+
+        BarAuditService.Report r = new BarAuditService(props(), scope, bars, days, states, jobs, null, Clock.systemUTC())
+                .audit(LocalDate.of(2026, 9, 9));
+
+        BarAuditService.Check c = check(r, "phantomBars");
+        assertThat(c.count()).isEqualTo(5000);
+        assertThat(c.detail()).contains("5000 根").contains("一次最多订正 200 条");
+        assertThat(c.samples()).as("样本仍然封顶").hasSize(20);
+        assertThat(r.summary()).containsEntry("phantomBars", 5000);
     }
 }

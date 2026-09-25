@@ -293,14 +293,58 @@ public class DailyBarRepository {
                 Math.max(1, Math.min(limit, 1000)));
     }
 
-    /** 删除幽灵 K 线，返回删除条数。与 {@link #phantomBars} 用同一个条件。 */
-    public int deletePhantomBars() {
+    /**
+     * 一次订正的上限：试跑列多少、订正就删多少。放在这里是因为审计与订正都要提到它，
+     * 而两边本来就都依赖本类——让审计去依赖 {@code MarketDataFacade} 是反向的。
+     */
+    public static final int PHANTOM_BATCH = 200;
+
+    /**
+     * 幽灵 K 线<b>总数</b>，不设上限。{@link #phantomBars} 是带上限的清单，
+     * <b>别拿它的条数当总数</b>——3.1.1 前审计用 {@code phantomBars(20).size()} 当条数、
+     * 订正试跑用 {@code phantomBars(200).size()}，而删除按条件全删：
+     * 三处口径互不相同，你看到 20 条、它可能删几千条（2026-09-25 全项目审查发现）。
+     */
+    public int phantomBarCount() {
+        Integer n = jdbc.queryForObject("""
+                WITH span AS (SELECT min(trade_date) AS lo, max(trade_date) AS hi FROM trading_day WHERE market = 'US')
+                SELECT count(*) FROM daily_bar b, span s
+                WHERE b.trade_date BETWEEN s.lo AND s.hi
+                  AND NOT EXISTS (SELECT 1 FROM trading_day t WHERE t.market = 'US' AND t.trade_date = b.trade_date)""",
+                Integer.class);
+        return n == null ? 0 : n;
+    }
+
+    /**
+     * 只删<b>传进来的这些行</b>，返回删除条数；空清单直接返回 0，不发 SQL。
+     *
+     * <p>不提供"照条件全删"的版本：试跑给你看什么就删什么，多出来的留到下一轮——
+     * 删 K 线要重新回补才能恢复，而回补又会把券商的脏 K 线拉回来（见坑表），所以宁可多跑几轮。
+     * 日历本身坏掉时全库都会被判成幽灵，这时"只删给你看过的那些"就是最后一道闸。
+     *
+     * <p>仍然带上幽灵条件：清单是上一步查出来的，两步之间日历可能被回补过，
+     * 那些行就不再是幽灵了，不能删。
+     */
+    public int deletePhantomBars(List<PhantomBar> targets) {
+        if (targets == null || targets.isEmpty()) {
+            return 0;
+        }
+        StringBuilder values = new StringBuilder();
+        List<Object> args = new java.util.ArrayList<>();
+        for (PhantomBar t : targets) {
+            values.append(values.isEmpty() ? "" : ", ").append("(?::bigint, ?::date)");
+            args.add(t.instrumentId());
+            args.add(java.sql.Date.valueOf(t.tradeDate()));
+        }
         return jdbc.update("""
                 WITH span AS (SELECT min(trade_date) AS lo, max(trade_date) AS hi FROM trading_day WHERE market = 'US')
                 DELETE FROM daily_bar b
                 USING span s
                 WHERE b.trade_date BETWEEN s.lo AND s.hi
-                  AND NOT EXISTS (SELECT 1 FROM trading_day t WHERE t.market = 'US' AND t.trade_date = b.trade_date)""");
+                  AND NOT EXISTS (SELECT 1 FROM trading_day t WHERE t.market = 'US' AND t.trade_date = b.trade_date)
+                  AND EXISTS (SELECT 1 FROM (VALUES %s) AS v(id, d)
+                              WHERE v.id = b.instrument_id AND v.d = b.trade_date)""".formatted(values),
+                args.toArray());
     }
 
     public record PhantomBar(long instrumentId, LocalDate tradeDate, java.math.BigDecimal open, java.math.BigDecimal high,

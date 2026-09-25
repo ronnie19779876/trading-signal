@@ -202,16 +202,18 @@ public class BarAuditService {
                 missingDays, head(gapSamples, 20)));
 
         // 9. 幽灵 K 线：落在日历覆盖区间内却不在日历里的行（券商在美股假日给过脏数据）
-        List<DailyBarRepository.PhantomBar> phantom = bars.phantomBars(20);
-        List<String> phantomSamples = phantom.stream()
+        // 条数取总数，phantomBars(20) 只当样本：拿带上限的清单长度当条数，几千条也只报 20（3.1.2 修）
+        int phantomTotal = bars.phantomBarCount();
+        List<String> phantomSamples = bars.phantomBars(20).stream()
                 .map(p -> symbolOf(targets, p.instrumentId()) + " " + p.tradeDate()
                         + "（收 " + p.close() + "，成交额 " + p.turnover() + "）").toList();
-        summary.put("phantomBars", phantom.size());
-        checks.add(new Check("phantomBars", phantom.isEmpty(), false,
-                phantom.isEmpty() ? "没有落在交易日历之外的 K 线"
-                        : phantom.size() + " 根 K 线落在交易日历之外（券商脏数据），"
-                                + "用 POST /api/bars/cleanup/phantom 先试跑再订正",
-                phantom.size(), head(phantomSamples, 20)));
+        summary.put("phantomBars", phantomTotal);
+        checks.add(new Check("phantomBars", phantomTotal == 0, false,
+                phantomTotal == 0 ? "没有落在交易日历之外的 K 线"
+                        : phantomTotal + " 根 K 线落在交易日历之外（券商脏数据），"
+                                + "用 POST /api/bars/cleanup/phantom 先试跑再订正（一次最多订正 "
+                                + DailyBarRepository.PHANTOM_BATCH + " 条，删完再跑一轮）",
+                phantomTotal, head(phantomSamples, 20)));
 
         // 10. 未落定的 K 线：收盘落定（16:15 ET）前写进来的当天那根，是盘中价。
         // 2.0.2 起写库前按截止日过滤，不会再产生；之前留下的由下一次增量自动重拉覆盖，所以只提示。
