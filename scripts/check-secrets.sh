@@ -53,6 +53,7 @@ patterns=(
     'sk-[A-Za-z0-9_-]{16,}|OpenAI API key'
     '-----BEGIN [A-Z ]*PRIVATE KEY-----|私钥'
     '\b[a-z0-9-]+\.jdkxx\.org\b|私有主机名'
+    'client[-_ ]?id["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"']?[0-9]+|IB client-id 具体值'
     '(password|passwd|pwd|pwd_md5|api[-_]?key|secret|token)[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9][^"'"'"'$#{[:space:]]{5,}|疑似明文口令'
     '(password|passwd|pwd|api[-_]?key|secret|token)[A-Za-z0-9_]*["'"'"'][[:space:]]*(value|content)[[:space:]]*=[[:space:]]*["'"'"'][A-Za-z0-9][^"'"'"'$#{]{5,}|疑似明文口令（属性形式）'
 )

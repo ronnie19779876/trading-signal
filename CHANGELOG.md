@@ -17,8 +17,15 @@
   - 三处项目自有的误报按脚本既有机制加了 `secrets-ok`：两个测试常量 `SECRET`、
     以及 `LocalRequestGuardFilterTest` 里那个 RFC 5737 文档保留地址
     （后者正好证明新逻辑生效——它以前被同一行的 `127.0.0.1.evil.example` 整行豁免掉了）。
-- **仍未覆盖**：`config/secrets.yml.example` 注释里写着 IB client-id 的真实分配值，违反「client-id 一律不入库」，
-  而扫描脚本没有对应模式，本次未动（属另一条发现）。
+- 修复：**入库文件里写着 IB client-id 的真实分配值**，违反 CLAUDE.md 第 4 行「client-id 一律不入库、不进文档、不进注释」。
+  审查只点出了 `config/secrets.yml.example` 一处，实际有 **5 处**：
+  `secrets.yml.example` 的注释、`deploy/config/trader.env.example` 的注释、`docs/OPERATIONS.md` 的集成测试
+  示例命令、`ReconnectIT` 说明、以及故障速查表的「326 撞车」一行。全部换成占位符或「只记在 secrets.yml / trader.env 里」。
+  其中第 5 处（示例命令里的 `TRADER_IBKR_TEST_CLIENT_ID=<数字>`）**是新加的扫描模式当场抓出来的**，人工 grep 没找到。
+- 扫描器新增一条模式「IB client-id 具体值」：`client[-_ ]?id` 后跟 `:` 或 `=` 再跟数字，
+  覆盖 yaml、env、Java 三种写法（探针 4/4）。
+- **仍未覆盖**：集成测试 `IntegrationEnv.envInt("TRADER_IBKR_TEST_CLIENT_ID", 91)` 的默认值 91 写在方法参数里，
+  新模式抓不到（它只认赋值形式）。那是功能性默认值，改动会影响集成测试的用法，**未动**。
 
 ## 3.1.1（2026-09-24 发布）
 
