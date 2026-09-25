@@ -154,7 +154,8 @@ const lastUpdate = computed(() => {
         <span>应计股息 <b class="num">{{ money(view.snapshot.accruedDividend) }}</b></span>
         <span>已实现盈亏 <b class="num" :class="trend(view.snapshot.realizedPnl)">{{ signed(view.snapshot.realizedPnl) }}</b></span>
         <span v-if="view.change">持仓价差 <b class="num" :class="trend(view.change.positionPnl)">{{ signed(view.change.positionPnl) }}</b>
-          <el-tag v-if="view.change.positionsChanged" size="small" type="info" class="approx">有买卖，近似</el-tag></span>
+          <el-tag v-if="view.change.positionsChanged" size="small" type="info" class="approx"
+            :title="`${view.change.excludedPositions} 只数量变过（买卖或拆股/合股），未计入`">数量变过，近似</el-tag></span>
         <a class="toggle" @click="more = !more">{{ more ? '收起' : '更多' }}</a>
         <template v-if="more">
           <span>购买力 <b class="num">{{ money(view.snapshot.buyingPower) }}</b></span>

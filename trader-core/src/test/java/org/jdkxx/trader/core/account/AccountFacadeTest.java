@@ -71,17 +71,41 @@ class AccountFacadeTest {
         assertThat(c.netLiquidationChange()).isEqualByComparingTo("60");
         assertThat(c.positionPnl()).isEqualByComparingTo("60");   // 10×5 + 5×2
         assertThat(c.positionsChanged()).isFalse();
+        assertThat(c.excludedPositions()).isZero();
     }
 
+    /**
+     * 数量变过的不计入：拆股/合股与买卖在快照里长得一样，而拆股当天数量与价格同时按比例变。
+     * 原先算的是「上一份数量 × 价差」，A 从 10 股变 8 股仍按 10 股乘价差记 50——
+     * 卖掉的那 2 股的价差也算进去了，而拆股时错得更离谱（见下一条）。
+     */
     @Test
-    void 日变化_当天有买卖或缺价时标近似且缺价不计() {
+    void 日变化_数量变过与缺价的都不计_并报出排除条数() {
         AccountFacade.DailyChange c = AccountFacade.change(
                 snapshot(LocalDate.of(2026, 9, 11), "10000"), java.util.List.of(position("A", "10", "100"), position("B", "5", "20")),
                 snapshot(LocalDate.of(2026, 9, 14), "9000"), java.util.List.of(position("A", "8", "105"), position("B", "5", null),
                         position("C", "1", "50")));
 
-        assertThat(c.positionPnl()).isEqualByComparingTo("50");   // 只算 A：昨日 10 × 5
+        assertThat(c.positionPnl()).as("A 数量变过、B 缺价、C 是新开的，一条都算不了").isEqualByComparingTo("0");
         assertThat(c.positionsChanged()).isTrue();
+        assertThat(c.excludedPositions()).as("A 与 C").isEqualTo(2);
+    }
+
+    /**
+     * 拆股当天不能给出量级级别的错数（2026-09-25 全项目审查发现）。
+     * 3:1 拆股：10 股 @300 → 30 股 @100，市值没变。
+     * 旧算法给 10 × (100 − 300) = <b>−2000</b>，还标成「当天有买卖」，把拆股误导成交易。
+     */
+    @Test
+    void 日变化_拆股当天不再给出量级错数() {
+        AccountFacade.DailyChange c = AccountFacade.change(
+                snapshot(LocalDate.of(2026, 9, 11), "3000"), java.util.List.of(position("A", "10", "300")),
+                snapshot(LocalDate.of(2026, 9, 14), "3000"), java.util.List.of(position("A", "30", "100")));
+
+        assertThat(c.netLiquidationChange()).as("净值本来就没变").isEqualByComparingTo("0");
+        assertThat(c.positionPnl()).as("不是 -2000").isEqualByComparingTo("0");
+        assertThat(c.positionsChanged()).isTrue();
+        assertThat(c.excludedPositions()).isEqualTo(1);
     }
 
     @Test

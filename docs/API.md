@@ -135,7 +135,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | 方法与路径 | 说明 |
 | --- | --- |
 | `POST /api/account/snapshot?force=false` | 账户快照作业：持仓 + 资金汇总 + 按收盘价估值 + 对账。**只能在快照窗口内拍**（交易日美东 16:15 至次日 04:00），窗口外 409——盈透只给当前持仓，过去的日子补不回来。`force=true` 只在开发环境可用，按最近一个已收盘交易日口径拍，用于验证 |
-| `GET /api/account/snapshots/latest` | 最新一份快照：`snapshot`（资金、本系统估值 `positionValue`、`reconStatus`、`recon` 各项明细）+ `positions` + `change`（与上一份快照相比：`netLiquidationChange` 含出入金；`positionPnl` = Σ 两份都持有的 上一份数量 × 价差；`positionsChanged=true` 表示当天有买卖，只是近似；没有上一份时为 null）；还没有 → 404 |
+| `GET /api/account/snapshots/latest` | 最新一份快照：`snapshot`（资金、本系统估值 `positionValue`、`reconStatus`、`recon` 各项明细）+ `positions` + `change`（与上一份快照相比：`netLiquidationChange` 含出入金；`positionPnl` = Σ 两份快照**数量相同**的持仓 数量 × 价差——数量变过的一律不计，条数记在 `excludedPositions`（拆股/合股与买卖在快照里长得一样，而拆股当天数量与价格同时按比例变，按旧口径 3:1 拆股会给出 `10 × (100 − 300) = −2000` 这种量级错数，3.1.2 修）；`positionsChanged=true` 表示持仓集合或数量变过（买卖，或拆股/合股），只是近似；没有上一份时为 null）；还没有 → 404 |
 | `GET /api/account/snapshots?from&to` | 快照序列（默认最近 90 天），不含持仓明细 |
 | `POST /api/account/holdings/sync?apply=false` | 按盈透持仓维护池里的 HOLDING。默认只返回计划（`plan.changes` 的 `ADD` / `PROMOTE` / `RETURN_TO_POOL` / `REMOVE`），`apply=true` 才改池，并触发实时订阅对账与深度回补；盈透返回空持仓而池里还有 HOLDING 时不执行（`plan.blocked`）；盈透未连接 → 503 |
 | `GET /api/account/audit?date=` | 账户审计（收盘巡检第三段），默认审最近一个已收盘交易日：当天快照是否存在（美东 18:30 前、或从来没有过快照即刚启用时，缺快照只提示）、对账状态（FAIL 为关键项，WARN 只提示）、缺价、最近一次快照作业；休市日直接判过 |

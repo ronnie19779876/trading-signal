@@ -334,8 +334,11 @@ ENDPOINTS = [
                                         'pm.test("账户号只给脱敏形式", () => pm.expect(String(body.accountMask ?? "")).to.not.match(/U\\d{5,}/));',
                                         'pm.test("positions 是数组", () => pm.expect(body.positions).to.be.an("array"));']},
             {"name": "最新账户快照", "method": "GET", "path": "/api/account/snapshots/latest",
-             "desc": "资金、本系统估值、对账明细与持仓（priceSource：BAR/SNAPSHOT/NONE）。账户号只给脱敏形式。还没有快照 → 404。",
-             "tests": ['pm.test("HTTP 200 或 404（还没有快照）", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));']},
+             "desc": "资金、本系统估值、对账明细与持仓（priceSource：BAR/SNAPSHOT/NONE）。账户号只给脱敏形式。还没有快照 → 404。"
+                     "change.positionPnl 只累加两份快照数量相同的持仓，数量变过的（买卖或拆股/合股）不计、条数在 change.excludedPositions。",
+             "tests": ['pm.test("HTTP 200 或 404（还没有快照）", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));',
+                       'if (pm.response.code === 200 && pm.response.json().change) { pm.test("change 带排除条数", () => '
+                       'pm.expect(pm.response.json().change.excludedPositions).to.be.a("number")); }']},
             {"name": "快照序列", "method": "GET", "path": "/api/account/snapshots", "query": [{"key": "from", "value": "2026-09-01"}, {"key": "to", "value": "2026-09-30"}],
              "desc": "默认最近 90 天，不含持仓明细。",
              "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},

@@ -57,8 +57,18 @@ public class SignalLedgerService {
         this.days = days;
     }
 
+    /**
+     * 把未平仓的纸面账本算到 {@code through}。
+     *
+     * <p><b>只往前走，不往回退</b>（3.1.2 修）：已经算到更晚日期的条目跳过。
+     * 补跑（BACKFILL）传进来的是<b>补跑那天</b>，而未平仓账本平时是按最新交易日在算的——
+     * 原先无条件重算，一次对 09-17 的补跑会把所有未平仓条目的状态整体回退到 09-17，
+     * 把 09-18~今天之间的持有过程、甚至已经发生的平仓一起抹掉（{@code updatedThrough} 也跟着退回去）；
+     * 而这条路径每晚 22:00 的补偿检查都可能走到（2026-09-25 全项目审查发现）。
+     */
     public Summary update(LocalDate through) {
         Map<Long, List<SignalTrackRow>> bySignal = tracks.unfinished().stream()
+                .filter(t -> t.updatedThrough() == null || t.updatedThrough().isBefore(through))
                 .collect(Collectors.groupingBy(SignalTrackRow::signalId, LinkedHashMap::new, Collectors.toList()));
         int updated = 0;
         int closed = 0;

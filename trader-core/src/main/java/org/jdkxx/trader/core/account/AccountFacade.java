@@ -29,11 +29,12 @@ public class AccountFacade {
      * 与同一账户上一份快照相比的变化，查询时现算、不落库。
      *
      * @param netLiquidationChange 净值变化，<b>含出入金</b>（第 3 期不区分）
-     * @param positionPnl          Σ 两份快照都持有的 上一份数量 × (本次价格 − 上次价格)；缺价的不计
-     * @param positionsChanged     持仓集合或数量变过：当天有买卖，positionPnl 只是近似
+     * @param positionPnl          Σ <b>两份快照数量相同</b>的持仓 数量 × (本次价格 − 上次价格)；缺价的不计
+     * @param positionsChanged     持仓集合或数量变过（买卖，或拆股/合股），positionPnl 只是近似
+     * @param excludedPositions    因数量变过而没有计入 positionPnl 的持仓条数
      */
     public record DailyChange(LocalDate previousDate, BigDecimal netLiquidationChange, BigDecimal positionPnl,
-                              boolean positionsChanged) {
+                              boolean positionsChanged, int excludedPositions) {
     }
 
     public record SnapshotView(AccountSnapshotRow snapshot, List<PositionSnapshotRow> positions, DailyChange change) {
@@ -96,19 +97,28 @@ public class AccountFacade {
         prevPositions.forEach(p -> before.put(p.brokerRef(), p));
         BigDecimal pnl = BigDecimal.ZERO;
         boolean changed = prevPositions.size() != curPositions.size();
+        int excluded = 0;
         for (PositionSnapshotRow c : curPositions) {
             PositionSnapshotRow p = before.get(c.brokerRef());
             if (p == null) {
                 changed = true;
+                excluded++;
                 continue;
             }
+            // 数量变过就不算这一只：拆股/合股与买卖在快照里长得一样，而拆股当天数量与价格<b>同时</b>按比例变，
+            // 原先的「上一份数量 × 价差」会给出量级级别的错数（3:1 拆股：10 × (100 − 300) = −2000），
+            // 还被标成「当天有买卖」，把拆股误导成交易（2026-09-25 全项目审查发现）。
+            // daily_bar 一律不复权、券商返回的是拆后数量，这里没有能把两者对齐的信息——
+            // 与其猜，不如不算，并把排除掉几条如实报出来。
             if (p.quantity().compareTo(c.quantity()) != 0) {
                 changed = true;
+                excluded++;
+                continue;
             }
             if (p.price() != null && c.price() != null) {
                 pnl = pnl.add(p.quantity().multiply(c.price().subtract(p.price())));
             }
         }
-        return new DailyChange(prev.asOfDate(), nav, pnl.setScale(4, RoundingMode.HALF_UP), changed);
+        return new DailyChange(prev.asOfDate(), nav, pnl.setScale(4, RoundingMode.HALF_UP), changed, excluded);
     }
 }

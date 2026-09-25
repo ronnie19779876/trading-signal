@@ -61,12 +61,18 @@ export interface PositionSnapshot {
   cashEquivalent: boolean
 }
 
-/** 与上一份快照相比。netLiquidationChange 含出入金；positionsChanged=true 表示当天有买卖，positionPnl 只是近似。 */
+/**
+ * 与上一份快照相比。netLiquidationChange 含出入金。
+ * positionPnl 只累加两份快照里<b>数量相同</b>的持仓——拆股/合股与买卖在快照里长得一样，
+ * 数量变过的无法归因（拆股当天数量与价格同时按比例变），一律不计，条数记在 excludedPositions。
+ * positionsChanged=true 表示持仓集合或数量变过（买卖，或拆股/合股）。
+ */
 export interface DailyChange {
   previousDate: string
   netLiquidationChange: number | null
   positionPnl: number | null
   positionsChanged: boolean
+  excludedPositions: number
 }
 
 export interface SnapshotView {

@@ -2789,7 +2789,7 @@
                 "latest"
               ]
             },
-            "description": "资金、本系统估值、对账明细与持仓（priceSource：BAR/SNAPSHOT/NONE）。账户号只给脱敏形式。还没有快照 → 404。"
+            "description": "资金、本系统估值、对账明细与持仓（priceSource：BAR/SNAPSHOT/NONE）。账户号只给脱敏形式。还没有快照 → 404。change.positionPnl 只累加两份快照数量相同的持仓，数量变过的（买卖或拆股/合股）不计、条数在 change.excludedPositions。"
           },
           "event": [
             {
@@ -2797,7 +2797,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"HTTP 200 或 404（还没有快照）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+                  "pm.test(\"HTTP 200 或 404（还没有快照）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));",
+                  "if (pm.response.code === 200 && pm.response.json().change) { pm.test(\"change 带排除条数\", () => pm.expect(pm.response.json().change.excludedPositions).to.be.a(\"number\")); }"
                 ]
               }
             }

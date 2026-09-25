@@ -103,7 +103,7 @@ public class AccountSnapshotService {
         List<Position> held = all.stream().filter(p -> p.quantity().signum() != 0).toList();
 
         ctx.progress("按 " + asOf + " 收盘估值 " + held.size() + " 条持仓");
-        List<ValuedPosition> valued = value(held, asOf, now);
+        List<ValuedPosition> valued = value(held, asOf, now);   // 注意：下面的持仓同步可能建档，建完要重解析 id
 
         String syncNote = "";
         if (holdingSync != null) {
@@ -119,6 +119,7 @@ public class AccountSnapshotService {
                 syncNote = "；持仓同步失败：" + e.getMessage();
                 ctx.partial("持仓同步失败");
             }
+            valued = resolveNewlyCreated(valued);
         }
 
         List<PoolRow> members = pool.findAll();
@@ -148,6 +149,39 @@ public class AccountSnapshotService {
         }
         return "账户快照 " + asOf + "（" + mask + "）：持仓 " + held.size() + " 条，价格 " + sources(valued)
                 + "，对账 " + r.status() + "；" + r.brief() + syncNote;
+    }
+
+    /**
+     * 持仓同步可能给库里没有的代码建档（它会向富途解析后建）。而 {@code valued} 是<b>建档之前</b>算的，
+     * 那些持仓的 {@code instrumentId} 还是 null，继续拿它往下走会（2026-09-25 全项目审查发现）：
+     * <ul>
+     *   <li>对账把同一只标的<b>同时</b>报成「库里没有的持仓」和「池里标了 HOLDING 但已不持有」
+     *       ——前者看 valued 里的 null，后者看池里刚加进去的那个 id，两边对不上；</li>
+     *   <li>快照判 WARN、作业判 PARTIAL；</li>
+     *   <li>{@code position_snapshot.instrument_id} <b>永久</b>存成 NULL，事后再也关联不上。</li>
+     * </ul>
+     * 所以建档之后要把还是 null 的那些重解析一遍。
+     * {@code AccountPositions.instrumentId} 找到后会顺手把 conId 绑上，下次按 conId 直接命中。
+     */
+    private List<ValuedPosition> resolveNewlyCreated(List<ValuedPosition> valued) {
+        if (valued.stream().noneMatch(v -> v.instrumentId() == null)) {
+            return valued;
+        }
+        List<ValuedPosition> out = new ArrayList<>(valued.size());
+        for (ValuedPosition v : valued) {
+            if (v.instrumentId() != null) {
+                out.add(v);
+                continue;
+            }
+            Long id = source.instrumentId(v.position());
+            if (id == null) {
+                out.add(v);
+                continue;
+            }
+            log.info("{} 在持仓同步中建档，重解析得到 instrumentId={}", v.symbol(), id);
+            out.add(new ValuedPosition(v.position(), id, v.price(), v.priceSource(), v.cashEquivalent()));
+        }
+        return out;
     }
 
     private LocalDate latestSettledTradingDay(ZonedDateTime now) {

@@ -213,6 +213,47 @@ class AccountSnapshotServiceTest {
         assertThat(header.getValue().reconStatus()).isEqualTo("OK");
     }
 
+    /**
+     * 持仓同步给库里没有的代码建档后，valued 里的 instrumentId 必须重解析。
+     *
+     * <p>3.1.1 前不重解析（2026-09-25 全项目审查发现）：valued 是建档<b>之前</b>算的，
+     * 于是同一只标的被对账同时报成「库里没有的持仓」（看 valued 里的 null）和
+     * 「池里标了 HOLDING 但已不持有」（看池里刚加进去的 id），快照判 WARN、作业判 PARTIAL，
+     * 而且 position_snapshot.instrument_id <b>永久</b>存成 NULL，事后再也关联不上。
+     */
+    @SuppressWarnings("unchecked")
+    @Test
+    void 持仓同步建档后重解析instrumentId_不再误报成两处对账问题() throws Exception {
+        HoldingSyncService sync = mock(HoldingSyncService.class);
+        when(sync.syncFromSnapshot(any())).thenReturn(new HoldingSyncService.Result(true,
+                new HoldingSyncService.Plan(List.of(), List.of(), null), List.of(), "加入 NEWCO"));
+        when(days.between(eq(Market.US), any(), any())).thenReturn(List.of(LocalDate.of(2026, 9, 11), MON));
+        when(accounts.positions(ACCT)).thenReturn(completedFuture(List.of(pos("NEWCO", "1777", "10", "9"))));
+        when(accounts.accountSummary(ACCT)).thenReturn(completedFuture(summary("1050", "50", "1000", "0")));
+        // 建档前查不到，同步建档之后才查得到——正是这次同步新建的那一只
+        when(instruments.find(Instrument.us("NEWCO"))).thenReturn(Optional.empty(), Optional.of(row(42, "NEWCO")));
+        when(instruments.bindIbkrConId(42L, 1777L)).thenReturn(true);
+        when(bars.closesOn(eq(MON), any())).thenReturn(Map.of());
+        when(market.snapshots(anyList())).thenReturn(completedFuture(List.of(
+                snap("NEWCO", Instant.parse("2026-09-14T20:00:00Z"), "100"))));
+        when(pool.findAll()).thenReturn(List.of(new PoolRow(42, PoolRole.HOLDING, null, Instant.EPOCH)));
+        when(instruments.findByIds(any())).thenReturn(List.of(row(42, "NEWCO")));
+
+        service(SECRET, AT_18_ET, null, sync).run(ctx, false);
+
+        ArgumentCaptor<AccountSnapshotRow> header = ArgumentCaptor.forClass(AccountSnapshotRow.class);
+        ArgumentCaptor<List<PositionSnapshotRow>> rows = ArgumentCaptor.forClass(List.class);
+        verify(snapshots).save(header.capture(), any(), any(), rows.capture());
+
+        assertThat(rows.getValue()).extracting(PositionSnapshotRow::symbol, PositionSnapshotRow::instrumentId)
+                .as("建档后的 id 必须落库，否则这一行永远关联不上标的")
+                .containsExactly(tuple("NEWCO", 42L));
+        assertThat(header.getValue().reconStatus())
+                .as("不该再同时报「库里没有的持仓」和「池里 HOLDING 却不持有」").isEqualTo("OK");
+        verify(ctx, never()).partial(anyString());
+        verify(instruments).bindIbkrConId(42L, 1777L);
+    }
+
     @Test
     void 快照里先按持仓同步HOLDING再对账_对账读到的是同步后的池() throws Exception {
         HoldingSyncService sync = mock(HoldingSyncService.class);
