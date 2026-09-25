@@ -129,6 +129,10 @@ storage → common ；ai → common
 | `Set.of(...).contains(null)` **抛 NPE**。信号审计的 `signalConsistency` 就栽在这里：跳过的评估 `outcome` 落库为 NULL，而这条检查存在的意义恰恰是报「信号还在、结论已变」，最常见的那种不一致（评估重跑成 SKIPPED）正好让它崩，`GET /api/signals/audit` 500、巡检第五段跟着挂 | 判定可空字段用逐个 `equals`，别用 `Set.of(...).contains()`；`Map.of` / `List.of` 同样不接受 null。新写检查类逻辑先想「这个字段为 null 时会怎样」 |
 | `curl -f` 对 **HTTP 4xx/5xx 与连不上返回同一个非零码**。`check-daily.sh` 因此把审计接口 500 报成「接口不可达」并 `exit 2`，后面四段一条都不跑；系统真 DOWN 时 actuator 返回 503（项目只把 `DEGRADED` 映射成 200），真故障也被报成「健康接口不可达」 | 用 `-w '%{http_code}'` 把状态码与正文分开取：`000` 判连不上、其余非 200 判接口报错并打出正文，两种都**记下来接着往下跑**；健康接口额外接受 503。注意标志位别写在 `$(...)` 命令替换里——子 shell 里的赋值出不来 |
 | 幽灵 K 线订正的三个数字**曾是三个口径**：审计按 `phantomBars(20).size()` 报条数、试跑按 `phantomBars(200).size()` 列清单、删除按条件**全删**——试跑给你看 200 条、点下去可能删掉几千条。删 K 线要重新回补才能恢复，回补又会把脏 K 线拉回来；日历自身坏掉时全库都会被判成幽灵 | 条数用 `phantomBarCount()`（无上限），清单只当样本；`deletePhantomBars(清单)` **只删列出来的那些**且仍带幽灵条件，一次 200 条、多的下一轮。改仓库层 SQL 必须对 `db_trader_dev` 实测（事务里跑完 ROLLBACK）——单测里仓库是替身，SQL 一行都验不到 |
+| 「文件不存在就 return」式的守护测试，文件一改名就<b>永久绿灯且毫无迹象</b>：`PoolRoleCoverageTest` 盯的页面在 3.0.6 改版里被删，一条断言没跑过 | 分清两种情况：整棵源码树不在（单独构建）才跳过；树在而文件不在直接判失败（`FrontendSources`）。同理，测试替身如果把某个分支变成**构造上不可达**（`FakeWire.now()` 返回定值 → `MAX_AGE` 永远触发不了），那个分支等于没测 |
+| 1101（连接恢复、订阅数据丢失）**不换会话对象**：`subscribed()` 仍为 true，短路式的 `subscribe()` 既不取消也不重发，而券商那边订阅已经丢了——资金数据冻结到下次真断线，快照 FAILED 而页面状态还是 LIVE | 连接恢复的两种情形（断线重连 / 1101）都要传进 `subscribe(afterRecovery)`；真断线重连会话已换、走老路径。代价：这次重订再占一个名额且名额不释放，同一连接周期内第二次 1101 会被 322 拒。**生产至今没发生过 1101，未经真实数据验证** |
+| `curl -f`、`Set.of().contains(null)`、`Map.copyOf` 丢顺序、`usePager` 按引用重置页码、自递归 `setTimeout` 没有运行守卫——这类「库/惯用法的隐含语义」踩了五次 | 分别见各自条目。共同点：**javadoc 写的与实现做的不一致时，以实现为准**；新写判定逻辑先问「这个字段为 null / 为 0 / 引用变了会怎样」 |
+| 仓库层 SQL <b>单测一行都验不到</b>（仓库是替身），3.1.1 的 `peMedian` 与这轮的深度回退、缺口过滤、连续性窗口都是这么漏的 | 改仓库层 SQL 必须对 `db_trader_dev` 实测：`BEGIN` → 造数据 → 跑新语句 → 断言 → `ROLLBACK`。开发库里没有能区分新旧口径的数据时，**造一条**（例如把某根 K 线的 `last_close` 改坏）再比对，否则「两边都是 0」什么也证明不了 |
 | 同一份输入模型立场会摇摆（实测 HWM 连调 4 次：NEUTRAL、BULLISH×3）；OpenAI SDK 的类在 core 模块不可见（optional），Mockito 替身不了引用它的类 | 否决要设门槛（非 LOW + ≥2 条核对通过的证据）；core 只认 `VetoClient` 接口，`com.openai.*` 只在 `OpenAiVetoClient` |
 
 ## 当前状态
@@ -146,6 +150,9 @@ storage → common ；ai → common
 **3.0.9 验证通过（09-24 收盘后）**：跨过两次 03:45 网关重启、两轮「闲置退订 → 再读」、两次每日快照，两个交易日日志里 322 零次、ERROR 零行。
 **3.0.10 已在生产**：账户盈亏核对扣掉账户级已实现，修「当天只要有平仓、当日盈亏就整天空着」；核对不通过时把五个数字写进日志。**注意：扣除已实现那条新路径还没被真实数据验证过**（部署当天 `realized`=0，证明的是零回归），要等下一个有平仓的交易日看新日志。
 **第 5 期「分部估值 SOTP」3.1.0（ARCHITECTURE §21）已在生产**：按业务线拆开估值，量×价→净利→×本益比，加目标年净现金除以股数再折回基准日；V13 建 `sotp_model`，5 条接口，基本面页新增面板。**不预测、不给建议，也不参与入场信号与纸面账本。**
+**3.1.2 开发中（未发布）**：全项目审查清单清空——30 项逐条修完（守护测试失效 7、账户与信号 3、存储与作业 6、网关并发 2、AI 与估值 4、REST 与前端 5、运维文档 1，另 1 项证伪），
+外加成分股同步下限保护、幽灵 K 线口径统一、`check-secrets.sh` 两个漏报、`check-daily.sh` 把 500 当不可达。详见 CHANGELOG。
+**接口有变，Postman 集合需重新导入**；`GET /api/account/live` 起要带 `X-Trader-Client`。
 **3.1.1 已在生产**：修 `peMedian` 对「一条正 PE 都没有」的标的返回 500（SPY / QQQ 这类真 ETF）——RowMapper 用 null 当哨兵值，`findFirst()` 在 `Optional.of(null)` 上抛 NPE。**单测抓不到，仓库是替身。**
 每一期的设计决策、实测结论与已知边界都在
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~19 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。

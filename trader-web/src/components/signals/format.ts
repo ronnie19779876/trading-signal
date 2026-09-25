@@ -10,9 +10,16 @@ type TagType = 'primary' | 'success' | 'warning' | 'danger' | 'info'
 export const GATE_LABEL: Record<Gate, string> = { TREND: '趋势', LOCATION: '定位', TRIGGER: '触发', RISK: '风控' }
 export const GATES: Gate[] = ['TREND', 'LOCATION', 'TRIGGER', 'RISK']
 
+/**
+ * 展示用：含 PENDING_AI。它是<b>回放接口里的中间态</b>，落库的评估行永远不会是这个值。
+ * 所以筛选下拉不能按这张表全量生成——选中「待 AI」必定零结果
+ * （2026-09-25 全项目审查发现）。筛选用 {@link OUTCOME_FILTERS}。
+ */
 export const OUTCOME_LABEL: Record<Outcome | 'PENDING_AI', string> = {
   SIGNAL: '信号', NO_SIGNAL: '未触发', SUPPRESSED_EDGE: '边沿抑制', SUPPRESSED_COOLDOWN: '冷却抑制', BLOCKED_BY_AI: 'AI 否决', PENDING_AI: '待 AI',
 }
+/** 真的会落库、因而能筛出东西的结果。 */
+export const OUTCOME_FILTERS: Outcome[] = ['SIGNAL', 'NO_SIGNAL', 'SUPPRESSED_EDGE', 'SUPPRESSED_COOLDOWN', 'BLOCKED_BY_AI']
 export const STATUS_LABEL: Record<EvaluationStatus, string> = {
   EVALUATED: '已判定', SKIPPED_INSUFFICIENT_BARS: 'K 线不足', SKIPPED_STALE_DATA: '数据过期', SKIPPED_DATA_GAP: '缺交易日',
   SKIPPED_CORPORATE_ACTION: '公司行动口径',

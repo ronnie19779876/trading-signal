@@ -62,7 +62,7 @@ const rehabHint = computed(() => `对全量 ${universeSize.value ?? '—'} 只�
 
 const kinds = computed(() => [...new Set(jobs.value.map((j) => j.job))].sort((a, b) => jobLabel(a).localeCompare(jobLabel(b), 'zh')))
 const filtered = computed(() => jobs.value.filter((j) => !kind.value || j.job === kind.value))
-const { page, pageSize, paged, total } = usePager(filtered)
+const { page, pageSize, paged, total } = usePager(filtered, 20, [kind])
 </script>
 
 <template>

@@ -7,6 +7,7 @@ import HoldingsPanel, { type HoldingRow } from '../components/dash/HoldingsPanel
 import EvaluationDrawer from '../components/signals/EvaluationDrawer.vue'
 import { useMarketClock } from '../composables/useMarketClock'
 import { useLiveAccount } from '../composables/useLiveAccount'
+import { auditCheckLabel } from '../lib/audit'
 import { daysAgoEt, errMsg, isoEt } from '../lib/format'
 import { accountApi, type AccountSnapshot, type AuditReport, type SnapshotView } from '../api/account'
 import { signalsApi, type EvaluationRow } from '../api/signals'
@@ -198,21 +199,33 @@ const problems = computed(() =>
 // ---- 刷新节奏：页面切到后台即暂停 ----
 let dailyTimer = 0
 let quoteTimer = 0
+/**
+ * 报价轮询是「自递归 setTimeout」，必须有个「还在运行吗」的守卫。
+ * 没有守卫时：请求在途中调用 stop()，stop 只清掉当前那个 timer，
+ * 而回调在请求返回后照样调 scheduleQuotes() 把链条重新排起来——
+ * 此后这条链再也没人清得掉，页面切到后台仍在打请求，离开页面也一样
+ * （2026-09-25 全项目审查发现）。
+ */
+let running = false
 function scheduleQuotes() {
   window.clearTimeout(quoteTimer)
+  if (!running) return
   const active = session.value !== 'CLOSED' && quotes.value.size > 0
   quoteTimer = window.setTimeout(async () => {
+    if (!running) return
     await loadQuotes()
     scheduleQuotes()
   }, active ? 5_000 : 60_000)
 }
 function start() {
+  running = true
   void loadDaily()
   startLive()
   void loadQuotes().then(scheduleQuotes)
   dailyTimer = window.setInterval(loadDaily, 5 * 60_000)
 }
 function stop() {
+  running = false
   window.clearInterval(dailyTimer)
   window.clearTimeout(quoteTimer)
   stopLive()
@@ -244,7 +257,7 @@ function openCandidate(symbol: string) {
     <div v-if="problems.length" class="banner">
       <b>需要处理</b>
       <span v-for="c in problems" :key="c.from + c.name" class="banner__item" :class="{ 'banner__item--critical': c.critical }">
-        {{ c.from }} · {{ c.name }}：{{ c.detail }}
+        {{ c.from }} · {{ auditCheckLabel(c.name) }}：{{ c.detail }}
       </span>
     </div>
 

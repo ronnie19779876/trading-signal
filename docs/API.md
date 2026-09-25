@@ -9,6 +9,8 @@
 - `Host` 的主机名必须是 `localhost` / `127.0.0.1` / `[::1]`（端口不限，隧道的本地端口可以与服务端口不同），否则 403 `REQUEST_REJECTED`；
 - 非 GET / HEAD / OPTIONS 的请求必须带请求头 `X-Trader-Client`（值任意：前端 `web`、脚本 `script`、Postman 集合 `postman`），否则 403。
   手工调写接口：`curl -X POST -H 'X-Trader-Client: cli' http://127.0.0.1:8083/api/...`。
+- **有副作用的 GET 同样要带**（3.1.2 起）：目前只有 `GET /api/account/live`——它会真的向盈透发起常驻订阅并刷新闲置计时，
+  「GET 不改状态」对它不成立，属于可被跨站 GET 触发的副作用。前端 axios 与 Postman 集合是实例/集合级默认头，所有请求都带，不受影响。
 
 ## GET /api/system/info
 
@@ -139,7 +141,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | `GET /api/account/snapshots?from&to` | 快照序列（默认最近 90 天），不含持仓明细 |
 | `POST /api/account/holdings/sync?apply=false` | 按盈透持仓维护池里的 HOLDING。默认只返回计划（`plan.changes` 的 `ADD` / `PROMOTE` / `RETURN_TO_POOL` / `REMOVE`），`apply=true` 才改池，并触发实时订阅对账与深度回补；盈透返回空持仓而池里还有 HOLDING 时不执行（`plan.blocked`）；盈透未连接 → 503 |
 | `GET /api/account/audit?date=` | 账户审计（收盘巡检第三段），默认审最近一个已收盘交易日：当天快照是否存在（美东 18:30 前、或从来没有过快照即刚启用时，缺快照只提示）、对账状态（FAIL 为关键项，WARN 只提示）、缺价、最近一次快照作业；休市日直接判过 |
-| `GET /api/account/live` | **实时账户**（3.0.2）：盈透常驻订阅，只读内存、不落库。**按需**：第一次读发起订阅（`status=WARMING`，通常 2 秒内到齐），5 分钟没人读自动退订。字段见下 |
+| `GET /api/account/live` | **实时账户**（3.0.2）：盈透常驻订阅，只读内存、不落库。**按需**：第一次读发起订阅（`status=WARMING`，通常 2 秒内到齐），5 分钟没人读自动退订。字段见下。**这是唯一一个要带 `X-Trader-Client` 的 GET**（3.1.2 起）——它真的会向盈透发起订阅并刷新闲置计时，「GET 不改状态」对它不成立，不带头是 403 |
 
 实时账户 `GET /api/account/live` 的字段。**全部是盈透原值，不做任何折算**（3.0.3 起；与盈透 App 一致），各部分自带更新时间，本来就不同步：
 - `status`：`LIVE` 数据在推送；`WARMING` 刚订阅；`DISCONNECTED` 网关断了，保留断线前最后收到的数据；`UNAVAILABLE` 取不到（网关未启用 / 未连接 / 选不出账户），`detail` 说明原因。

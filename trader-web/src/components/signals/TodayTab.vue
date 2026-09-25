@@ -8,7 +8,7 @@ import SignalDetailDrawer from './SignalDetailDrawer.vue'
 import { usePager } from '../../composables/usePager'
 import { sectorCn } from '../../lib/sector'
 import {
-  GATES, GATE_LABEL, OUTCOME_LABEL, ROLE_LABEL, SIGNAL_STATUS_LABEL, SIGNAL_STATUS_TYPE, STANCE_LABEL, STANCE_TYPE, STATUS_LABEL,
+  GATES, GATE_LABEL, OUTCOME_FILTERS, OUTCOME_LABEL, ROLE_LABEL, SIGNAL_STATUS_LABEL, SIGNAL_STATUS_TYPE, STANCE_LABEL, STANCE_TYPE, STATUS_LABEL,
   TRACK_LABEL, errMsg, num, pct,
 } from './format'
 
@@ -99,7 +99,7 @@ const filtered = computed(() =>
     .filter((r) => !gate.value || r.firstBlockingGate === (gate.value as Gate))
     .sort((a, b) => b.gatesPassed - a.gatesPassed || a.symbol.localeCompare(b.symbol)),
 )
-const { page, pageSize, paged, total } = usePager(filtered)
+const { page, pageSize, paged, total } = usePager(filtered, 20, [outcome, gate])
 
 function openEval(row: EvaluationRow) {
   picked.value = row
@@ -188,7 +188,7 @@ defineExpose({ load })
         <span class="panel__src">过门多的在前；点一行看当天的四门判定过程</span>
         <span class="panel__grow" />
         <el-select v-model="outcome" size="small" clearable placeholder="结果 / 状态" style="width: 140px">
-          <el-option v-for="(label, k) in OUTCOME_LABEL" :key="k" :label="label" :value="k" />
+          <el-option v-for="k in OUTCOME_FILTERS" :key="k" :label="OUTCOME_LABEL[k]" :value="k" />
           <el-option v-for="(label, k) in STATUS_LABEL" :key="k" :label="label" :value="k" />
         </el-select>
         <el-select v-model="gate" size="small" clearable placeholder="卡在哪道门" style="width: 130px">

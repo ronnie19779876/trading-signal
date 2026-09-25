@@ -37,6 +37,19 @@ public class ApiExceptionHandler {
         return body(HttpStatus.NOT_FOUND, "NOT_FOUND", e.getMessage());
     }
 
+    /**
+     * 等网关响应超时。{@code POST /api/account/holdings/sync} 是唯一声明 {@code throws Exception} 的接口，
+     * 它会抛 {@link java.util.concurrent.TimeoutException}，而这个类原先一个 handler 都接不住它
+     * （既不是 IllegalArgument/IllegalState/NoSuchElement，也不是 GatewayException/CompletionException），
+     * 结果是 500 + Spring 默认错误体，而不是与其他网关超时一致的 504 + {code,message}
+     * （2026-09-25 全项目审查发现）。
+     */
+    @ExceptionHandler(java.util.concurrent.TimeoutException.class)
+    public ResponseEntity<Map<String, Object>> timeout(java.util.concurrent.TimeoutException e) {
+        return body(HttpStatus.GATEWAY_TIMEOUT, "GATEWAY_TIMEOUT",
+                e.getMessage() == null || e.getMessage().isBlank() ? "等待网关响应超时" : e.getMessage());
+    }
+
     @ExceptionHandler({GatewayException.class, CompletionException.class})
     public ResponseEntity<Map<String, Object>> gateway(Exception e) {
         Throwable c = e instanceof CompletionException && e.getCause() != null ? e.getCause() : e;
@@ -57,6 +70,10 @@ public class ApiExceptionHandler {
         }
         if (c instanceof java.util.NoSuchElementException) {
             return body(HttpStatus.NOT_FOUND, "NOT_FOUND", c.getMessage());
+        }
+        if (c instanceof java.util.concurrent.TimeoutException) {
+            return body(HttpStatus.GATEWAY_TIMEOUT, "GATEWAY_TIMEOUT",
+                    c.getMessage() == null || c.getMessage().isBlank() ? "等待网关响应超时" : c.getMessage());
         }
         log.error("未处理异常", c);
         return body(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL", c.toString());

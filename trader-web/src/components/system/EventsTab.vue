@@ -31,7 +31,7 @@ const BROKER_LABEL: Record<string, string> = { IBKR: '盈透', FUTU: '富途' }
 const filtered = computed(() =>
   events.value.filter((e) => (!broker.value || e.broker === broker.value) && (!kind.value || e.event === kind.value)),
 )
-const { page, pageSize, paged, total } = usePager(filtered)
+const { page, pageSize, paged, total } = usePager(filtered, 20, [broker, kind])
 </script>
 
 <template>

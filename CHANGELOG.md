@@ -92,6 +92,97 @@
   - 接口：`POST /api/bars/cleanup/phantom` 的响应多了两个字段，已同步 `docs/API.md`、
     Postman `ENDPOINTS`（**需重新导入集合**，新增一条"三个数字自洽"的断言）、前端 `api/marketdata.ts` 的类型。
 
+### 全项目审查清单清空（2026-09-25）
+
+审查存活 39 条（HIGH 7 / MEDIUM 21 / LOW 11），去重后 30 项，**逐条处理完毕**。
+上面几条已单独记；其余按批列在这里，每条都带守护测试与反证。
+
+**守护测试失效或缺失（7 条）**
+
+- `IbkrAccountSummaryFeed`：**1101 后账户汇总永远不会重订**。1101 时会话对象不变、`subscribed()` 仍为 true，
+  `subscribe()` 第一行就短路，既不取消也不重发，而券商已经把订阅丢了。后果是资金数据冻结到下次真断线：
+  18:00 快照 FAILED、22:00 补偿同样失败，而 `GET /api/account/live` 的净值停在 1101 之前、状态还是 LIVE。
+  本类注释与 ARCHITECTURE §20.7 写的都是「1101 后会重订」，**那次重订根本不存在**。
+  改 `subscribe(boolean afterRecovery)`。**代价明说**：这次重订会再占一个名额而名额取消不释放，
+  一个连接周期内第二次 1101 会被 322 拒。**生产至今没发生过 1101，这条路径未经真实数据验证。**
+- `PoolRoleCoverageTest` 盯的 `pages/MarketDataPage.vue` 在 3.0.6 改版里已删，靠「文件不存在就 return」
+  每次都跳过、一条断言没跑。新增 `FrontendSources`：整棵 `trader-web/src` 不在才跳过，树在而文件不在**直接判失败**。
+- `FakeWire.now()` 返回定值且无可写字段，`MAX_AGE` 陈旧判定**在构造上不可能**被触发，13 个 feed 测试全落在 age=0 分支。
+- 日线审计的 completeness / sanity / continuity 全程只走通过分支，`ok()` 只断言过 `isTrue()`——「未通过」零覆盖。
+- `FutuChannel` 的 12 个 `onReply_*` 没有任何守护，而坑表记着漏注册的表现是**请求超时不是编译错误**。
+  新增 `FutuSpiCoverageTest` 双向比对。
+- `SpringBeanConstructorTest` 只扫 trader-app 的编译产物，而 `scanBasePackages` 扫九个模块。
+- `IntegrationEnv` 缺参数静默跳过，叠上类级注解与 `-Dsurefire.failIfNoSpecifiedTests=false`，
+  整条集成测试命令可以**一次网关都没连**就 BUILD SUCCESS。改判失败；`TRADER_IBKR_TEST_CLIENT_ID` 的写死默认值一并去掉。
+
+**账户与信号（3 条 + 1 条证伪）**
+
+- 持仓同步给库里没有的代码建档后不重解析 `instrumentId`：同一只标的被对账**同时**报成「库里没有的持仓」与
+  「池里标了 HOLDING 但已不持有」，快照 WARN、作业 PARTIAL，且 `position_snapshot.instrument_id` 永久存成 NULL。
+- 日变化的 `positionPnl` 在拆股当天给出量级错数（3:1 拆股：`10 × (100 − 300) = −2000`），还标成「当天有买卖」。
+  改成只累加数量相同的持仓，排除条数用新字段 `excludedPositions` 给出。
+- `SignalLedgerService.update(through)` 无条件重算：一次对 09-17 的补跑会把所有未平仓条目整体**回退**到 09-17。改成只往前走。
+- **证伪**：「空 K 导致补偿每晚重跑、永远收敛不了」不成立。`findMany` 不过滤 blank、`SignalInputs` 的 window 也包含空 K，
+  判定日有空 K 时走的是 `SKIPPED_DATA_GAP` 而非 `STALE_DATA`。开发库佐证：518 条 `SKIPPED_STALE_DATA` 全是
+  「当天完全没有 K 线」，有空 K 的 0 条。加 `AND NOT b.blank` 反而会挡掉一次本该发生的重跑。
+
+**存储与作业（6 条）**
+
+- `FinancialRepository.upsertAll` 先 DELETE 再批量 INSERT 且**没有事务**，中途失败留下只剩空壳的期次，
+  而基本面审计只看 `period_end`，空壳反而让它认为「这期已经有了」。加 `@Transactional`，
+  并新增 `TransactionalWriteGuardTest` 按源码文本查所有「先删后插」的方法。
+- `JobService` 把 `repo.finish` 写在 try 里：作业**已经跑成功**、只是结果落库时抖了一下，会被同一个 catch 记成 FAILED。
+- `continuityIssues` 为给 `lag()` 垫前值把下界前移 7 天，外层没再按 `from` 过滤。
+- 日线审计的缺口检查「先 LIMIT 20 再按 targets 过滤」——前 20 条都不是关心的标的时报「没有缺口」。过滤下推到 SQL。
+- 每日增量每只只取 6 根，`n < fullCount` 于是把已达到的 KL1000 覆盖成 NONE，深度永久显示 NONE
+  （与 3.0.7 修掉的 `barCount` 恒为 6 同一根因）。`ON CONFLICT` 改成按 `NONE<KL1000<HIST20Y` 只升不降。
+- `ScheduledSubmitter` 的 SKIPPED 留痕把 trigger 硬编码成 `SCHEDULE`，补偿检查放弃时也记成定时触发。
+
+**网关并发（2 条）**
+
+- `FutuReplyRegistry` 的「发出去」与「登记进 pending」不在同一把锁里：会话若正好在两步之间结束，
+  这个请求逃过 `reset` 的「在途全部失败」，被登记到新会话，而序列号按连接从 1 重新数——
+  新连接用掉同序列号把它顶替掉，被顶替那条的超时任务比对失败，**future 永远不会完成**。加会话代数。
+- `GatewayListener` 回调跑在只有 2 条线程的 `futu-scheduler` 上，而 `reconcile()` 里是 `.get(30, SECONDS)` 串行阻塞，
+  一次对账能把一条线程占住几十秒，心跳排不上会被判断线。对账转到自己的线程（反证：内联版本实测占住 **10004 ms**）。
+
+**AI 与估值（4 条）**
+
+- `EvidenceVerifier` 的文本字段回落到「抽第一个数字比大小」，日期与期别只要年份相同就判一致
+  （`2026-09-17` vs `2026-03-31` 都抽出 2026），而 AI 否决门槛正是「≥2 条核对通过的看空证据」。
+- `SignalPayloadBuilder` 对 `pe <= 0` 一律写「静态市盈率为负（亏损）」，而券商日 K 对亏损期与基金/Trust 给 **0** 不给负数——
+  等于把一条虚假的基本面断言喂给模型，且这条 caveat 自身是可核对的字段路径。
+- 已存 SOTP 方案用「冻结的 `asOf`」配「今天的现价」：折现期从旧基准日算起、涨跌幅拿今天的收盘比，存得越久偏差越大。
+  改成折算到 `max(asOf, 现价所属交易日)`，新增 `valuedAt` 说明本次折到哪天；`asOf` 原样留着。
+- `SotpCalculator` 用 `Map.copyOf` 丢掉逐业务线的插入顺序，而 javadoc 明写「按输入顺序」，
+  实际顺序由 JVM 每次启动随机化的 SALT 决定（反证连跑 6 轮 6 次红）。
+
+**REST 与前端（5 条）**
+
+- 「GET 不改状态」对 `GET /api/account/live` **不成立**——它会真的向盈透发起常驻订阅并刷新闲置计时，
+  是可被跨站 GET 触发的副作用。列入 `SIDE_EFFECTING_GETS`，和写操作一样要带 `X-Trader-Client`
+  （前端 axios 与 Postman 都是实例/集合级默认头，不受影响）。
+- `POST /api/account/holdings/sync` 会抛 `TimeoutException`，而 `ApiExceptionHandler` 一个 handler 都接不住，
+  结果是 500 + Spring 默认错误体而不是 504 `GATEWAY_TIMEOUT`。
+- `usePager` 「列表引用一变就回第 1 页」，对 5 秒自动刷新的作业表意味着**分页永远翻不过第 1 页**。
+  改成越界才收回最后一页，「换筛选条件回第 1 页」由调用方显式传 `resetOn`。
+- 仪表盘的报价轮询是自递归 `setTimeout` 且**没有运行守卫**：请求在途时 `stop()` 只清当前 timer，
+  回调返回后照样重新排期，此后再也清不掉。加 `running` 守卫。
+- 仪表盘「需要处理」横幅直接打印后端英文检查项名（没走 `auditCheckLabel`）；
+  评估明细的结果下拉含只在回放接口出现的中间态 `PENDING_AI`，选中必定零结果。
+
+**运维文档（1 条）**
+
+- `package.sh` 打包后打印的升级指引（只替换 `lib/` 与 `bin/`）与 `docs/OPERATIONS.md` §3 相互矛盾，
+  按脚本做会让随版本更新的 `config/application.yml` 永远进不了生产——正是「新 cron 只写在记录默认值上」那个坑的翻版。
+
+**接口变化**（均已同步 `docs/API.md` + Postman + 前端，**需重新导入 Postman 集合**）：
+`POST /api/universe/sync`、`POST /api/universe/import` 加 `force`；
+`POST /api/bars/cleanup/phantom` 响应加 `listed` / `remaining`；
+`GET /api/account/snapshots/latest` 的 `change` 加 `excludedPositions`；
+`GET /api/valuation/sotp/{symbol}` 加 `valuedAt`；
+`GET /api/account/live` 起要带 `X-Trader-Client`。
+
 ## 3.1.1（2026-09-24 发布）
 
 - 修复：**`GET /api/valuation/sotp/{symbol}/inputs` 对「没有一条正 PE」的标的返回 500**（3.1.0 部署当天在生产数据上发现）。

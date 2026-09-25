@@ -29,6 +29,12 @@ class LocalRequestGuardFilterTest {
             return "ok";
         }
 
+        /** 有副作用的读：第一次读会向盈透发起常驻订阅，每次读还刷新闲置退订的计时。 */
+        @GetMapping("/api/account/live")
+        String liveAccount() {
+            return "ok";
+        }
+
         @PostMapping("/actuator/shutdown")
         String write() {
             return "ok";
@@ -61,6 +67,21 @@ class LocalRequestGuardFilterTest {
                 .andExpect(content().string(containsString(LocalRequestGuardFilter.CLIENT_HEADER)));
 
         mvc.perform(post("/actuator/shutdown").header("Host", "127.0.0.1:8093").header(LocalRequestGuardFilter.CLIENT_HEADER, "script"))
+                .andExpect(status().isOk());
+    }
+
+    /**
+     * 「GET 不改状态」并非全都成立：{@code GET /api/account/live} 会真的向盈透发起常驻订阅，
+     * 是一个可被跨站 GET 触发的副作用（2026-09-25 全项目审查发现）。
+     */
+    @Test
+    void 有副作用的读也要自定义头() throws Exception {
+        mvc.perform(get("/api/account/live").header("Host", "127.0.0.1:8093"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString(LocalRequestGuardFilter.CLIENT_HEADER)));
+
+        mvc.perform(get("/api/account/live").header("Host", "127.0.0.1:8093")
+                        .header(LocalRequestGuardFilter.CLIENT_HEADER, "web"))
                 .andExpect(status().isOk());
     }
 

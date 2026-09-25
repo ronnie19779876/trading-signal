@@ -39,4 +39,10 @@ mkdir -p dist
 tar -C dist -czf "dist/$NAME-$STAMP.tar.gz" "$NAME"
 rm -rf "$OUT"
 echo "产物：dist/$NAME-$STAMP.tar.gz"
-echo "部署提示：升级 = 只替换 lib/ 与 bin/，保留服务器上的 config/trader.env；首装才从 example 复制并填值"
+cat <<'TIP'
+部署提示（与 docs/OPERATIONS.md §3 一致；别只替换 lib/ 与 bin/）：
+  升级 = 解压到新的时间戳目录 → 把旧目录的 config/trader.env 拷过去 → 停旧 → 改软链 → 启新。
+  config/application.yml 随版本更新（新 cron 等都在里面），只换 lib/ 会让它永远停在旧版本，
+  表现是「本地全绿、生产启动即失败」或新作业根本不跑。
+  首装才从 config/trader.env.example 复制并填值。
+TIP

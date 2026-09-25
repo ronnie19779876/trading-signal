@@ -24,7 +24,10 @@ import java.util.Set;
  * </ul>
  * 所以：Host 的主机名只认回环（端口不限，隧道的本地端口可以与服务端口不同）；
  * 非 GET/HEAD/OPTIONS 必须带 {@value #CLIENT_HEADER} 头——跨站页面要加自定义头就得先过 CORS 预检，而本服务不放行任何跨域。
- * GET 不要求这个头：浏览器的 EventSource（实时报价流）发不了自定义头，GET 也不改状态。
+ * GET 一般不要求这个头：浏览器的 EventSource（实时报价流）发不了自定义头。
+ * <b>但「GET 不改状态」并非全都成立</b>：{@code GET /api/account/live} 会真的向盈透发起常驻订阅
+ * 并刷新闲置计时，是一个可被跨站 GET 触发的副作用（2026-09-25 全项目审查发现）。
+ * 这类 GET 列进 {@link #SIDE_EFFECTING_GETS}，和写操作一样要带头。
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -35,6 +38,12 @@ public class LocalRequestGuardFilter extends OncePerRequestFilter {
     public static final String CLIENT_HEADER = "X-Trader-Client";
     private static final Set<String> LOOPBACK_HOSTS = Set.of("localhost", "127.0.0.1", "[::1]", "::1");
     private static final Set<String> SAFE_METHODS = Set.of("GET", "HEAD", "OPTIONS");
+    /**
+     * 有副作用的 GET：和写操作一样要带 {@value #CLIENT_HEADER}。
+     * {@code /api/account/live} 第一次读会向盈透发起常驻订阅，每次读还会刷新「5 分钟没人读就退订」的计时。
+     * 新增这类接口时记得加进来——或者干脆别把副作用放在 GET 上。
+     */
+    private static final Set<String> SIDE_EFFECTING_GETS = Set.of("/api/account/live");
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -48,9 +57,11 @@ public class LocalRequestGuardFilter extends OncePerRequestFilter {
             return;
         }
         String client = request.getHeader(CLIENT_HEADER);
-        if (!SAFE_METHODS.contains(request.getMethod()) && (client == null || client.isBlank())) {
-            reject(request, response, "写操作须带请求头 " + CLIENT_HEADER + "（前端、脚本与 Postman 集合已带；手工 curl 加 -H '"
-                    + CLIENT_HEADER + ": cli'）");
+        boolean needsHeader = !SAFE_METHODS.contains(request.getMethod())
+                || SIDE_EFFECTING_GETS.contains(request.getRequestURI());
+        if (needsHeader && (client == null || client.isBlank())) {
+            reject(request, response, "写操作与有副作用的读须带请求头 " + CLIENT_HEADER
+                    + "（前端、脚本与 Postman 集合已带；手工 curl 加 -H '" + CLIENT_HEADER + ": cli'）");
             return;
         }
         chain.doFilter(request, response);
