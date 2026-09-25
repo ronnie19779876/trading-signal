@@ -104,14 +104,16 @@ public class MarketDataController {
 
     // ------------------------------------------------------------------ 成分股 / 标的
 
+    /** force=true 越过「单次退出数」守护：合法的年度重构会被挡一次，确认来源无误后再放行。 */
     @PostMapping("/api/universe/sync")
-    public Map<String, Object> syncUniverse() {
-        return Map.of("jobId", facade.syncUniverse("MANUAL"));
+    public Map<String, Object> syncUniverse(@RequestParam(defaultValue = "false") boolean force) {
+        return Map.of("jobId", facade.syncUniverse("MANUAL", force));
     }
 
     @PostMapping(value = "/api/universe/import", consumes = "text/plain")
-    public List<UniverseSyncService.IndexResult> importCsv(@RequestBody String csv) {
-        return facade.importCsv(csv);
+    public List<UniverseSyncService.IndexResult> importCsv(@RequestBody String csv,
+                                                          @RequestParam(defaultValue = "false") boolean force) {
+        return facade.importCsv(csv, force);
     }
 
     @GetMapping("/api/universe")

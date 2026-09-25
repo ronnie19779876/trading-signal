@@ -1,5 +1,6 @@
 package org.jdkxx.trader.core.marketdata.universe;
 
+import org.jdkxx.trader.domain.IndexCode;
 import org.jdkxx.trader.domain.PoolRole;
 import org.jdkxx.trader.storage.marketdata.ConstituentRow;
 import org.jdkxx.trader.storage.marketdata.IndexConstituentRepository;
@@ -57,6 +58,21 @@ public class UniverseScope {
         Set<Long> ids = pool.findAll().stream().filter(p -> keep.test(p.role()))
                 .map(PoolRow::instrumentId).collect(Collectors.toCollection(LinkedHashSet::new));
         return usable(instruments.findByIds(ids));
+    }
+
+    /**
+     * 各指数现有成分股数。巡检用：{@link #universe()} 的分母就是这个集合，
+     * 成分股被误删时分母跟着变小、完整性检查照样全绿，必须单独盯住绝对数量。
+     */
+    public Map<IndexCode, Integer> constituentCounts() {
+        Map<IndexCode, Integer> out = new java.util.EnumMap<>(IndexCode.class);
+        for (IndexCode i : IndexCode.values()) {
+            out.put(i, 0);
+        }
+        for (ConstituentRow r : constituents.currentAll()) {
+            out.merge(r.index(), 1, Integer::sum);
+        }
+        return out;
     }
 
     public Map<Long, PoolRole> roles() {

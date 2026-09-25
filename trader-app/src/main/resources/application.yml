@@ -75,6 +75,10 @@ trader:
       cross-check-spy: true
       sync-cron: "0 30 6 * * SAT"
       static-batch-size: 200
+      # 单次同步允许的最大退出数：max(绝对值, 现有成员 × 百分比)。超过就整个指数跳过、作业记 PARTIAL，
+      # 要 force 才放行。SP500 阈值 25、NDX100 阈值 5（2026-09-25 实录：真实单次退出 0~1 只）
+      max-removals-per-sync: 5
+      max-removals-percent: 5
     pool:
       max-size: 50
     refresh:

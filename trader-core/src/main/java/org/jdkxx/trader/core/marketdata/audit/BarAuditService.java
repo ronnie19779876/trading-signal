@@ -6,6 +6,7 @@ import org.jdkxx.trader.core.marketdata.SnapshotWindow;
 import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
 import org.jdkxx.trader.domain.Broker;
+import org.jdkxx.trader.domain.IndexCode;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.gateway.BrokerGateway;
 import org.jdkxx.trader.gateway.GatewayState;
@@ -40,6 +41,9 @@ public class BarAuditService {
 
     /** 缺口检查只看最近这么多天：这段运维能靠重跑增量补上，更早的深扫走 /api/bars/gaps。 */
     static final int GAP_WINDOW_DAYS = 90;
+
+    /** 成分股数量相对指数名义规模允许的缩水幅度：超过就判不通过。多类别股会让实际代码数略多于名义值。 */
+    static final int UNIVERSE_SHRINK_TOLERANCE_PERCENT = 5;
 
     public record Check(String name, boolean ok, boolean critical, String detail, long count, List<String> samples) {
     }
@@ -102,6 +106,24 @@ public class BarAuditService {
         checks.add(new Check("completeness", missing.isEmpty(), true,
                 missing.isEmpty() ? "全部 " + targets.size() + " 只在 " + d + " 都有 K 线" : missing.size() + " 只缺 " + d + " 的 K 线",
                 missing.size(), head(missing, 30)));
+
+        // 1b. 成分股集合本身有没有缩水（2026-09-25 加）
+        //     上面的 completeness 用的分母就是这个集合：成分股被误删时分母跟着变小、检查照样全绿，
+        //     当晚增量直接不再采集这些标的——必须单独盯住绝对数量。守护见 UniverseSyncService.apply。
+        Map<IndexCode, Integer> counts = scope.constituentCounts();
+        List<String> shrunk = new ArrayList<>();
+        for (Map.Entry<IndexCode, Integer> e : counts.entrySet()) {
+            int floor = e.getKey().nominalSize() * (100 - UNIVERSE_SHRINK_TOLERANCE_PERCENT) / 100;
+            if (e.getValue() < floor) {
+                shrunk.add(e.getKey() + " 只有 " + e.getValue() + " 只（名义 " + e.getKey().nominalSize() + "，下限 " + floor + "）");
+            }
+        }
+        summary.put("constituents", counts);
+        checks.add(new Check("universeSize", shrunk.isEmpty(), true,
+                shrunk.isEmpty()
+                        ? counts.entrySet().stream().map(e -> e.getKey() + " " + e.getValue() + " 只").collect(Collectors.joining("、"))
+                        : "成分股集合缩水：" + String.join("；", shrunk) + "。查 UNIVERSE_SYNC 作业与来源页面结构",
+                shrunk.size(), shrunk));
 
         // 2. 当天 K 线的字段合理性
         DailyBarRepository.DaySanity sanity = bars.sanityOn(d);

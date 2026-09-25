@@ -32,6 +32,15 @@ public record MarketDataProperties(
             @DefaultValue("true") boolean crossCheckSpy,
             @DefaultValue("0 30 6 * * SAT") String syncCron,
             @DefaultValue("200") int staticBatchSize,
+            /**
+             * 单次同步允许的最大退出数：超过就<b>整个指数跳过</b>、作业记 PARTIAL，要人工带 force 才放行。
+             * 实际阈值是 max(此值, 现有成员 × maxRemovalsPercent%)。
+             * 依据（2026-09-25 生产库实录）：SP500 现有 503 只、历史退出 0 次；NDX100 现有 101 只、历史退出 1 次。
+             * 守护的目标不是「永不大批删除」，而是<b>永不悄悄大批删除</b>——纳指 12 月年度重构这类合法大变动
+             * 会被挡一次，正是该有人看一眼的时候。
+             */
+            @DefaultValue("5") int maxRemovalsPerSync,
+            @DefaultValue("5") int maxRemovalsPercent,
             @DefaultValue("trading-signal/1.0 (market data research; contact via repository)") String userAgent) {
     }
 

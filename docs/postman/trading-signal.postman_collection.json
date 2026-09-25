@@ -1217,7 +1217,7 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{baseUrl}}/api/universe/sync",
+                  "raw": "{{baseUrl}}/api/universe/sync?force=false",
                   "host": [
                     "{{baseUrl}}"
                   ],
@@ -1225,9 +1225,15 @@
                     "api",
                     "universe",
                     "sync"
+                  ],
+                  "query": [
+                    {
+                      "key": "force",
+                      "value": "false"
+                    }
                   ]
                 },
-                "description": "Wikipedia 标普 500 + 纳指 100 → instrument / index_constituent，SPY 交叉核对，富途静态信息解析。返回 jobId；已有作业在跑 → 409。"
+                "description": "Wikipedia 标普 500 + 纳指 100 → instrument / index_constituent，SPY 交叉核对，富途静态信息解析。返回 jobId；已有作业在跑 → 409。⚠ 单次退出数守护：某指数退出数超过 max(5, 现有成员 5%) 时整个指数跳过、一条都不改，作业记 PARTIAL。确认来源无误（如纳指 12 月年度重构）后改 force=true 重跑。"
               },
               "event": [
                 {
@@ -1262,7 +1268,7 @@
                   }
                 ],
                 "url": {
-                  "raw": "{{baseUrl}}/api/universe/import",
+                  "raw": "{{baseUrl}}/api/universe/import?force=false",
                   "host": [
                     "{{baseUrl}}"
                   ],
@@ -1270,9 +1276,15 @@
                     "api",
                     "universe",
                     "import"
+                  ],
+                  "query": [
+                    {
+                      "key": "force",
+                      "value": "false"
+                    }
                   ]
                 },
-                "description": "text/plain，每行 index_code,symbol[,name]，只在 Wikipedia 同步失败时用。⚠ 按指数整体替换：清单里没有的现任成分股会被记为退出，所以要给该指数的完整清单。示例请求体故意留空（解析不出任何行，什么都不改）。",
+                "description": "text/plain，每行 index_code,symbol[,name]，只在 Wikipedia 同步失败时用。⚠ 按指数整体替换：清单里没有的现任成分股会被记为退出，所以要给该指数的完整清单。残缺清单会被退出数守护整体挡下（error 里写明退出数与阈值），确认无误后改 force=true。示例请求体故意留空（解析不出任何行，什么都不改）。",
                 "body": {
                   "mode": "raw",
                   "raw": ""

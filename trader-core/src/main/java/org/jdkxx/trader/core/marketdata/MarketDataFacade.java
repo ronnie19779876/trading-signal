@@ -74,7 +74,12 @@ public class MarketDataFacade {
     // ------------------------------------------------------------------ 作业
 
     public long syncUniverse(String trigger) {
-        return jobs.submit(Jobs.UNIVERSE_SYNC, trigger, sync::sync);
+        return syncUniverse(trigger, false);
+    }
+
+    /** {@code force=true} 越过退出数守护（见 {@link UniverseSyncService#apply}）。 */
+    public long syncUniverse(String trigger, boolean force) {
+        return jobs.submit(Jobs.UNIVERSE_SYNC, trigger, ctx -> sync.sync(ctx, force));
     }
 
     public long refreshUniverse(String trigger, int count) {
@@ -154,7 +159,11 @@ public class MarketDataFacade {
     }
 
     public List<UniverseSyncService.IndexResult> importCsv(String csv) {
-        return sync.importCsv(csv);
+        return importCsv(csv, false);
+    }
+
+    public List<UniverseSyncService.IndexResult> importCsv(String csv, boolean force) {
+        return sync.importCsv(csv, force);
     }
 
     // ------------------------------------------------------------------ 视图

@@ -56,8 +56,12 @@ public class UniverseSyncService {
         this.zone = ZoneId.of(props.zone());
     }
 
-    /** 完整同步（作业体）。 */
+    /** 完整同步（作业体）。{@code force=true} 越过退出数守护，见 {@link #apply}。 */
     public String sync(JobContext ctx) {
+        return sync(ctx, false);
+    }
+
+    public String sync(JobContext ctx, boolean force) {
         List<String> parts = new ArrayList<>();
         Map<IndexCode, List<ConstituentEntry>> fetched = new LinkedHashMap<>();
         for (IndexCode index : IndexCode.values()) {
@@ -70,8 +74,13 @@ public class UniverseSyncService {
             }
         }
         for (Map.Entry<IndexCode, List<ConstituentEntry>> e : fetched.entrySet()) {
-            IndexResult r = apply(e.getKey(), e.getValue(), source.name());
-            parts.add(e.getKey() + " 抓到 " + r.fetched() + "：新增 " + r.added() + "、退出 " + r.removed() + "、不变 " + r.unchanged());
+            IndexResult r = apply(e.getKey(), e.getValue(), source.name(), force);
+            if (r.error() != null) {
+                parts.add(e.getKey() + " " + r.error());
+                ctx.partial(e.getKey() + " " + r.error());      // 作业记 PARTIAL，进 jobs 健康指标
+            } else {
+                parts.add(e.getKey() + " 抓到 " + r.fetched() + "：新增 " + r.added() + "、退出 " + r.removed() + "、不变 " + r.unchanged());
+            }
         }
         if (props.universe().crossCheckSpy() && fetched.containsKey(IndexCode.SP500)) {
             ctx.progress("用 SPY 持仓交叉核对标普 500");
@@ -82,8 +91,12 @@ public class UniverseSyncService {
         return String.join("；", parts);
     }
 
-    /** CSV 导入（同一套集合差逻辑）。 */
+    /** CSV 导入（同一套集合差逻辑，同样受退出数守护）。 */
     public List<IndexResult> importCsv(String csv) {
+        return importCsv(csv, false);
+    }
+
+    public List<IndexResult> importCsv(String csv, boolean force) {
         List<ConstituentEntry> entries = CsvUniverse.parse(csv);
         Map<IndexCode, List<ConstituentEntry>> byIndex = new LinkedHashMap<>();
         for (ConstituentEntry e : entries) {
@@ -91,12 +104,22 @@ public class UniverseSyncService {
         }
         List<IndexResult> out = new ArrayList<>();
         for (Map.Entry<IndexCode, List<ConstituentEntry>> e : byIndex.entrySet()) {
-            out.add(apply(e.getKey(), e.getValue(), "CSV"));
+            out.add(apply(e.getKey(), e.getValue(), "CSV", force));
         }
         return out;
     }
 
-    IndexResult apply(IndexCode index, List<ConstituentEntry> entries, String sourceName) {
+    /**
+     * 按集合差同步一个指数。<b>先算出退出集合并过守护，再动手</b>——被挡下时整个指数一条都不改，
+     * 不做部分应用（半新半旧的状态比不同步更难查）。
+     *
+     * <p>为什么需要守护：{@code apply} 是纯集合差，来源少给多少就退出多少。
+     * {@code WikipediaUniverseSource} 只在解析结果少于 50 行时才报错，而标普 500 有 503 只——
+     * 页面结构变化让它只解析出 60 行仍然「可信」，一次同步就会把 440 多只标记为退出。
+     * 更糟的是**看不见**：{@code BarAuditService} 的分母与这里同源，成分股掉了分母跟着掉，
+     * 完整性检查照样全绿，当晚增量直接不再采集这些标的（2026-09-25 全项目审查发现）。
+     */
+    IndexResult apply(IndexCode index, List<ConstituentEntry> entries, String sourceName, boolean force) {
         LocalDate today = LocalDate.now(zone);
         Map<Long, ConstituentEntry> wanted = new LinkedHashMap<>();
         for (ConstituentEntry e : entries) {
@@ -106,6 +129,15 @@ public class UniverseSyncService {
         Map<Long, ConstituentRow> current = new HashMap<>();
         for (ConstituentRow r : constituents.current(index)) {
             current.put(r.instrumentId(), r);
+        }
+        List<Long> leaving = current.keySet().stream().filter(id -> !wanted.containsKey(id)).toList();
+        int limit = removalLimit(current.size());
+        if (!force && leaving.size() > limit) {
+            String why = "退出 " + leaving.size() + " 只超过阈值 " + limit + "（现有 " + current.size()
+                    + "，来源 " + sourceName + " 只给了 " + wanted.size() + "）：整个指数跳过，未做任何改动。"
+                    + "确认来源无误后用 force=true 放行";
+            log.warn("{} 成分股同步被守护挡下：{}", index, why);
+            return new IndexResult(index, wanted.size(), 0, 0, current.size(), why);
         }
         int added = 0;
         int unchanged = 0;
@@ -119,15 +151,21 @@ public class UniverseSyncService {
                 added++;
             }
         }
-        int removed = 0;
-        for (Long id : current.keySet()) {
-            if (!wanted.containsKey(id)) {
-                constituents.close(index, id, today);
-                removed++;
-            }
+        for (Long id : leaving) {
+            constituents.close(index, id, today);
         }
+        int removed = leaving.size();
         log.info("{} 成分股同步（{}）：抓到 {}，新增 {}，退出 {}，不变 {}", index, sourceName, wanted.size(), added, removed, unchanged);
         return new IndexResult(index, wanted.size(), added, removed, unchanged, null);
+    }
+
+    /** 阈值 = max(绝对值, 现有成员 × 百分比)。现有成员为 0（首次导入）时不设限。 */
+    int removalLimit(int currentSize) {
+        if (currentSize == 0) {
+            return Integer.MAX_VALUE;
+        }
+        var u = props.universe();
+        return Math.max(u.maxRemovalsPerSync(), currentSize * u.maxRemovalsPercent() / 100);
     }
 
     private String crossCheck(List<ConstituentEntry> sp500) {

@@ -174,12 +174,17 @@ ENDPOINTS = [
             {"name": "历史额度", "method": "GET", "path": "/api/bars/quota", "desc": "富途历史 K 线额度（7 天滚动）。",
              "tests": T_200 + T_JSON + ['pm.test("used/remain", () => { pm.expect(body.used).to.be.a("number"); pm.expect(body.remain).to.be.a("number"); });']},
             {"name": "同步成分股（异步作业）", "method": "POST", "path": "/api/universe/sync",
-             "desc": "Wikipedia 标普 500 + 纳指 100 → instrument / index_constituent，SPY 交叉核对，富途静态信息解析。返回 jobId；已有作业在跑 → 409。",
+             "query": [{"key": "force", "value": "false"}],
+             "desc": "Wikipedia 标普 500 + 纳指 100 → instrument / index_constituent，SPY 交叉核对，富途静态信息解析。返回 jobId；已有作业在跑 → 409。"
+                     "⚠ 单次退出数守护：某指数退出数超过 max(5, 现有成员 5%) 时整个指数跳过、一条都不改，作业记 PARTIAL。"
+                     "确认来源无误（如纳指 12 月年度重构）后改 force=true 重跑。",
              "tests": ['pm.test("200 或 409", () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));',
                        'if (pm.response.code === 200) { pm.environment.set("jobId", pm.response.json().jobId); }']},
             {"name": "CSV 导入成分股（兜底，同步执行）", "method": "POST", "path": "/api/universe/import", "body": "",
+             "query": [{"key": "force", "value": "false"}],
              "desc": "text/plain，每行 index_code,symbol[,name]，只在 Wikipedia 同步失败时用。⚠ 按指数整体替换：清单里没有的现任成分股会被记为退出，"
-                     "所以要给该指数的完整清单。示例请求体故意留空（解析不出任何行，什么都不改）。",
+                     "所以要给该指数的完整清单。残缺清单会被退出数守护整体挡下（error 里写明退出数与阈值），确认无误后改 force=true。"
+                     "示例请求体故意留空（解析不出任何行，什么都不改）。",
              "tests": ['pm.test("200 或 400", () => pm.expect(pm.response.code).to.be.oneOf([200, 400]));']},
             {"name": "作业列表", "method": "GET", "path": "/api/jobs", "query": [{"key": "limit", "value": "10"}],
              "desc": "running = 当前作业与进度；recent = job_run 最近 N 条。",

@@ -146,7 +146,13 @@ export const getUniverse = async (index?: string) => (await http.get<InstrumentV
 export const addToPool = async (symbol: string, role: 'POOL' | 'BENCHMARK') =>
   (await http.post(`/api/pool/${encodeURIComponent(symbol)}`, null, { params: { role } })).data
 export const removeFromPool = async (symbol: string) => (await http.delete(`/api/pool/${encodeURIComponent(symbol)}`)).data
-export const syncUniverse = async () => (await http.post<{ jobId: number }>('/api/universe/sync')).data
+/**
+ * force 越过「单次退出数」守护（见后端 UniverseSyncService.apply）。
+ * 故意不做成页面按钮：守护挡下的是"来源突然少给几百只"，需要人先去看一眼来源页面再决定，
+ * 一键放行等于把守护变成摆设。要放行请走 curl / Postman 显式带 force=true。
+ */
+export const syncUniverse = async (force = false) =>
+  (await http.post<{ jobId: number }>('/api/universe/sync', null, { params: force ? { force: true } : {} })).data
 export const refreshUniverse = async (count: number) => (await http.post<{ jobId: number }>('/api/bars/refresh/universe', null, { params: { count } })).data
 export const backfillPending = async () => (await http.post<{ jobId: number }>('/api/bars/backfill')).data
 export const refreshRehab = async (all: boolean) => (await http.post<{ jobId: number }>('/api/bars/rehab/refresh', null, { params: { all } })).data

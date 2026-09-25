@@ -3,6 +3,7 @@ package org.jdkxx.trader.core.marketdata.audit;
 import org.jdkxx.trader.core.marketdata.MarketDataProperties;
 import org.jdkxx.trader.core.marketdata.TestProperties;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
+import org.jdkxx.trader.domain.IndexCode;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.SecurityType;
 import org.jdkxx.trader.storage.marketdata.BarSyncStateRepository;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -186,5 +188,62 @@ class BarAuditServiceTest {
         assertThat(c.ok()).isFalse();
         assertThat(c.critical()).as("日历不全不影响当日数据正确性").isFalse();
         assertThat(c.detail()).contains("2006-08-21").contains("日历回补");
+    }
+
+    /**
+     * 成分股集合缩水必须单独判失败。
+     * 为什么：completeness 的分母就是这个集合，成分股被误删时分母跟着变小、完整性照样全绿，
+     * 当晚增量直接不再采集这些标的（2026-09-25 全项目审查发现）。入口侧的守护见 UniverseSyncGuardTest。
+     */
+    @Test
+    void 成分股数量正常时通过() {
+        BarAuditService.Report r = auditWith(Map.of(IndexCode.SP500, 503, IndexCode.NDX100, 101));
+
+        BarAuditService.Check c = check(r, "universeSize");
+        assertThat(c.ok()).isTrue();
+        assertThat(c.detail()).contains("503").contains("101");
+    }
+
+    @Test
+    void 成分股集合缩水判失败_且是关键项() {
+        // 来源页面结构变化只解析出 60 行的情形
+        BarAuditService.Report r = auditWith(Map.of(IndexCode.SP500, 60, IndexCode.NDX100, 101));
+
+        BarAuditService.Check c = check(r, "universeSize");
+        assertThat(c.ok()).isFalse();
+        assertThat(c.critical()).as("分母跟着缩水，别的检查发现不了").isTrue();
+        assertThat(c.detail()).contains("SP500 只有 60 只").contains("下限 475").contains("UNIVERSE_SYNC");
+        assertThat(c.samples()).hasSize(1);
+        assertThat(r.ok()).isFalse();
+    }
+
+    private static BarAuditService.Check check(BarAuditService.Report r, String name) {
+        return r.checks().stream().filter(x -> x.name().equals(name)).findFirst().orElseThrow();
+    }
+
+    /** 除成分股数量外全部铺成"正常"，好让 universeSize 是唯一变量。 */
+    private static BarAuditService.Report auditWith(Map<IndexCode, Integer> counts) {
+        TradingDayRepository days = mock(TradingDayRepository.class);
+        when(days.covers(eq(Market.US), any())).thenReturn(false);
+        when(days.coverage(Market.US)).thenReturn(
+                new TradingDayRepository.Coverage(LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 18), 5051, 2519, 2532));
+        DailyBarRepository bars = mock(DailyBarRepository.class);
+        when(bars.instrumentIdsWithBarOn(any())).thenReturn(Set.of(1L));
+        when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(1, 0, 0, 0, 0, 0));
+        when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
+        when(bars.coverageByInstrument()).thenReturn(List.of(
+                new DailyBarRepository.InstrumentCoverage(1L, 5000, LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 9))));
+        when(bars.phantomBars(anyInt())).thenReturn(List.of());
+        UniverseScope scope = mock(UniverseScope.class);
+        when(scope.universe()).thenReturn(List.of(row(1, "AAPL")));
+        when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "AAPL")));
+        when(scope.constituentCounts()).thenReturn(counts);
+        BarSyncStateRepository states = mock(BarSyncStateRepository.class);
+        when(states.findAll()).thenReturn(List.of());
+        JobRunRepository jobs = mock(JobRunRepository.class);
+        when(jobs.latestOf(any())).thenReturn(Optional.empty());
+
+        return new BarAuditService(props(), scope, bars, days, states, jobs, null, Clock.systemUTC())
+                .audit(LocalDate.of(2026, 9, 9));
     }
 }
