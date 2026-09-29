@@ -2745,7 +2745,7 @@
                 "live"
               ]
             },
-            "description": "盈透常驻订阅的资金、盈亏、持仓与行情最新价，只读内存，全是盈透原值不做折算。第一次读发起订阅（status=WARMING，约 2 秒到齐），5 分钟没人读自动退订。money 为账户汇总（约 3 分钟一推）；pnl 还没有有效推送时为 null；positions[].last 为盈透行情最新价。网关未启用 / 未连接时 status=UNAVAILABLE。"
+            "description": "盈透常驻订阅的资金、盈亏、持仓与行情最新价，只读内存，全是盈透原值不做折算。第一次读发起订阅（status=WARMING，约 2 秒到齐），5 分钟没人读自动退订。money 为账户汇总（约 3 分钟一推），含 accruedInterest 应计利息（3.1.3 起）；pnl 还没有有效推送时为 null；positions[].last 为盈透行情最新价。网关未启用 / 未连接时 status=UNAVAILABLE。"
           },
           "event": [
             {
@@ -2790,7 +2790,7 @@
                 "latest"
               ]
             },
-            "description": "资金、本系统估值、对账明细与持仓（priceSource：BAR/SNAPSHOT/NONE）。账户号只给脱敏形式。还没有快照 → 404。change.positionPnl 只累加两份快照数量相同的持仓，数量变过的（买卖或拆股/合股）不计、条数在 change.excludedPositions。"
+            "description": "资金、本系统估值、对账明细与持仓（priceSource：BAR/SNAPSHOT/NONE）。账户号只给脱敏形式。还没有快照 → 404。change.positionPnl 只累加两份快照数量相同的持仓，数量变过的（买卖或拆股/合股）不计、条数在 change.excludedPositions。资金含 accruedInterest 应计利息（3.1.3 起采集，更早的快照为 null）——它是恒等式的第四项：现金 + 股票市值 + 应计股息 + 应计利息 = 净值。"
           },
           "event": [
             {
@@ -2799,7 +2799,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"HTTP 200 或 404（还没有快照）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));",
-                  "if (pm.response.code === 200 && pm.response.json().change) { pm.test(\"change 带排除条数\", () => pm.expect(pm.response.json().change.excludedPositions).to.be.a(\"number\")); }"
+                  "if (pm.response.code === 200 && pm.response.json().change) { pm.test(\"change 带排除条数\", () => pm.expect(pm.response.json().change.excludedPositions).to.be.a(\"number\")); }",
+                  "if (pm.response.code === 200) { pm.test(\"identity 检查项存在\", () => pm.expect((pm.response.json().snapshot.recon || []).map(c => c.name)).to.include(\"identity\")); }"
                 ]
               }
             }

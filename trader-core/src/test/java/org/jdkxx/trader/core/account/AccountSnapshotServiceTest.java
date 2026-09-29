@@ -104,7 +104,7 @@ class AccountSnapshotServiceTest {
     private static AccountSummary summary(String net, String cash, String stock, String div) {
         return new AccountSummary(Broker.IBKR, ACCT, Instant.parse("2026-09-14T22:00:00Z"), "USD", new BigDecimal(net),
                 new BigDecimal(cash), new BigDecimal(stock), null, null, null, null, null, null, new BigDecimal(div),
-                Map.of("AccountType", "INDIVIDUAL"));
+                BigDecimal.ZERO, Map.of("AccountType", "INDIVIDUAL"));
     }
 
     private static AccountRef ref(String id) {

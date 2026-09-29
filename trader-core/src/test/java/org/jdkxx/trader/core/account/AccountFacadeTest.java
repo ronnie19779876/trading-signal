@@ -52,7 +52,7 @@ class AccountFacadeTest {
 
     private static org.jdkxx.trader.storage.account.AccountSnapshotRow snapshot(LocalDate date, String nav) {
         return new org.jdkxx.trader.storage.account.AccountSnapshotRow(1, "IBKR", "k", "AC*****", date, Instant.EPOCH, "USD",
-                new java.math.BigDecimal(nav), null, null, null, null, null, null, null, null, null, null, 0, "OK", "[]", null);
+                new java.math.BigDecimal(nav), null, null, null, null, null, null, null, null, null, null, null, 0, "OK", "[]", null);
     }
 
     private static org.jdkxx.trader.storage.account.PositionSnapshotRow position(String ref, String qty, String price) {

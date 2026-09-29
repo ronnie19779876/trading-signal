@@ -62,7 +62,7 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
     /** 资金（盈透账户汇总原值，约 3 分钟一推）。 */
     public record Money(BigDecimal netLiquidation, BigDecimal totalCash, BigDecimal availableFunds, BigDecimal buyingPower,
                         BigDecimal excessLiquidity, BigDecimal grossPositionValue, BigDecimal stockMarketValue,
-                        BigDecimal accruedDividend, Instant updatedAt) {
+                        BigDecimal accruedDividend, BigDecimal accruedInterest, Instant updatedAt) {
     }
 
     /** 盈亏（盈透账户盈亏原值）。 */
@@ -234,7 +234,7 @@ public class LiveAccountService implements LiveAccountListener, AutoCloseable {
 
     private static Money money(AccountSummary s) {
         return s == null ? null : new Money(s.netLiquidation(), s.totalCash(), s.availableFunds(), s.buyingPower(),
-                s.excessLiquidity(), s.grossPositionValue(), s.stockMarketValue(), s.accruedDividend(), s.receivedAt());
+                s.excessLiquidity(), s.grossPositionValue(), s.stockMarketValue(), s.accruedDividend(), s.accruedInterest(), s.receivedAt());
     }
 
     /** 只用盈透账户盈亏的原值；还没收到有效推送（首条被丢、网关在重订）时为 null，页面显示"等待盈透推送"。 */

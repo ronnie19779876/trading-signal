@@ -43,7 +43,7 @@ class AccountAuditServiceTest {
 
     private static AccountSnapshotRow row(String status) {
         return new AccountSnapshotRow(1, "IBKR", "k", "AC*****", MON, Instant.EPOCH, "USD", BigDecimal.TEN, null, null, null,
-                null, null, null, null, null, null, null, 1, status, "[]", 7L);
+                null, null, null, null, null, null, null, null, 1, status, "[]", 7L);
     }
 
     private static PositionSnapshotRow position(String symbol, String source) {

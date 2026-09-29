@@ -153,6 +153,7 @@ public final class IbkrAccounts {
                 number(raw, "$LEDGER-UnrealizedPnL"),
                 number(raw, "$LEDGER-RealizedPnL"),
                 number(raw, "$LEDGER-NetDividend"),
+                number(raw, "$LEDGER-AccruedCash"),
                 raw);
     }
 

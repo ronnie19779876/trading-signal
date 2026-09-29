@@ -332,16 +332,19 @@ ENDPOINTS = [
              "tests": T_200 + T_JSON + ['pm.test("审计通过 ok=true（失败时看 checks）", () => pm.expect(body.ok, JSON.stringify(body.checks.filter(c => !c.ok))).to.eql(true));']},
             {"name": "实时账户（按需订阅）", "method": "GET", "path": "/api/account/live",
              "desc": "盈透常驻订阅的资金、盈亏、持仓与行情最新价，只读内存，全是盈透原值不做折算。第一次读发起订阅（status=WARMING，约 2 秒到齐），5 分钟没人读自动退订。"
-                     "money 为账户汇总（约 3 分钟一推）；pnl 还没有有效推送时为 null；positions[].last 为盈透行情最新价。网关未启用 / 未连接时 status=UNAVAILABLE。",
+                     "money 为账户汇总（约 3 分钟一推），含 accruedInterest 应计利息（3.1.3 起）；pnl 还没有有效推送时为 null；positions[].last 为盈透行情最新价。网关未启用 / 未连接时 status=UNAVAILABLE。",
              "tests": T_200 + T_JSON + ['pm.test("status 是四种之一", () => pm.expect(body.status).to.be.oneOf(["LIVE", "WARMING", "DISCONNECTED", "UNAVAILABLE"]));',
                                         'pm.test("账户号只给脱敏形式", () => pm.expect(String(body.accountMask ?? "")).to.not.match(/U\\d{5,}/));',
                                         'pm.test("positions 是数组", () => pm.expect(body.positions).to.be.an("array"));']},
             {"name": "最新账户快照", "method": "GET", "path": "/api/account/snapshots/latest",
              "desc": "资金、本系统估值、对账明细与持仓（priceSource：BAR/SNAPSHOT/NONE）。账户号只给脱敏形式。还没有快照 → 404。"
-                     "change.positionPnl 只累加两份快照数量相同的持仓，数量变过的（买卖或拆股/合股）不计、条数在 change.excludedPositions。",
+                     "change.positionPnl 只累加两份快照数量相同的持仓，数量变过的（买卖或拆股/合股）不计、条数在 change.excludedPositions。"
+                     "资金含 accruedInterest 应计利息（3.1.3 起采集，更早的快照为 null）——它是恒等式的第四项：现金 + 股票市值 + 应计股息 + 应计利息 = 净值。",
              "tests": ['pm.test("HTTP 200 或 404（还没有快照）", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));',
                        'if (pm.response.code === 200 && pm.response.json().change) { pm.test("change 带排除条数", () => '
-                       'pm.expect(pm.response.json().change.excludedPositions).to.be.a("number")); }']},
+                       'pm.expect(pm.response.json().change.excludedPositions).to.be.a("number")); }',
+                       'if (pm.response.code === 200) { pm.test("identity 检查项存在", () => pm.expect((pm.response.json().snapshot.recon || [])'
+                       '.map(c => c.name)).to.include("identity")); }']},
             {"name": "快照序列", "method": "GET", "path": "/api/account/snapshots", "query": [{"key": "from", "value": "2026-09-01"}, {"key": "to", "value": "2026-09-30"}],
              "desc": "默认最近 90 天，不含持仓明细。",
              "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},

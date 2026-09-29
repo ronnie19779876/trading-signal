@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
 /**
  * 账户快照对账（纯计算）。四项，总状态取最差：
  * <ol>
- *   <li>{@code identity} 资金恒等式：现金 + 股票市值 + 应计股息 = 净值（盈透实测精确到分；只适用于纯股票账户）；</li>
+ *   <li>{@code identity} 资金恒等式：现金 + 股票市值 + 应计股息 + 应计利息 = 净值（盈透实测精确到分）；</li>
  *   <li>{@code marketValue} 市值：Σ 数量 × 本系统收盘价 对比盈透股票市值（实测差十万分之一量级）；</li>
  *   <li>{@code holdings} 持仓集合：持有的股票与池里的 HOLDING 角色一致（基准与现金管理工具不参与）；</li>
  *   <li>{@code otherAssets} 非股票持仓：不参与估值，有就提示。</li>
@@ -71,18 +71,59 @@ public final class AccountReconciler {
         return new Result(worst, ours.setScale(4, RoundingMode.HALF_UP), List.copyOf(checks));
     }
 
+    /**
+     * 资金恒等式。<b>应计利息（盈透 {@code $LEDGER-AccruedCash}）是 3.1.3 补上的第四项</b>：
+     * 此前现金余额小、它一直是 0，三项相加正好成立，连续 8 次快照都判 OK；
+     * 2026-09-28 现金涨到两万多之后它变成 1.49，等式差的就是这一项——当时误判成 WARN、
+     * 作业记 PARTIAL、{@code jobs} 健康降级，而数据本身分毫不差。
+     *
+     * <p>detail 把四项数字都打出来：只给一个差额时，定位这 1.49 要去翻 {@code raw} 里的 31 个标签。
+     *
+     * <p>缺项按 0 处理而不是整条弃核：盈透对不同账户类型返回的标签不同，
+     * 少一项就放弃核对会让这条关键检查在一部分账户上永远失效。净值缺了才真的没法算。
+     *
+     * <p><b>已知边界</b>：盈透分类账里还有 13 类其它资产（债券、期权、基金、货币基金、外汇现金、
+     * TBill/TBond、认股权证、加密），本账户当前全为 0.00。账上一旦出现其中任意一类，
+     * 这条等式会以同样的方式少算一项而误报——届时要么按同样办法补进来，要么改成按分类账求和。
+     */
     static Check identity(AccountSummary s, BigDecimal tolerance) {
-        if (s.netLiquidation() == null || s.totalCash() == null || s.stockMarketValue() == null || s.accruedDividend() == null) {
-            return new Check("identity", Status.WARN, "资金汇总缺字段（净值/现金/股票市值/应计股息），恒等式无法核对");
+        if (s.netLiquidation() == null) {
+            return new Check("identity", Status.WARN, "资金汇总没有净值，恒等式无法核对");
         }
-        BigDecimal gap = s.totalCash().add(s.stockMarketValue()).add(s.accruedDividend()).subtract(s.netLiquidation()).abs();
-        String detail = "现金 + 股票市值 + 应计股息 与净值相差 " + gap.setScale(2, RoundingMode.HALF_UP);
+        BigDecimal cash = zeroIfNull(s.totalCash());
+        BigDecimal stock = zeroIfNull(s.stockMarketValue());
+        BigDecimal dividend = zeroIfNull(s.accruedDividend());
+        BigDecimal interest = zeroIfNull(s.accruedInterest());
+        BigDecimal sum = cash.add(stock).add(dividend).add(interest);
+        BigDecimal gap = sum.subtract(s.netLiquidation()).abs();
+
+        List<String> missing = new ArrayList<>();
+        if (s.totalCash() == null) {
+            missing.add("现金");
+        }
+        if (s.stockMarketValue() == null) {
+            missing.add("股票市值");
+        }
+        if (s.accruedDividend() == null) {
+            missing.add("应计股息");
+        }
+        if (s.accruedInterest() == null) {
+            missing.add("应计利息");
+        }
+        String detail = "现金 " + cash + " + 股票市值 " + stock + " + 应计股息 " + dividend
+                + " + 应计利息 " + interest + " = " + sum
+                + "，与净值 " + s.netLiquidation() + " 相差 " + gap.setScale(2, RoundingMode.HALF_UP)
+                + (missing.isEmpty() ? "" : "（汇总里没有 " + String.join("、", missing) + "，按 0 计）");
         if (gap.compareTo(tolerance) <= 0) {
             return new Check("identity", Status.OK, detail);
         }
         BigDecimal ratio = ratio(gap, s.netLiquidation());
         return new Check("identity", ratio.compareTo(IDENTITY_WARN_RATIO) <= 0 ? Status.WARN : Status.FAIL,
                 detail + "（占净值 " + pct(ratio) + "）");
+    }
+
+    private static BigDecimal zeroIfNull(BigDecimal v) {
+        return v == null ? BigDecimal.ZERO : v;
     }
 
     static Check marketValue(AccountSummary s, List<ValuedPosition> stocks, BigDecimal ours, BigDecimal tolerance) {

@@ -135,7 +135,7 @@ public class AccountSnapshotService {
                 mask, asOf, clock.instant(), summary.currency(), summary.netLiquidation(), summary.totalCash(),
                 summary.stockMarketValue(), summary.grossPositionValue(), summary.availableFunds(), summary.buyingPower(),
                 summary.excessLiquidity(), summary.unrealizedPnl(), summary.realizedPnl(), summary.accruedDividend(),
-                r.positionValue(), valued.size(), r.status().name(), null, ctx.id());
+                summary.accruedInterest(), r.positionValue(), valued.size(), r.status().name(), null, ctx.id());
         List<PositionSnapshotRow> rows = valued.stream().map(v -> new PositionSnapshotRow(v.position().brokerRef(), v.symbol(),
                 v.instrumentId(), v.position().securityType(), v.position().currency(), v.position().exchange(),
                 v.position().quantity(), v.position().averageCost(), v.price(), v.priceSource().name(), v.marketValue(),

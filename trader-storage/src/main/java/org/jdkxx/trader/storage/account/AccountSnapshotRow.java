@@ -28,6 +28,8 @@ public record AccountSnapshotRow(
         BigDecimal unrealizedPnl,
         BigDecimal realizedPnl,
         BigDecimal accruedDividend,
+        /** 应计利息（盈透 $LEDGER-AccruedCash）；3.1.3 起采集，更早的快照为 null。 */
+        BigDecimal accruedInterest,
         BigDecimal positionValue,
         int positions,
         String reconStatus,

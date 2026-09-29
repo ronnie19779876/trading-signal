@@ -31,6 +31,8 @@ export interface AccountSnapshot {
   unrealizedPnl: number | null
   realizedPnl: number | null
   accruedDividend: number | null
+  /** 应计利息（盈透 $LEDGER-AccruedCash）；3.1.3 起采集，更早的快照为 null */
+  accruedInterest: number | null
   /** 本系统口径：Σ 数量 × 收盘价（只算股票） */
   positionValue: number | null
   positions: number
@@ -124,6 +126,8 @@ export interface LiveMoney {
   grossPositionValue: number | null
   stockMarketValue: number | null
   accruedDividend: number | null
+  /** 应计利息（盈透 $LEDGER-AccruedCash）。恒等式的第四项：现金 + 股票市值 + 应计股息 + 应计利息 = 净值 */
+  accruedInterest: number | null
   /** 盈透账户汇总约 3 分钟才推一次 */
   updatedAt: string
 }

@@ -41,8 +41,12 @@ class AccountReconcilerTest {
     }
 
     private static AccountSummary summary(String net, String cash, String stock, String div) {
+        return summary(net, cash, stock, div, "0");
+    }
+
+    private static AccountSummary summary(String net, String cash, String stock, String div, String interest) {
         return new AccountSummary(Broker.IBKR, "ACCT-A", Instant.parse("2026-09-14T22:00:00Z"), "USD", dec(net), dec(cash), dec(stock),
-                null, null, null, null, null, null, dec(div), Map.of());
+                null, null, null, null, null, null, dec(div), dec(interest), Map.of());
     }
 
     private static Check check(Result r, String name) {
@@ -63,11 +67,49 @@ class AccountReconcilerTest {
     }
 
     @Test
-    void 恒等式按偏差分级_缺字段为WARN() {
+    void 恒等式按偏差分级() {
         assertThat(AccountReconciler.identity(summary("100002.4", "2", "100000", "0"), ONE_USD).status()).isEqualTo(Status.OK);
         assertThat(AccountReconciler.identity(summary("100003.5", "2", "100000", "0"), ONE_USD).status()).isEqualTo(Status.WARN);
         assertThat(AccountReconciler.identity(summary("101000", "2", "100000", "0"), ONE_USD).status()).isEqualTo(Status.FAIL);
-        assertThat(AccountReconciler.identity(summary("100002", "2", "100000", null), ONE_USD).status()).isEqualTo(Status.WARN);
+    }
+
+    /**
+     * 要害：应计利息是恒等式的第四项。
+     *
+     * <p>数字取自 2026-09-28 生产快照（补拍那次）：
+     * 25899.69 + 484142.45 + 379.49 + <b>1.49</b> = 510423.12，与盈透净值分毫不差。
+     * 3.1.2 及以前只加前三项，少的正好是 {@code $LEDGER-AccruedCash} 那 1.49——
+     * 对账误判 WARN、快照作业记 PARTIAL、{@code jobs} 健康降级，而数据本身没有任何问题。
+     * 此前 8 次快照全过，只因现金余额小、应计利息一直是 0。
+     */
+    @Test
+    void 恒等式含应计利息_用09_28生产真实数字() {
+        Check c = AccountReconciler.identity(
+                summary("510423.12", "25899.69", "484142.45", "379.49", "1.49"), ONE_USD);
+
+        assertThat(c.status()).as("四项相加正好等于净值").isEqualTo(Status.OK);
+        assertThat(c.detail()).contains("应计利息 1.49").contains("相差 0.00");
+
+        // 同一组数字，漏掉应计利息就会误报（3.1.2 及以前的行为）
+        assertThat(AccountReconciler.identity(
+                summary("510423.12", "25899.69", "484142.45", "379.49", "0"), ONE_USD).status())
+                .as("少算这一项就会误判").isEqualTo(Status.WARN);
+    }
+
+    /**
+     * 缺项按 0 计、继续核对，而不是整条弃核（3.1.3 改）。
+     * 盈透对不同账户类型返回的标签不同，少一项就放弃会让这条关键检查在一部分账户上永远失效；
+     * detail 里注明哪几项是按 0 计的。净值缺了才真的没法算。
+     */
+    @Test
+    void 缺项按0计并在文案里注明() {
+        Check c = AccountReconciler.identity(summary("100002", "2", "100000", null, null), ONE_USD);
+        assertThat(c.status()).isEqualTo(Status.OK);
+        assertThat(c.detail()).contains("按 0 计").contains("应计股息").contains("应计利息");
+
+        Check noNet = AccountReconciler.identity(summary(null, "2", "100000", "0"), ONE_USD);
+        assertThat(noNet.status()).as("净值缺了才真的没法核对").isEqualTo(Status.WARN);
+        assertThat(noNet.detail()).contains("没有净值");
     }
 
     @Test

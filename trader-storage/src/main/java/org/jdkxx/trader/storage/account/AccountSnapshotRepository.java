@@ -30,7 +30,7 @@ public class AccountSnapshotRepository {
             rs.getBigDecimal("net_liquidation"), rs.getBigDecimal("total_cash"), rs.getBigDecimal("stock_market_value"),
             rs.getBigDecimal("gross_position_value"), rs.getBigDecimal("available_funds"), rs.getBigDecimal("buying_power"),
             rs.getBigDecimal("excess_liquidity"), rs.getBigDecimal("unrealized_pnl"), rs.getBigDecimal("realized_pnl"),
-            rs.getBigDecimal("accrued_dividend"), rs.getBigDecimal("position_value"), rs.getInt("positions"),
+            rs.getBigDecimal("accrued_dividend"), rs.getBigDecimal("accrued_interest"), rs.getBigDecimal("position_value"), rs.getInt("positions"),
             rs.getString("recon_status"), rs.getString("recon"),
             rs.getObject("job_run_id") == null ? null : rs.getLong("job_run_id"));
 
@@ -58,8 +58,8 @@ public class AccountSnapshotRepository {
         Long id = jdbc.queryForObject("""
                 INSERT INTO account_snapshot (broker, account_key, account_mask, as_of_date, taken_at, currency, net_liquidation,
                         total_cash, stock_market_value, gross_position_value, available_funds, buying_power, excess_liquidity,
-                        unrealized_pnl, realized_pnl, accrued_dividend, position_value, positions, recon_status, recon, raw, job_run_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?)
+                        unrealized_pnl, realized_pnl, accrued_dividend, accrued_interest, position_value, positions, recon_status, recon, raw, job_run_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?)
                 ON CONFLICT (broker, account_key, as_of_date) DO UPDATE SET
                     account_mask = EXCLUDED.account_mask, taken_at = EXCLUDED.taken_at, currency = EXCLUDED.currency,
                     net_liquidation = EXCLUDED.net_liquidation, total_cash = EXCLUDED.total_cash,
@@ -67,6 +67,7 @@ public class AccountSnapshotRepository {
                     available_funds = EXCLUDED.available_funds, buying_power = EXCLUDED.buying_power,
                     excess_liquidity = EXCLUDED.excess_liquidity, unrealized_pnl = EXCLUDED.unrealized_pnl,
                     realized_pnl = EXCLUDED.realized_pnl, accrued_dividend = EXCLUDED.accrued_dividend,
+                    accrued_interest = EXCLUDED.accrued_interest,
                     position_value = EXCLUDED.position_value, positions = EXCLUDED.positions,
                     recon_status = EXCLUDED.recon_status, recon = EXCLUDED.recon, raw = EXCLUDED.raw, job_run_id = EXCLUDED.job_run_id
                 RETURNING id""", Long.class,
@@ -74,7 +75,7 @@ public class AccountSnapshotRepository {
                 Timestamp.from(header.takenAt()), header.currency(), header.netLiquidation(), header.totalCash(),
                 header.stockMarketValue(), header.grossPositionValue(), header.availableFunds(), header.buyingPower(),
                 header.excessLiquidity(), header.unrealizedPnl(), header.realizedPnl(), header.accruedDividend(),
-                header.positionValue(), header.positions(), header.reconStatus(), toJson(checks), toJson(raw), header.jobRunId());
+                header.accruedInterest(), header.positionValue(), header.positions(), header.reconStatus(), toJson(checks), toJson(raw), header.jobRunId());
         jdbc.update("DELETE FROM position_snapshot WHERE snapshot_id = ?", id);
         if (!positions.isEmpty()) {
             List<Object[]> args = new ArrayList<>(positions.size());

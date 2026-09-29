@@ -137,7 +137,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | 方法与路径 | 说明 |
 | --- | --- |
 | `POST /api/account/snapshot?force=false` | 账户快照作业：持仓 + 资金汇总 + 按收盘价估值 + 对账。**只能在快照窗口内拍**（交易日美东 16:15 至次日 04:00），窗口外 409——盈透只给当前持仓，过去的日子补不回来。`force=true` 只在开发环境可用，按最近一个已收盘交易日口径拍，用于验证 |
-| `GET /api/account/snapshots/latest` | 最新一份快照：`snapshot`（资金、本系统估值 `positionValue`、`reconStatus`、`recon` 各项明细）+ `positions` + `change`（与上一份快照相比：`netLiquidationChange` 含出入金；`positionPnl` = Σ 两份快照**数量相同**的持仓 数量 × 价差——数量变过的一律不计，条数记在 `excludedPositions`（拆股/合股与买卖在快照里长得一样，而拆股当天数量与价格同时按比例变，按旧口径 3:1 拆股会给出 `10 × (100 − 300) = −2000` 这种量级错数，3.1.2 修）；`positionsChanged=true` 表示持仓集合或数量变过（买卖，或拆股/合股），只是近似；没有上一份时为 null）；还没有 → 404 |
+| `GET /api/account/snapshots/latest` | 最新一份快照：`snapshot`（资金含 `accruedInterest` 应计利息（3.1.3 起采集，更早的快照为 null）、本系统估值 `positionValue`、`reconStatus`、`recon` 各项明细）+ `positions` + `change`（与上一份快照相比：`netLiquidationChange` 含出入金；`positionPnl` = Σ 两份快照**数量相同**的持仓 数量 × 价差——数量变过的一律不计，条数记在 `excludedPositions`（拆股/合股与买卖在快照里长得一样，而拆股当天数量与价格同时按比例变，按旧口径 3:1 拆股会给出 `10 × (100 − 300) = −2000` 这种量级错数，3.1.2 修）；`positionsChanged=true` 表示持仓集合或数量变过（买卖，或拆股/合股），只是近似；没有上一份时为 null）；还没有 → 404 |
 | `GET /api/account/snapshots?from&to` | 快照序列（默认最近 90 天），不含持仓明细 |
 | `POST /api/account/holdings/sync?apply=false` | 按盈透持仓维护池里的 HOLDING。默认只返回计划（`plan.changes` 的 `ADD` / `PROMOTE` / `RETURN_TO_POOL` / `REMOVE`），`apply=true` 才改池，并触发实时订阅对账与深度回补；盈透返回空持仓而池里还有 HOLDING 时不执行（`plan.blocked`）；盈透未连接 → 503 |
 | `GET /api/account/audit?date=` | 账户审计（收盘巡检第三段），默认审最近一个已收盘交易日：当天快照是否存在（美东 18:30 前、或从来没有过快照即刚启用时，缺快照只提示）、对账状态（FAIL 为关键项，WARN 只提示）、缺价、最近一次快照作业；休市日直接判过 |
@@ -146,7 +146,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 实时账户 `GET /api/account/live` 的字段。**全部是盈透原值，不做任何折算**（3.0.3 起；与盈透 App 一致），各部分自带更新时间，本来就不同步：
 - `status`：`LIVE` 数据在推送；`WARMING` 刚订阅；`DISCONNECTED` 网关断了，保留断线前最后收到的数据；`UNAVAILABLE` 取不到（网关未启用 / 未连接 / 选不出账户），`detail` 说明原因。
 - `accountMask`、`currency`、`startedAt`（本次订阅开始时间）、`lastError`（订阅被券商拒绝时的说明，例如账户汇总超出每客户端 2 个的上限 322）。
-- `money`：盈透账户汇总——`netLiquidation`（净值）、`totalCash`、`availableFunds`、`buyingPower`、`excessLiquidity`、`grossPositionValue`、`stockMarketValue`、`accruedDividend`、`updatedAt`。**约 3 分钟才推一次**（实测），可能比盈透 App 晚几分钟。
+- `money`：盈透账户汇总——`netLiquidation`（净值）、`totalCash`、`availableFunds`、`buyingPower`、`excessLiquidity`、`grossPositionValue`、`stockMarketValue`、`accruedDividend`、`accruedInterest`（应计利息，3.1.3 起）、`updatedAt`。**约 3 分钟才推一次**（实测），可能比盈透 App 晚几分钟。
 - `pnl`：盈透账户盈亏 `daily`（当日）、`unrealized`（浮动）、`realized`（当日已实现）、`updatedAt`；按变化秒级推送，盘前盘后盈透用扩展时段价重算。**还没收到有效推送时整个为 null**（首条推送不对、被丢弃；10 秒没有有效值网关会重订，最多 3 次）。
 - `positions[]`：`symbol`（类别股已换成点，如 `BRK.B`）、`conId`、`securityType`、`quantity`、`averageCost`；`last` / `lastAt` / `lastDelayed` 为盈透行情最新价（与 App「最新价」同源，行情未到时为 null，`lastDelayed=true` 表示降级成延迟行情）；`priorClose` 为行情前收（与 App「PRIOR CLOSE」同值）；
   与 App 同口径的派生项（3.0.4）：`change` = last − priorClose、`changePct`、`costBasis` = averageCost × quantity（App 的 Cost Basis）、`portfolioPct` = marketValue ÷ money.netLiquidation × 100（App 的 % of Portfolio），缺输入时为 null，均两位小数；
@@ -162,7 +162,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 
 对账四项，`reconStatus` 取最差：
 
-- `identity`：现金 + 股票市值 + 应计股息 = 净值，差 ≤ 1 美元 OK、≤ 净值 0.1% WARN、否则 FAIL（只适用于纯股票账户）；
+- `identity`：现金 + 股票市值 + 应计股息 + **应计利息** = 净值，差 ≤ 1 美元 OK、≤ 净值 0.1% WARN、否则 FAIL。缺项按 0 计并在 detail 里注明，净值缺了才判无法核对；detail 会把四项数字都打出来。**应计利息是 3.1.3 补的第四项**：此前现金余额小、它一直是 0，三项相加正好成立，2026-09-28 现金涨到两万多后它变成 1.49，等式差的就是这一项，对账因此误判 WARN、作业记 PARTIAL，而数据本身没错。**已知边界**：盈透分类账还有 13 类其它资产（债券、期权、基金、货币基金、外汇现金、TBill/TBond、认股权证、加密），当前账户全为 0；账上一旦出现其中任意一类，这条等式会以同样方式少算一项；
 - `marketValue`：Σ 数量 × 收盘价 对比盈透股票市值，≤ 0.2% OK、≤ 1% WARN、否则 FAIL；有持仓缺价时 WARN；
 - `holdings`：持有的股票与池里的 HOLDING 角色一致（基准与现金管理工具不参与），不一致或库里没有该标的时 WARN；快照作业先同步再对账，正常应为 OK；
 - `otherAssets`：非股票持仓不参与估值，有就 WARN。

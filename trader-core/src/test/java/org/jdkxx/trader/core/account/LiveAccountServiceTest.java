@@ -81,7 +81,8 @@ class LiveAccountServiceTest {
 
     private static AccountSummary summary() {
         return new AccountSummary(Broker.IBKR, ACCT, T, "USD", new BigDecimal("508769.74"), new BigDecimal("2801.18"),
-                new BigDecimal("505589.07"), null, new BigDecimal("375673.12"), null, null, null, null, new BigDecimal("379.49"), Map.of());
+                new BigDecimal("505589.07"), null, new BigDecimal("375673.12"), null, null, null, null, new BigDecimal("379.49"),
+                BigDecimal.ZERO, Map.of());
     }
 
     /** 第一次读发起订阅并报 WARMING；账户号只给打码后的形式。 */
