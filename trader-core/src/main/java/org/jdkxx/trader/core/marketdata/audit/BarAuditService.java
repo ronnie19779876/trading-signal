@@ -96,15 +96,26 @@ public class BarAuditService {
         summary.put("tradingDay", true);
 
         // 1. 全量 ∪ 池 ∪ 持仓 当天都有 K 线
+        //    detail 把分母的算式**不管绿不绿都打出来**（3.1.4 改）。分母悄悄变小是这个项目踩过三次的坑：
+        //    成分股被误删（纯集合差）、标的被标 UNRESOLVED（批次级恢复会主动写）、当天停牌——
+        //    三次都是分子分母一起少一、这条检查照样全绿。与其每次再加一条伴随检查，不如把算式摆在明面上。
+        UniverseScope.TargetBreakdown b = scope.targetBreakdown();
         Map<Long, InstrumentRow> targets = new LinkedHashMap<>();
-        scope.universe().forEach(r -> targets.put(r.id(), r));
-        scope.poolAndHoldings().forEach(r -> targets.put(r.id(), r));
+        b.expected().forEach(r -> targets.put(r.id(), r));
         Set<Long> have = bars.instrumentIdsWithBarOn(d);
         List<String> missing = targets.values().stream().filter(r -> !have.contains(r.id())).map(InstrumentRow::symbol).sorted().toList();
+        summary.put("nominalTargets", b.nominal());
+        summary.put("constituentTargets", b.constituents());
+        summary.put("poolExtraTargets", b.poolExtras());
+        summary.put("downgradedTargets", b.unusable().size());
         summary.put("targets", targets.size());
         summary.put("withBarOnDate", targets.size() - missing.size());
+        String arithmetic = "应采 " + targets.size() + " = 名义 " + b.nominal()
+                + "（成分股 " + b.constituents() + " + 池与持仓另加 " + b.poolExtras() + "）"
+                + " − 降级 " + b.unusable().size() + " − 查不到标的行 " + b.missingRows();
         checks.add(new Check("completeness", missing.isEmpty(), true,
-                missing.isEmpty() ? "全部 " + targets.size() + " 只在 " + d + " 都有 K 线" : missing.size() + " 只缺 " + d + " 的 K 线",
+                arithmetic + "；" + d + " 实采 " + (targets.size() - missing.size())
+                        + (missing.isEmpty() ? "，没有缺的" : "，缺 " + missing.size() + " 只：" + String.join("、", head(missing, 10))),
                 missing.size(), head(missing, 30)));
 
         // 1b. 成分股集合本身有没有缩水（2026-09-25 加）
@@ -129,19 +140,18 @@ public class BarAuditService {
         //     批次级恢复（UnknownSymbolGuard）在富途不认识某个代码时会主动把它标成 UNRESOLVED，
         //     于是它掉出 usable()：completeness 的分子分母一起少一，检查照样全绿、人什么也看不到。
         //     所以按绝对数量盯住：名义成分股数里还有多少是真能采的。这是守护三。
-        List<InstrumentRow> unusable = scope.unusableConstituents();
-        int nominal = scope.constituentInstruments();
+        List<InstrumentRow> unusable = b.unusable();
+        int nominal = b.nominal();
         int collectable = nominal - unusable.size();
         int resolveFloor = nominal * (100 - UNIVERSE_SHRINK_TOLERANCE_PERCENT) / 100;
         List<String> downgraded = unusable.stream()
                 .map(r -> r.symbol() + "(" + r.resolveStatus() + (r.delisted() ? ",已退市" : "") + ")")
                 .sorted().toList();
-        summary.put("collectableConstituents", collectable);
-        summary.put("downgradedConstituents", unusable.size());
+        summary.put("collectableTargets", collectable);
         checks.add(new Check("resolveDowngrade", collectable >= resolveFloor, true,
                 unusable.isEmpty()
-                        ? "成分股 " + nominal + " 只全部可采集"
-                        : nominal + " 只成分股里 " + unusable.size() + " 只采不了（" + String.join("、", head(downgraded, 10))
+                        ? "目标 " + nominal + " 只全部可采集"
+                        : nominal + " 只目标里 " + unusable.size() + " 只采不了（" + String.join("、", head(downgraded, 10))
                                 + "），还能采 " + collectable + " 只，下限 " + resolveFloor
                                 + "。代码改名是正常的，但要确认是真改名而不是富途侧出了事",
                 unusable.size(), head(downgraded, 30)));

@@ -39,6 +39,24 @@
     没有新增或改动 REST 端点，Postman 集合的 `ENDPOINTS` 不变。
   - **已知边界**：验收只能靠真实数据——下一次有标的改名时看它是否只丢自己，这个造不出来，**至今未经真实数据验证**。
     另：代码会被回收（PARA 实证），靠代码认标的在跨公司行动时不可靠，本期不动标的身份模型。
+- 改进：**`completeness` 的分母算式摆到明面上**（ARCHITECTURE §22.7）。
+  detail 现在不管绿不绿都打出 `应采 E = 名义 N（成分股 c + 池与持仓另加 p） − 降级 d − 查不到标的行 x；实采 A`，
+  `summary` 给出 `nominalTargets` / `constituentTargets` / `poolExtraTargets` / `downgradedTargets` / `collectableTargets`。
+  - **为什么**：分母被悄悄缩小本项目踩过**三次**——成分股被误删（纯集合差）、标的被标 UNRESOLVED
+    （上面那条批次级恢复会主动写）、当天停牌。三次都是**分子分母一起少一、检查照样全绿**。
+    与其每出一种就再加一条伴随检查，不如让算式一直可见。
+  - 构成由新的 `UniverseScope.targetBreakdown()` 一次算清，`completeness` 与 `resolveDowngrade` 共用
+    （替掉上一条里刚加的 `constituentInstruments()` / `unusableConstituents()` 两个方法，不重复计算也不会分叉）。
+    `resolveDowngrade` 的口径随之从「成分股」扩成「名义目标」（含池与持仓另加的）——那才是 completeness 的分母。
+  - **零新 SQL、零新依赖**：用的全是现成的 `currentAll()` / `pool.findAll()` / `findByIds()`。
+  - 测试：`BarAuditServiceTest` 新增「全绿时也必须把分母算式打出来」，断言 detail 的五项与 summary 字段；
+    反证两条（detail 退回旧写法、summary 去掉构成）均确认变红。
+  - 按规则 7 同步 `docs/API.md`。没有新增或改动端点，前端 `lib/audit.ts` 无新检查项、不用改，Postman 集合不变。
+- **停牌剔除分母刻意没做**（方案已出、结论是等下次）。实测：`valuation_snapshot` 只覆盖 21 个交易日，
+  `suspended=true` 整个历史只出现过 **1 天 1 只**（WBD / 2026-10-06），而「`suspended=true` 当天却有 K 线」是 0 条。
+  相关性完美但**样本 n=1**，不足以把它当规律写进关键检查。在那之前停牌标的照旧算进分母、缺 K 线照旧报出来——
+  **宁可多报不可漏报**。副作用：WBD 停牌期间日线审计的 `completeness` 会持续报红，
+  周六成分股周同步把它退出后自然转绿。
 - 运维（不在代码里）：2026-10-06 已在生产库手工把 `PSKY` 置 `UNRESOLVED`（事务内、只动一行），
   随后手工补跑增量 #139（需补 90、成功 90、失败 0、写入 540 根 K 线）与估值 #140（520/520），基本面审计全绿。
 

@@ -75,22 +75,42 @@ public class UniverseScope {
         return out;
     }
 
-    /** 现任成分股的去重标的数，<b>不过 {@link #usable} 过滤</b>：审计拿它当分母的"名义值"。 */
-    public int constituentInstruments() {
-        return constituentIds().size();
+    /**
+     * 采集目标（现任成分股 ∪ 池 ∪ 持仓）的构成：名义多少、被 {@link #usable} 挡掉多少、最终应采多少。
+     *
+     * @param constituents 现任成分股去重数
+     * @param poolExtras   池与持仓里<b>不在</b>成分股里的那些（基准、现金管理工具这类）
+     * @param missingRows  有 id 却查不到标的行的个数（外键在，正常恒为 0；非 0 说明算式对不上，要打出来）
+     * @param unusable     被挡掉的行（非 RESOLVED 或已退市），逐只点名用
+     * @param expected     最终应采的行
+     */
+    public record TargetBreakdown(int constituents, int poolExtras, int missingRows,
+                                  List<InstrumentRow> unusable, List<InstrumentRow> expected) {
+
+        /** 名义目标数：成分股 + 池与持仓另加的。 */
+        public int nominal() {
+            return constituents + poolExtras;
+        }
     }
 
     /**
-     * 现任成分股里被 {@link #usable} 挡掉的那些（非 RESOLVED 或已退市）。
+     * 把 {@code completeness} 分母的构成一次算清。
      *
-     * <p>审计的 completeness 用的分母就是 {@code usable()} 的结果，所以标的一被标成 UNRESOLVED，
-     * 分母跟着变小、<b>完整性检查照样全绿</b>——和"成分股被误删看不见"是同一个坑。
-     * 批次级恢复（{@link UnknownSymbolGuard}）会主动写这个状态，更需要有人按绝对数量盯住这个集合。
+     * <p><b>为什么要有这个</b>：分母悄悄变小是这个项目踩过三次的坑——成分股被误删（纯集合差）、
+     * 标的被标 UNRESOLVED（批次级恢复会主动写，见 {@link UnknownSymbolGuard}）、当天停牌。
+     * 三次都是<b>分子分母一起少一、完整性检查照样全绿</b>，人什么也看不到。
+     * 前两次各补了一条伴随检查；与其再加第三条，不如让分母的算式本身永远摆在明面上：
+     * 审计把名义、各项减数、应采、实采<b>不管绿不绿都打出来</b>，缩水就不可能隐身。
      */
-    public List<InstrumentRow> unusableConstituents() {
-        return instruments.findByIds(constituentIds()).stream()
-                .filter(r -> !("RESOLVED".equals(r.resolveStatus()) && !r.delisted()))
-                .toList();
+    public TargetBreakdown targetBreakdown() {
+        Set<Long> constituentIds = constituentIds();
+        Set<Long> all = new LinkedHashSet<>(constituentIds);
+        pool.findAll().forEach(p -> all.add(p.instrumentId()));
+        List<InstrumentRow> rows = instruments.findByIds(all);
+        List<InstrumentRow> expected = usable(rows);
+        List<InstrumentRow> unusable = rows.stream().filter(r -> !isUsable(r)).toList();
+        return new TargetBreakdown(constituentIds.size(), all.size() - constituentIds.size(),
+                all.size() - rows.size(), unusable, expected);
     }
 
     private Set<Long> constituentIds() {
@@ -106,6 +126,10 @@ public class UniverseScope {
     }
 
     private static List<InstrumentRow> usable(List<InstrumentRow> rows) {
-        return rows.stream().filter(r -> "RESOLVED".equals(r.resolveStatus()) && !r.delisted()).toList();
+        return rows.stream().filter(UniverseScope::isUsable).toList();
+    }
+
+    private static boolean isUsable(InstrumentRow r) {
+        return "RESOLVED".equals(r.resolveStatus()) && !r.delisted();
     }
 }

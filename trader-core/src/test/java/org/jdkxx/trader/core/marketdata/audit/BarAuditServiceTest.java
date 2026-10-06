@@ -36,6 +36,12 @@ class BarAuditServiceTest {
         return new InstrumentRow(id, Market.US, symbol, symbol, null, SecurityType.STOCK, 1, null, false, null, 1L, "RESOLVED");
     }
 
+    /** 把分母构成一次 stub 好：expected 是应采的行，unusable 是被挡掉的行。 */
+    private static void breakdown(UniverseScope scope, List<InstrumentRow> expected, List<InstrumentRow> unusable) {
+        when(scope.targetBreakdown()).thenReturn(new UniverseScope.TargetBreakdown(
+                expected.size() + unusable.size(), 0, 0, unusable, expected));
+    }
+
     private static MarketDataProperties props() {
         return TestProperties.defaults();
     }
@@ -75,8 +81,7 @@ class BarAuditServiceTest {
         when(days.coverage(Market.US)).thenReturn(
                 new TradingDayRepository.Coverage(LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 18), 5000, 2591, 2409));
         UniverseScope scope = mock(UniverseScope.class);
-        when(scope.universe()).thenReturn(List.of());
-        when(scope.poolAndHoldings()).thenReturn(List.of());
+        breakdown(scope, List.of(), List.of());
         BarSyncStateRepository states = mock(BarSyncStateRepository.class);
         when(states.findAll()).thenReturn(List.of());
         JobRunRepository jobs = mock(JobRunRepository.class);
@@ -87,6 +92,33 @@ class BarAuditServiceTest {
 
         assertThat(r.summary()).containsEntry("tradingDay", true);
         assertThat(r.checks()).extracting(BarAuditService.Check::name).contains("completeness", "sanity", "continuity", "calendarCoverage");
+    }
+
+    /**
+     * 这次改动要守住的就是这条：**分母的算式不管绿不绿都打出来**。
+     * 分母悄悄变小是这个项目踩过三次的坑（成分股被误删、标的被降级、当天停牌），
+     * 三次都是分子分母一起少一、检查照样全绿。算式摆在明面上，缩水就不可能隐身。
+     */
+    @Test
+    void 完整性检查全绿时也必须把分母算式打出来() {
+        BarAuditService.Report r = auditWith(downgraded(100, 1));
+
+        BarAuditService.Check c = check(r, "completeness");
+        assertThat(c.ok()).isTrue();
+        assertThat(c.detail())
+                .as("绿的时候也要能看出分母是怎么来的")
+                .contains("应采 99")
+                .contains("名义 100")
+                .contains("成分股 100")
+                .contains("池与持仓另加 0")
+                .contains("降级 1")
+                .contains("查不到标的行 0")
+                .contains("实采 99");
+        assertThat(r.summary())
+                .containsEntry("nominalTargets", 100)
+                .containsEntry("downgradedTargets", 1)
+                .containsEntry("targets", 99)
+                .containsEntry("withBarOnDate", 99);
     }
 
     /**
@@ -105,7 +137,7 @@ class BarAuditServiceTest {
         assertThat(c.critical()).isTrue();
         assertThat(c.ok()).as("1 只改名是正常的，不判失败").isTrue();
         assertThat(c.count()).isEqualTo(1);
-        assertThat(c.detail()).contains("100 只成分股里 1 只采不了").contains("DOWN0");
+        assertThat(c.detail()).contains("100 只目标里 1 只采不了").contains("DOWN0");
         assertThat(c.samples()).anySatisfy(s -> assertThat(s).contains("DOWN0").contains("UNRESOLVED"));
     }
 
@@ -119,7 +151,15 @@ class BarAuditServiceTest {
         assertThat(r.ok()).as("关键项，总判定跟着失败").isFalse();
     }
 
-    /** 名义 nominal 只成分股，其中 bad 只非 RESOLVED。 */
+    private static List<InstrumentRow> expectedRows(int n) {
+        List<InstrumentRow> out = new java.util.ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            out.add(row(1 + i, i == 0 ? "AAPL" : "OK" + i));
+        }
+        return out;
+    }
+
+    /** 名义 nominal 只目标，其中 bad 只非 RESOLVED。 */
     private static UniverseScope downgraded(int nominal, int bad) {
         UniverseScope scope = mock(UniverseScope.class);
         List<InstrumentRow> unusable = new java.util.ArrayList<>();
@@ -127,10 +167,8 @@ class BarAuditServiceTest {
             unusable.add(new InstrumentRow(1000 + i, Market.US, "DOWN" + i, "DOWN" + i, null, SecurityType.STOCK,
                     1, null, false, null, 0L, "UNRESOLVED"));
         }
-        when(scope.constituentInstruments()).thenReturn(nominal);
-        when(scope.unusableConstituents()).thenReturn(unusable);
-        when(scope.universe()).thenReturn(List.of(row(1, "AAPL")));
-        when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "AAPL")));
+        when(scope.targetBreakdown()).thenReturn(new UniverseScope.TargetBreakdown(
+                nominal, 0, 0, unusable, expectedRows(nominal - bad)));
         return scope;
     }
 
@@ -140,7 +178,10 @@ class BarAuditServiceTest {
         when(days.coverage(Market.US)).thenReturn(
                 new TradingDayRepository.Coverage(LocalDate.of(2006, 8, 21), LocalDate.of(2026, 10, 16), 5071, 2539, 2532));
         DailyBarRepository bars = mock(DailyBarRepository.class);
-        when(bars.instrumentIdsWithBarOn(any())).thenReturn(Set.of(1L));
+        // 应采的都有 K 线：这组用例要的是「completeness 全绿，但降级仍被点名」
+        Set<Long> withBar = scope.targetBreakdown().expected().stream()
+                .map(InstrumentRow::id).collect(java.util.stream.Collectors.toSet());
+        when(bars.instrumentIdsWithBarOn(any())).thenReturn(withBar);
         when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(0, 0, 0, 0, 0, 0));
         when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
         when(bars.gaps(any(), any(), anyInt())).thenReturn(List.of());
@@ -174,8 +215,7 @@ class BarAuditServiceTest {
                 1L, LocalDate.of(2011, 7, 4), new java.math.BigDecimal("128.24"), new java.math.BigDecimal("129.30"),
                 new java.math.BigDecimal("109.57"), new java.math.BigDecimal("109.57"), 285890054L, java.math.BigDecimal.ZERO)));
         UniverseScope scope = mock(UniverseScope.class);
-        when(scope.universe()).thenReturn(List.of(row(1, "SPY")));
-        when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "SPY")));
+        breakdown(scope, List.of(row(1, "SPY")), List.of());
         BarSyncStateRepository states = mock(BarSyncStateRepository.class);
         when(states.findAll()).thenReturn(List.of());
         JobRunRepository jobs = mock(JobRunRepository.class);
@@ -208,8 +248,7 @@ class BarAuditServiceTest {
         when(bars.unsettledBars(any(), any(), anyInt())).thenReturn(List.of(
                 new DailyBarRepository.UnsettledBar(1L, LocalDate.of(2026, 9, 9), java.time.Instant.parse("2026-09-09T15:00:00Z"))));
         UniverseScope scope = mock(UniverseScope.class);
-        when(scope.universe()).thenReturn(List.of(row(1, "AAPL")));
-        when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "AAPL")));
+        breakdown(scope, List.of(row(1, "AAPL")), List.of());
         BarSyncStateRepository states = mock(BarSyncStateRepository.class);
         when(states.findAll()).thenReturn(List.of());
         JobRunRepository jobs = mock(JobRunRepository.class);
@@ -241,8 +280,7 @@ class BarAuditServiceTest {
                 new DailyBarRepository.InstrumentCoverage(1L, 5000, LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 9))));
         when(bars.phantomBars(anyInt())).thenReturn(List.of());
         UniverseScope scope = mock(UniverseScope.class);
-        when(scope.universe()).thenReturn(List.of(row(1, "SPY")));
-        when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "SPY")));
+        breakdown(scope, List.of(row(1, "SPY")), List.of());
         BarSyncStateRepository states = mock(BarSyncStateRepository.class);
         when(states.findAll()).thenReturn(List.of());
         JobRunRepository jobs = mock(JobRunRepository.class);
@@ -302,8 +340,7 @@ class BarAuditServiceTest {
                 new DailyBarRepository.InstrumentCoverage(1L, 5000, LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 9))));
         when(bars.phantomBars(anyInt())).thenReturn(List.of());
         UniverseScope scope = mock(UniverseScope.class);
-        when(scope.universe()).thenReturn(List.of(row(1, "AAPL")));
-        when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "AAPL")));
+        breakdown(scope, List.of(row(1, "AAPL")), List.of());
         when(scope.constituentCounts()).thenReturn(counts);
         BarSyncStateRepository states = mock(BarSyncStateRepository.class);
         when(states.findAll()).thenReturn(List.of());
@@ -341,8 +378,7 @@ class BarAuditServiceTest {
         }
         when(bars.phantomBars(anyInt())).thenReturn(samples);
         UniverseScope scope = mock(UniverseScope.class);
-        when(scope.universe()).thenReturn(List.of(row(1, "SPY")));
-        when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "SPY")));
+        breakdown(scope, List.of(row(1, "SPY")), List.of());
         BarSyncStateRepository states = mock(BarSyncStateRepository.class);
         when(states.findAll()).thenReturn(List.of());
         JobRunRepository jobs = mock(JobRunRepository.class);
@@ -382,8 +418,7 @@ class BarAuditServiceTest {
         when(bars.phantomBarCount()).thenReturn(0);
         when(bars.phantomBars(anyInt())).thenReturn(List.of());
         UniverseScope scope = mock(UniverseScope.class);
-        when(scope.universe()).thenReturn(List.of(row(1, "AAPL"), row(2, "MSFT")));
-        when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "AAPL")));
+        breakdown(scope, List.of(row(1, "AAPL"), row(2, "MSFT")), List.of());
         BarSyncStateRepository states = mock(BarSyncStateRepository.class);
         when(states.findAll()).thenReturn(List.of());
         JobRunRepository jobs = mock(JobRunRepository.class);
