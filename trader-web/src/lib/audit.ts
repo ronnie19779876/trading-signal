@@ -7,6 +7,7 @@ export const AUDIT_CHECK_LABEL: Record<string, string> = {
   completeness: '完整性', sanity: '合理性', continuity: '连续性', rehab: '复权因子', syncErrors: '同步错误',
   incrementJob: '增量作业', calendarCoverage: '日历覆盖', historyGaps: '历史缺口', phantomBars: '幽灵 K 线',
   unsettledBars: '未落定 K 线', gateway: '网关', calendar: '交易日历',
+  universeSize: '成分股规模', resolveDowngrade: '标的降级',
   // 基本面
   valuationCompleteness: '估值完整性', valuationSanity: '估值合理性', financialsFreshness: '财报新鲜度', valuationJob: '估值作业',
   // 账户

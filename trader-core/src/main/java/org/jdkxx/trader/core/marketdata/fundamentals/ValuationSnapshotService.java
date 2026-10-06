@@ -4,6 +4,7 @@ import org.jdkxx.trader.core.marketdata.MarketDataProperties;
 import org.jdkxx.trader.core.marketdata.SnapshotWindow;
 import org.jdkxx.trader.core.marketdata.jobs.JobContext;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
+import org.jdkxx.trader.core.marketdata.universe.UnknownSymbolGuard;
 import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.ValuationSnapshot;
@@ -21,6 +22,7 @@ import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -45,15 +47,18 @@ public class ValuationSnapshotService {
     private final MarketDataGateway gateway;
     private final ValuationRepository valuations;
     private final TradingDayRepository tradingDays;
+    private final UnknownSymbolGuard unknownSymbols;
     private final Clock clock;
 
     public ValuationSnapshotService(MarketDataProperties props, UniverseScope scope, MarketDataGateway gateway,
-                                    ValuationRepository valuations, TradingDayRepository tradingDays, Clock clock) {
+                                    ValuationRepository valuations, TradingDayRepository tradingDays,
+                                    UnknownSymbolGuard unknownSymbols, Clock clock) {
         this.props = props;
         this.scope = scope;
         this.gateway = gateway;
         this.valuations = valuations;
         this.tradingDays = tradingDays;
+        this.unknownSymbols = unknownSymbols;
         this.clock = clock;
     }
 
@@ -86,18 +91,46 @@ public class ValuationSnapshotService {
                 break;
             }
             List<Instrument> slice = targets.subList(from, Math.min(from + batch, targets.size()));
-            try {
-                List<ValuationSnapshot> got = gateway.snapshots(slice).get(60, TimeUnit.SECONDS);
-                written += valuations.upsertAll(ids, got, tradeDate);
-                ctx.progress("估值快照 " + Math.min(from + batch, targets.size()) + "/" + targets.size()
-                        + "（写入 " + written + "）");
-            } catch (Exception e) {
-                failed += slice.size();
-                log.warn("估值快照一批失败（{} 只）：{}", slice.size(), e.toString());
-                ctx.partial("一批快照失败：" + e.getMessage());
-            }
+            Fetched got = fetch(slice, ctx);
+            written += valuations.upsertAll(ids, got.snapshots(), tradeDate);
+            failed += got.failed();
+            ctx.progress("估值快照 " + Math.min(from + batch, targets.size()) + "/" + targets.size()
+                    + "（写入 " + written + "）");
         }
         return "估值快照 " + tradeDate + "：目标 " + targets.size() + " 只，写入 " + written + "，失败 " + failed;
+    }
+
+    private record Fetched(List<ValuationSnapshot> snapshots, int failed) {
+    }
+
+    /**
+     * 取一批快照；被拒时试一次批次级恢复：核实出富途不认识的代码 → 剔除 → 重取一次。
+     * 2026-10-06 PSKY 让这里一次丢掉 400 条估值，恢复之后只丢它自己。
+     */
+    private Fetched fetch(List<Instrument> slice, JobContext ctx) {
+        try {
+            return new Fetched(gateway.snapshots(slice).get(60, TimeUnit.SECONDS), 0);
+        } catch (Exception e) {
+            UnknownSymbolGuard.Outcome out = unknownSymbols.inspect(slice, e, true).orElse(null);
+            if (out != null && out.canRetry()) {
+                List<Instrument> kept = slice.stream()
+                        .filter(i -> !out.exclude().contains(i.symbol().toUpperCase(Locale.ROOT))).toList();
+                int dropped = slice.size() - kept.size();
+                if (!kept.isEmpty()) {
+                    try {
+                        List<ValuationSnapshot> got = gateway.snapshots(kept).get(60, TimeUnit.SECONDS);
+                        ctx.partial(out.detail());
+                        log.warn("剔除 {} 只未知代码后重取快照成功，本批 {} 只", dropped, kept.size());
+                        return new Fetched(got, dropped);
+                    } catch (Exception retry) {
+                        log.warn("剔除 {} 只未知代码后重取快照仍失败：{}", dropped, retry.toString());
+                    }
+                }
+            }
+            log.warn("估值快照一批失败（{} 只）：{}", slice.size(), e.toString());
+            ctx.partial("一批快照失败：" + (out == null ? e.getMessage() : out.detail()));
+            return new Fetched(List.of(), slice.size());
+        }
     }
 
     private static List<InstrumentRow> union(List<InstrumentRow> a, List<InstrumentRow> b) {

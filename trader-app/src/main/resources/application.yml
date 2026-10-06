@@ -79,6 +79,9 @@ trader:
       # 要 force 才放行。SP500 阈值 25、NDX100 阈值 5（2026-09-25 实录：真实单次退出 0~1 只）
       max-removals-per-sync: 5
       max-removals-percent: 5
+      # 批次级恢复：一批里核实出的「富途不认识」超过这个数就整批不动也不标记，留给人看
+      # （2026-10-07 实录：上线一个多月、500 多只标的，RESOLVED → 不认识真实发生 1 次）
+      max-unknown-per-batch: 3
     pool:
       max-size: 50
     refresh:

@@ -125,6 +125,27 @@ public class BarAuditService {
                         : "成分股集合缩水：" + String.join("；", shrunk) + "。查 UNIVERSE_SYNC 作业与来源页面结构",
                 shrunk.size(), shrunk));
 
+        // 1c. 标的被降级也会让 completeness 的分母变小（2026-10-07 加）
+        //     批次级恢复（UnknownSymbolGuard）在富途不认识某个代码时会主动把它标成 UNRESOLVED，
+        //     于是它掉出 usable()：completeness 的分子分母一起少一，检查照样全绿、人什么也看不到。
+        //     所以按绝对数量盯住：名义成分股数里还有多少是真能采的。这是守护三。
+        List<InstrumentRow> unusable = scope.unusableConstituents();
+        int nominal = scope.constituentInstruments();
+        int collectable = nominal - unusable.size();
+        int resolveFloor = nominal * (100 - UNIVERSE_SHRINK_TOLERANCE_PERCENT) / 100;
+        List<String> downgraded = unusable.stream()
+                .map(r -> r.symbol() + "(" + r.resolveStatus() + (r.delisted() ? ",已退市" : "") + ")")
+                .sorted().toList();
+        summary.put("collectableConstituents", collectable);
+        summary.put("downgradedConstituents", unusable.size());
+        checks.add(new Check("resolveDowngrade", collectable >= resolveFloor, true,
+                unusable.isEmpty()
+                        ? "成分股 " + nominal + " 只全部可采集"
+                        : nominal + " 只成分股里 " + unusable.size() + " 只采不了（" + String.join("、", head(downgraded, 10))
+                                + "），还能采 " + collectable + " 只，下限 " + resolveFloor
+                                + "。代码改名是正常的，但要确认是真改名而不是富途侧出了事",
+                unusable.size(), head(downgraded, 30)));
+
         // 2. 当天 K 线的字段合理性
         DailyBarRepository.DaySanity sanity = bars.sanityOn(d);
         long bad = sanity.ohlcInconsistent() + sanity.nonPositiveClose() + sanity.nullTurnover();

@@ -89,6 +89,72 @@ class BarAuditServiceTest {
         assertThat(r.checks()).extracting(BarAuditService.Check::name).contains("completeness", "sanity", "continuity", "calendarCoverage");
     }
 
+    /**
+     * 守护三：标的被标成 UNRESOLVED 后掉出 usable()，completeness 的分子分母一起少一、照样全绿，
+     * 人什么也看不到——和"成分股被误删看不见"是同一个坑。所以必须按绝对数量单独报出来。
+     */
+    @Test
+    void 降级的标的必须被点名_哪怕完整性检查全绿() {
+        UniverseScope scope = downgraded(100, 1);
+        BarAuditService.Report r = auditWith(scope);
+
+        BarAuditService.Check completeness = check(r, "completeness");
+        assertThat(completeness.ok()).as("分母跟着变小，完整性检查照样全绿——正是这个坑").isTrue();
+
+        BarAuditService.Check c = check(r, "resolveDowngrade");
+        assertThat(c.critical()).isTrue();
+        assertThat(c.ok()).as("1 只改名是正常的，不判失败").isTrue();
+        assertThat(c.count()).isEqualTo(1);
+        assertThat(c.detail()).contains("100 只成分股里 1 只采不了").contains("DOWN0");
+        assertThat(c.samples()).anySatisfy(s -> assertThat(s).contains("DOWN0").contains("UNRESOLVED"));
+    }
+
+    @Test
+    void 降级得太多就判失败() {
+        BarAuditService.Report r = auditWith(downgraded(100, 10));
+
+        BarAuditService.Check c = check(r, "resolveDowngrade");
+        assertThat(c.ok()).as("100 只里 10 只采不了，低于 95% 下限").isFalse();
+        assertThat(c.count()).isEqualTo(10);
+        assertThat(r.ok()).as("关键项，总判定跟着失败").isFalse();
+    }
+
+    /** 名义 nominal 只成分股，其中 bad 只非 RESOLVED。 */
+    private static UniverseScope downgraded(int nominal, int bad) {
+        UniverseScope scope = mock(UniverseScope.class);
+        List<InstrumentRow> unusable = new java.util.ArrayList<>();
+        for (int i = 0; i < bad; i++) {
+            unusable.add(new InstrumentRow(1000 + i, Market.US, "DOWN" + i, "DOWN" + i, null, SecurityType.STOCK,
+                    1, null, false, null, 0L, "UNRESOLVED"));
+        }
+        when(scope.constituentInstruments()).thenReturn(nominal);
+        when(scope.unusableConstituents()).thenReturn(unusable);
+        when(scope.universe()).thenReturn(List.of(row(1, "AAPL")));
+        when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "AAPL")));
+        return scope;
+    }
+
+    private static BarAuditService.Report auditWith(UniverseScope scope) {
+        TradingDayRepository days = mock(TradingDayRepository.class);
+        when(days.covers(eq(Market.US), any())).thenReturn(false);
+        when(days.coverage(Market.US)).thenReturn(
+                new TradingDayRepository.Coverage(LocalDate.of(2006, 8, 21), LocalDate.of(2026, 10, 16), 5071, 2539, 2532));
+        DailyBarRepository bars = mock(DailyBarRepository.class);
+        when(bars.instrumentIdsWithBarOn(any())).thenReturn(Set.of(1L));
+        when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(0, 0, 0, 0, 0, 0));
+        when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
+        when(bars.gaps(any(), any(), anyInt())).thenReturn(List.of());
+        when(bars.coverageByInstrument()).thenReturn(List.of());
+        when(bars.phantomBarCount()).thenReturn(0);
+        when(bars.phantomBars(anyInt())).thenReturn(List.of());
+        BarSyncStateRepository states = mock(BarSyncStateRepository.class);
+        when(states.findAll()).thenReturn(List.of());
+        JobRunRepository jobs = mock(JobRunRepository.class);
+        when(jobs.latestOf(any())).thenReturn(Optional.empty());
+        return new BarAuditService(props(), scope, bars, days, states, jobs, null, Clock.systemUTC())
+                .audit(LocalDate.of(2026, 10, 6));
+    }
+
     @Test
     void 幽灵K线只提示不判失败() {
         // 券商在美股假日给过脏 K 线：日历里没有这天，K 线表里却有

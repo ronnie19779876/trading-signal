@@ -3,6 +3,7 @@ package org.jdkxx.trader.core.account;
 import org.jdkxx.trader.core.gateway.GatewayRegistry;
 import org.jdkxx.trader.core.marketdata.MarketDataFacade;
 import org.jdkxx.trader.core.marketdata.MarketDataProperties;
+import org.jdkxx.trader.core.marketdata.universe.UnknownSymbolGuard;
 import org.jdkxx.trader.core.marketdata.PoolService;
 import org.jdkxx.trader.core.marketdata.jobs.JobService;
 import org.jdkxx.trader.domain.Broker;
@@ -50,9 +51,10 @@ public class AccountConfiguration {
                                                          GatewayRegistry gateways, AccountGateway accounts, MarketDataGateway market,
                                                          InstrumentRepository instruments, DailyBarRepository bars, PoolRepository pool,
                                                          TradingDayRepository days, AccountSnapshotRepository snapshots,
-                                                         HoldingSyncService holdingSync) {
+                                                         HoldingSyncService holdingSync, UnknownSymbolGuard unknownSymbols) {
         return new AccountSnapshotService(props, env.getProperty("trader.ibkr.account"), gateways.require(Broker.IBKR), accounts,
-                market, instruments, bars, pool, days, snapshots, holdingSync, Clock.systemUTC(), ZoneId.of(marketData.zone()));
+                market, instruments, bars, pool, days, snapshots, holdingSync, unknownSymbols, Clock.systemUTC(),
+                ZoneId.of(marketData.zone()));
     }
 
     /** 实时账户（3.0.2）：按需订阅，开发与生产实例都装配（订阅按客户端计，互不干扰，2026-09-19 实测）。 */

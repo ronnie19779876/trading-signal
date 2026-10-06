@@ -41,6 +41,13 @@ public record MarketDataProperties(
              */
             @DefaultValue("5") int maxRemovalsPerSync,
             @DefaultValue("5") int maxRemovalsPercent,
+            /**
+             * 批次级恢复的上限：富途以「未知股票」拒掉一批时，逐只核实出的坏代码超过这个数就
+             * <b>整批不动也不标记</b>（更像富途侧出了事，不该由采集作业悄悄降级几百只标的）。
+             * 依据（2026-10-07）：上线一个多月、500 多只标的，「RESOLVED → 富途不认识」真实发生 1 次。
+             * 新进成分股走 PENDING，不走这条路。见 {@code UnknownSymbolGuard}。
+             */
+            @DefaultValue("3") int maxUnknownPerBatch,
             @DefaultValue("trading-signal/1.0 (market data research; contact via repository)") String userAgent) {
     }
 

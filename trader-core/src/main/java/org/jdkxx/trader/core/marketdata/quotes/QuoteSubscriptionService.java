@@ -4,6 +4,7 @@ import org.jdkxx.trader.common.ratelimit.Sleeper;
 import org.jdkxx.trader.core.marketdata.MarketDataProperties;
 import org.jdkxx.trader.core.marketdata.bars.RotationRefresher;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
+import org.jdkxx.trader.core.marketdata.universe.UnknownSymbolGuard;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.SubscriptionInfo;
@@ -20,6 +21,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -45,6 +47,7 @@ public class QuoteSubscriptionService implements GatewayListener, RotationRefres
     private final MarketDataGateway gateway;
     private final UniverseScope scope;
     private final QuoteCache cache;
+    private final UnknownSymbolGuard unknownSymbols;
     private final Clock clock;
     private final Sleeper sleeper;
     private final Map<Instrument, Instant> subscribed = new LinkedHashMap<>();
@@ -74,16 +77,17 @@ public class QuoteSubscriptionService implements GatewayListener, RotationRefres
     });
 
     public QuoteSubscriptionService(MarketDataProperties.Realtime props, MarketDataGateway gateway, UniverseScope scope,
-                                    QuoteCache cache, Clock clock) {
-        this(props, gateway, scope, cache, clock, Sleeper.REAL);
+                                    QuoteCache cache, UnknownSymbolGuard unknownSymbols, Clock clock) {
+        this(props, gateway, scope, cache, unknownSymbols, clock, Sleeper.REAL);
     }
 
     public QuoteSubscriptionService(MarketDataProperties.Realtime props, MarketDataGateway gateway, UniverseScope scope,
-                                    QuoteCache cache, Clock clock, Sleeper sleeper) {
+                                    QuoteCache cache, UnknownSymbolGuard unknownSymbols, Clock clock, Sleeper sleeper) {
         this.props = props;
         this.gateway = gateway;
         this.scope = scope;
         this.cache = cache;
+        this.unknownSymbols = unknownSymbols;
         this.clock = clock;
         this.sleeper = sleeper;
     }
@@ -129,15 +133,10 @@ public class QuoteSubscriptionService implements GatewayListener, RotationRefres
         String error = null;
         try {
             for (List<Instrument> chunk : chunks(toAdd)) {
-                gateway.subscribeQuotes(chunk).get(30, TimeUnit.SECONDS);
-                chunk.forEach(i -> subscribed.put(i, now));
-                added += chunk.size();
+                added += subscribeChunk(chunk, now);
             }
             for (List<Instrument> chunk : chunks(toRemove)) {
-                gateway.unsubscribeQuotes(chunk).get(30, TimeUnit.SECONDS);
-                chunk.forEach(subscribed::remove);
-                cache.remove(chunk);
-                removed += chunk.size();
+                removed += unsubscribeChunk(chunk);
             }
             refreshQuota();
         } catch (Exception e) {
@@ -354,6 +353,72 @@ public class QuoteSubscriptionService implements GatewayListener, RotationRefres
         }
         Result r = resume();
         log.info("全量轮转结束，恢复实时订阅：{}", r);
+    }
+
+    /** 订一批；被未知代码毒掉时剔除后重订一次，让同一批里其余标的照常有行情。 */
+    private int subscribeChunk(List<Instrument> chunk, Instant now) throws Exception {
+        try {
+            gateway.subscribeQuotes(chunk).get(30, TimeUnit.SECONDS);
+            chunk.forEach(i -> subscribed.put(i, now));
+            return chunk.size();
+        } catch (Exception e) {
+            List<Instrument> kept = purge(chunk, e);
+            if (kept == null) {
+                throw e;
+            }
+            if (kept.isEmpty()) {
+                return 0;
+            }
+            gateway.subscribeQuotes(kept).get(30, TimeUnit.SECONDS);
+            kept.forEach(i -> subscribed.put(i, now));
+            return kept.size();
+        }
+    }
+
+    /**
+     * 反订阅一批；被未知代码毒掉时把它们从本地账本里摘掉再重试一次。
+     *
+     * <p>这条路径是标记 UNRESOLVED 带出来的新陷阱：标了之后标的掉出 {@link #desired()}，
+     * 于是每次对账都把它放进 toRemove，而券商压根不认识这个代码、那边没有订阅可退——
+     * 留在 {@code subscribed} 里会让<b>每一次</b>对账都失败，实时报价就此冻住。
+     * 既然券商不认识它，本地摘掉就是正确结果。
+     */
+    private int unsubscribeChunk(List<Instrument> chunk) throws Exception {
+        try {
+            gateway.unsubscribeQuotes(chunk).get(30, TimeUnit.SECONDS);
+            chunk.forEach(subscribed::remove);
+            cache.remove(chunk);
+            return chunk.size();
+        } catch (Exception e) {
+            List<Instrument> kept = purge(chunk, e);
+            if (kept == null) {
+                throw e;
+            }
+            List<Instrument> gone = chunk.stream().filter(i -> !kept.contains(i)).toList();
+            gone.forEach(subscribed::remove);
+            cache.remove(gone);
+            if (kept.isEmpty()) {
+                return gone.size();
+            }
+            gateway.unsubscribeQuotes(kept).get(30, TimeUnit.SECONDS);
+            kept.forEach(subscribed::remove);
+            cache.remove(kept);
+            return chunk.size();
+        }
+    }
+
+    /**
+     * 剔除富途不认识的代码后的名单；守护没介入或没核实出坏代码时返回 {@code null}（调用方按原有方式抛出）。
+     * 这里传 {@code mayMark=false}：池与持仓值得人看一眼，而且每日增量覆盖同一批标的、
+     * 在那边标记时有 JobContext 可以记 PARTIAL，不必由对账线程悄悄写库。
+     */
+    private List<Instrument> purge(List<Instrument> chunk, Exception failure) {
+        UnknownSymbolGuard.Outcome out = unknownSymbols.inspect(chunk, failure, false).orElse(null);
+        if (out == null || !out.canRetry()) {
+            return null;
+        }
+        log.warn("实时订阅对账：{}", out.detail());
+        return chunk.stream().filter(i -> !out.exclude().contains(i.symbol().toUpperCase(Locale.ROOT))).toList();
     }
 
     private static List<List<Instrument>> chunks(List<Instrument> list) {

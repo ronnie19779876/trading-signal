@@ -1,5 +1,6 @@
 package org.jdkxx.trader.core.account;
 
+import org.jdkxx.trader.core.marketdata.universe.UnknownSymbolGuard;
 import org.jdkxx.trader.core.marketdata.jobs.JobContext;
 import org.jdkxx.trader.domain.AccountKind;
 import org.jdkxx.trader.domain.AccountRef;
@@ -84,7 +85,7 @@ class AccountSnapshotServiceTest {
         AccountProperties props = new AccountProperties(true, "0 0 18 * * MON-FRI", secret, List.of("CASHX"),
                 new BigDecimal("0.002"), BigDecimal.ONE);
         return new AccountSnapshotService(props, configuredAccount, broker, accounts, market, instruments, bars, pool, days,
-                snapshots, holdingSync, clock, ET);
+                snapshots, holdingSync, new UnknownSymbolGuard(market, instruments, 200, 3), clock, ET);
     }
 
     private static Position pos(String symbol, String conId, String qty, String cost) {

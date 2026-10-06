@@ -3,6 +3,7 @@ package org.jdkxx.trader.core.marketdata.bars;
 import org.jdkxx.trader.common.ratelimit.Sleeper;
 import org.jdkxx.trader.core.marketdata.MarketDataProperties;
 import org.jdkxx.trader.core.marketdata.jobs.JobContext;
+import org.jdkxx.trader.core.marketdata.universe.UnknownSymbolGuard;
 import org.jdkxx.trader.domain.DailyBar;
 import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.gateway.MarketDataGateway;
@@ -17,6 +18,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.function.ToIntFunction;
 
@@ -51,16 +53,19 @@ public class RotationRefresher {
     private final DailyBarRepository bars;
     private final BarSyncStateRepository states;
     private final SettledCutoff cutoff;
+    private final UnknownSymbolGuard unknownSymbols;
     private final Sleeper sleeper;
     private volatile QuotaCoordinator coordinator = QuotaCoordinator.NONE;
 
     public RotationRefresher(MarketDataProperties.Refresh props, MarketDataGateway gateway, DailyBarRepository bars,
-                             BarSyncStateRepository states, SettledCutoff cutoff, Sleeper sleeper) {
+                             BarSyncStateRepository states, SettledCutoff cutoff, UnknownSymbolGuard unknownSymbols,
+                             Sleeper sleeper) {
         this.props = props;
         this.gateway = gateway;
         this.bars = bars;
         this.states = states;
         this.cutoff = cutoff;
+        this.unknownSymbols = unknownSymbols;
         this.sleeper = sleeper;
     }
 
@@ -99,21 +104,29 @@ public class RotationRefresher {
         long total = 0;
         long unsettled = 0;
         int done = 0;
-        for (List<InstrumentRow> batch : batches(todo, batchSize)) {
+        for (List<InstrumentRow> whole : batches(todo, batchSize)) {
             if (ctx.cancelled()) {
                 ctx.partial("作业被取消");
                 break;
             }
+            List<InstrumentRow> batch = whole;
             List<Instrument> instruments = batch.stream().map(InstrumentRow::instrument).toList();
             long subscribedAt = System.nanoTime();
             try {
                 gateway.subscribeDailyBars(instruments).get(30, TimeUnit.SECONDS);
             } catch (Exception e) {
-                log.warn("订阅 {} 只失败：{}", instruments.size(), e.toString());
-                ctx.partial("订阅失败：" + e.getMessage());
-                failed += batch.size();
-                done += batch.size();
-                continue;
+                // 批次级恢复：一只改了名的代码不该毒掉整批（2026-10-06 PSKY 让这里一次丢 90 只）
+                Recovered r = recover(batch, instruments, e, ctx);
+                if (r == null) {
+                    failed += batch.size();
+                    done += batch.size();
+                    continue;
+                }
+                failed += batch.size() - r.batch().size();
+                done += batch.size() - r.batch().size();
+                batch = r.batch();
+                instruments = r.instruments();
+                subscribedAt = System.nanoTime();
             }
             // 每批取一次：轮转可能跨过 16:15，跨过之后当天那根就能写了
             LocalDate cut = cutoff.current();
@@ -162,5 +175,35 @@ public class RotationRefresher {
             log.info("{}：丢弃 {} 根晚于写库截止日的未收盘 K 线", label, unsettled);
         }
         return new Result(todo.size(), ok, failed, total, unsettled);
+    }
+
+    private record Recovered(List<InstrumentRow> batch, List<Instrument> instruments) {
+    }
+
+    /**
+     * 订阅被拒后试一次批次级恢复：核实出富途不认识的代码 → 剔除 → 重订一次。
+     * 返回 {@code null} 表示没救回来（日志与 PARTIAL 已在这里记好），调用方按原有方式把整批记为失败。
+     * 剔掉的那几只算失败，其余照常采集——这就是"一只坏代码只丢自己"。
+     */
+    private Recovered recover(List<InstrumentRow> batch, List<Instrument> instruments, Exception failure, JobContext ctx) {
+        UnknownSymbolGuard.Outcome out = unknownSymbols.inspect(instruments, failure, true).orElse(null);
+        if (out != null && out.canRetry()) {
+            List<InstrumentRow> kept = batch.stream()
+                    .filter(r -> !out.exclude().contains(r.symbol().toUpperCase(Locale.ROOT))).toList();
+            if (!kept.isEmpty()) {
+                List<Instrument> keptInstruments = kept.stream().map(InstrumentRow::instrument).toList();
+                try {
+                    gateway.subscribeDailyBars(keptInstruments).get(30, TimeUnit.SECONDS);
+                    ctx.partial(out.detail());
+                    log.warn("剔除 {} 只未知代码后重订成功，本批继续 {} 只", batch.size() - kept.size(), kept.size());
+                    return new Recovered(kept, keptInstruments);
+                } catch (Exception retry) {
+                    log.warn("剔除 {} 只未知代码后重订仍失败：{}", batch.size() - kept.size(), retry.toString());
+                }
+            }
+        }
+        log.warn("订阅 {} 只失败：{}", instruments.size(), failure.toString());
+        ctx.partial("订阅失败：" + (out == null ? failure.getMessage() : out.detail()));
+        return null;
     }
 }

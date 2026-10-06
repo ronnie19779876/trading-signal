@@ -930,3 +930,87 @@ TSLA 实测分别是 28.19 亿 / 39.79 亿 / 35.22 亿，**三个数互不相同
 - 09-19 对 TSLA 的示意测算（**假设是示意，不是预测**）：基准 2030 年 $98、折今 $65；单因子敏感度显示
   **结论几乎全由 Robotaxi 决定**（只动它一条，2030 股价 $71~$385，其余四条各只摆动约 ±$40）。
   反推则显示现价隐含 2030 需约 $549、市值约 2.2 万亿、按 35 倍需净利约 610 亿（2025 的 16 倍）。
+
+## 22. 3.1.4：富途批次「未知股票」的批次级恢复
+
+### 22.1 问题：一只改了名的代码毒掉整批
+
+富途对一个不认识的代码会让**整批请求失败**（`retType=-1`、retMsg `未知股票 PSKY`），不是只少回那一只。
+2026-10-06 派拉蒙天舞因 1100 亿美元收购华纳兄弟探索交割，`PSKY` 改名 Skydance、代码变 `SKYD`、
+B 股交易所 Nasdaq→NYSE，富途随即不认 `PSKY`。当天后果：
+
+| 作业 | 结果 |
+| --- | --- |
+| `DAILY_INCREMENT` #135 | PARTIAL：目标 521、成功 431、**失败 90**（和它同一个订阅批次的全军覆没） |
+| `VALUATION_SNAPSHOT` #136 | PARTIAL：目标 521、写入 121、**失败 400**（一个快照批次 400 只） |
+| `SIGNAL_EVALUATION` #138 | 91 条 `SKIPPED_STALE_DATA` |
+
+**根因不是"没被复核"，而是永久免检**：
+
+```java
+// UniverseSyncService.resolveStatics
+.filter(r -> !"RESOLVED".equals(r.resolveStatus()))
+```
+
+解析只看非 RESOLVED 的标的，所以 `PSKY` 自 2026-09-03 解析成功后再没被问过一次，
+仍以 RESOLVED 身份进采集批次。
+
+### 22.2 实测：两个接口的行为不一样（2026-10-07 对真实网关）
+
+一次运行里跑五条探针，三个对照缺一不可——**只测 `staticInfo` 通过证明不了什么**，
+得同时证明富途当时仍不认 `PSKY`、且网关本身没坏：
+
+| 探针 | 结果 |
+| --- | --- |
+| `snapshots([PSKY, AAPL, MSFT])` | **整批失败**（中毒复现） |
+| `snapshots([AAPL, MSFT])` | 成功回 2 条（网关没坏） |
+| `staticInfo([PSKY, AAPL, MSFT])` | **成功回 3 条**，PSKY 那条 `name=未知股票, brokerId=0, delisted=true`，另两只正常 |
+| `staticInfo([PSKY, SKYD, WBD, PARA])` | SKYD=Skydance `brokerId=89038967268139, exchange=4`（AAPL/MSFT 是 5，与"换交易所"吻合）；WBD 仍正常；**PARA 现在是 Banzai International**——代码被回收给了别的公司 |
+| `snapshots([PSKY, NOSUCHXYZ, AAPL])` | 失败，retMsg **只报 PSKY**，另一只坏代码没被提及 |
+
+结论：`staticInfo` 在混批里**免疫**，`snapshots` / `sub` 不免疫；retMsg **只点名一只**。
+
+### 22.3 两层判定：绝不靠文本定生死
+
+1. **触发**只看异常类型——券商明确拒绝（`RequestRejectedException`）。**不看措辞**：富途改一次文案不该让恢复失效。
+2. **判据**只认结构化事实——对整批调 `staticInfo` 取 `brokerId==0`，与 `resolveStatics` 同一条判据，口径不分叉。
+
+`UnknownSymbolException.named()` 只用来交叉核对、写日志，**不参与剔除**：照文本剔除会漏掉没被点名的那只，
+下一批还是会被毒。富途特有的文本解析只在 `FutuUnknownSymbol` 一处，core 保持券商无关。
+解析认不出来**不影响恢复**，因为判据不依赖它。
+
+### 22.4 三道守护
+
+1. **只对明确拒绝生效**。超时 / 断连 / 取消不触发——否则富途一次权限档位翻转
+   （行情权限按登录 IP 在境内/国际档间翻转，已实测）就会把几百只标的集体标成 UNRESOLVED。
+2. **一批里坏得太多就整批不动**（`max-unknown-per-batch`，默认 3）。依据：上线一个多月、500 多只标的，
+   「RESOLVED → 富途不认识」真实发生 **1** 次；新进成分股走 PENDING，不走这条路。
+   和成分股同步守护同一个哲学：**永不悄悄大批降级**，被挡一次正是该有人看一眼的时候。
+3. **降级必须可见**：审计新增关键项 `resolveDowngrade`，按**绝对数量**报名义成分股里有多少只采不了并点名。
+   没有它就会重演"成分股纯集合差看不见"那个坑——标的掉出 `usable()` 后 completeness 的分子分母一起少一、
+   **完整性检查照样全绿**。低于名义规模 95% 判失败。
+
+### 22.5 落点
+
+`UnknownSymbolGuard` 放 core：判定要同时用到 `gateway-api`（staticInfo）与 `storage`（markUnresolved），
+只有 core 同时看得见这两个。四条批次路径共用它：
+
+| 路径 | 写库 | 说明 |
+| --- | --- | --- |
+| `RotationRefresher` 订阅 | 是 | 剔除后重订一次；**反订阅用同一份剔除后的名单**，别把不认识的代码再送回去 |
+| `ValuationSnapshotService` 快照 | 是 | 剔除后重取一次 |
+| `AccountSnapshotService` 持仓取价 | **否** | 持仓改名影响取价与实时订阅，值得人看一眼；剔掉的按既有「缺价（NONE）」口径走，对账记 WARN |
+| `QuoteSubscriptionService` 实时订阅 | **否** | 同一批标的由每日增量负责标记，那边有 JobContext 能记 PARTIAL |
+
+**反订阅这条是标记带出来的新陷阱**：标成 UNRESOLVED 后标的掉出 `desired()`，于是每次对账都把它放进
+`toRemove`，而券商压根不认识这个代码、那边没有订阅可退——留在本地账本里会让**每一次**对账都失败、
+实时报价就此冻住。既然券商不认识它，本地摘掉就是正确结果。
+
+### 22.6 已知边界
+
+- **验收只能靠真实数据**：下一次有标的改名时看它是否只丢自己。这个造不出来，至今**未经真实数据验证**。
+- 守护一放得比较宽（任何明确拒绝都会触发一次 `staticInfo` 核实）。代价是限流被拒时多花 1~2 次调用
+  （`get-static-info` 30/30s，90 只 1 次、400 只 2 次），换来的是富途改措辞也不会让恢复失效。
+- **不自动恢复**：被标 UNRESOLVED 的标的靠 `resolveStatics` 自己转回 RESOLVED（它本来就只看非 RESOLVED）。
+- **代码会被回收**（实测 PARA 现在是 Banzai International）：靠代码认标的在跨公司行动时不可靠，
+  但本期不动标的身份模型。`PSKY` 要不要改名成 `SKYD` 以保住 1022 根历史，另议。

@@ -75,6 +75,32 @@ public class UniverseScope {
         return out;
     }
 
+    /** 现任成分股的去重标的数，<b>不过 {@link #usable} 过滤</b>：审计拿它当分母的"名义值"。 */
+    public int constituentInstruments() {
+        return constituentIds().size();
+    }
+
+    /**
+     * 现任成分股里被 {@link #usable} 挡掉的那些（非 RESOLVED 或已退市）。
+     *
+     * <p>审计的 completeness 用的分母就是 {@code usable()} 的结果，所以标的一被标成 UNRESOLVED，
+     * 分母跟着变小、<b>完整性检查照样全绿</b>——和"成分股被误删看不见"是同一个坑。
+     * 批次级恢复（{@link UnknownSymbolGuard}）会主动写这个状态，更需要有人按绝对数量盯住这个集合。
+     */
+    public List<InstrumentRow> unusableConstituents() {
+        return instruments.findByIds(constituentIds()).stream()
+                .filter(r -> !("RESOLVED".equals(r.resolveStatus()) && !r.delisted()))
+                .toList();
+    }
+
+    private Set<Long> constituentIds() {
+        Set<Long> ids = new LinkedHashSet<>();
+        for (ConstituentRow r : constituents.currentAll()) {
+            ids.add(r.instrumentId());
+        }
+        return ids;
+    }
+
     public Map<Long, PoolRole> roles() {
         return pool.findAll().stream().collect(Collectors.toMap(PoolRow::instrumentId, PoolRow::role));
     }

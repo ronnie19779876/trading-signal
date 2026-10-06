@@ -5,6 +5,7 @@ import org.jdkxx.trader.gateway.GatewayException;
 import org.jdkxx.trader.gateway.NotConnectedException;
 import org.jdkxx.trader.gateway.RequestRejectedException;
 import org.jdkxx.trader.gateway.RequestTimeoutException;
+import org.jdkxx.trader.gateway.UnknownSymbolException;
 
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
@@ -139,8 +140,11 @@ final class FutuReplyRegistry {
             try {
                 FutuReplyStatus status = FutuReplyStatus.of(response);
                 if (!status.ok()) {
-                    entry.future.completeExceptionally(new RequestRejectedException(Broker.FUTU, status.code(),
-                            entry.what + " 失败：" + status.retMsg() + "（retType=" + status.retType() + "）"));
+                    String message = entry.what + " 失败：" + status.retMsg() + "（retType=" + status.retType() + "）";
+                    entry.future.completeExceptionally(FutuUnknownSymbol.looksUnknown(status.retMsg())
+                            ? new UnknownSymbolException(Broker.FUTU, status.code(), message,
+                                    FutuUnknownSymbol.named(status.retMsg()))
+                            : new RequestRejectedException(Broker.FUTU, status.code(), message));
                     return;
                 }
                 entry.future.complete(entry.type.cast(response));

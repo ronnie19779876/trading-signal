@@ -17,7 +17,7 @@ public final class TestProperties {
 
     public static MarketDataProperties defaults() {
         return new MarketDataProperties(
-                new MarketDataProperties.Universe("", "", "", true, "0 30 6 * * SAT", 200, 5, 5, "test"),
+                new MarketDataProperties.Universe("", "", "", true, "0 30 6 * * SAT", 200, 5, 5, 3, "test"),
                 null,
                 new MarketDataProperties.Refresh(90, 65, true, 1000, 5, 5),
                 null,

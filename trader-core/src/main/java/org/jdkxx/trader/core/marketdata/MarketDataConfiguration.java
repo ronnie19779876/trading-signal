@@ -21,6 +21,7 @@ import org.jdkxx.trader.core.marketdata.quotes.QuoteSubscriptionService;
 import org.jdkxx.trader.gateway.BrokerGateway;
 import org.jdkxx.trader.core.marketdata.universe.SpyHoldingsCrossCheck;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
+import org.jdkxx.trader.core.marketdata.universe.UnknownSymbolGuard;
 import org.jdkxx.trader.core.marketdata.universe.UniverseSource;
 import org.jdkxx.trader.core.marketdata.universe.UniverseSyncService;
 import org.jdkxx.trader.core.marketdata.universe.WikipediaUniverseSource;
@@ -75,6 +76,17 @@ public class MarketDataConfiguration {
         return new UniverseScope(constituents, pool, instruments);
     }
 
+    /**
+     * 批次级恢复：富途以「未知股票」拒掉整批时，核实出坏代码、标 UNRESOLVED、让调用方剔除后重试一次。
+     * 采集侧的四条批次路径共用同一个判定与同一套守护，口径不分叉。
+     */
+    @Bean
+    public UnknownSymbolGuard unknownSymbolGuard(MarketDataProperties props, MarketDataGateway gateway,
+                                                 InstrumentRepository instruments) {
+        return new UnknownSymbolGuard(gateway, instruments, props.universe().staticBatchSize(),
+                props.universe().maxUnknownPerBatch());
+    }
+
     @Bean
     public JobService jobService(JobRunRepository repo) {
         return new JobService(repo);
@@ -94,8 +106,9 @@ public class MarketDataConfiguration {
 
     @Bean
     public RotationRefresher rotationRefresher(MarketDataProperties props, MarketDataGateway gateway, DailyBarRepository bars,
-                                               BarSyncStateRepository states, SettledCutoff cutoff) {
-        return new RotationRefresher(props.refresh(), gateway, bars, states, cutoff, Sleeper.REAL);
+                                               BarSyncStateRepository states, SettledCutoff cutoff,
+                                               UnknownSymbolGuard unknownSymbols) {
+        return new RotationRefresher(props.refresh(), gateway, bars, states, cutoff, unknownSymbols, Sleeper.REAL);
     }
 
     @Bean
@@ -137,8 +150,8 @@ public class MarketDataConfiguration {
     @Bean
     public ValuationSnapshotService valuationSnapshotService(MarketDataProperties props, UniverseScope scope,
                                                             MarketDataGateway gateway, ValuationRepository valuations,
-                                                            TradingDayRepository days) {
-        return new ValuationSnapshotService(props, scope, gateway, valuations, days, Clock.systemUTC());
+                                                            TradingDayRepository days, UnknownSymbolGuard unknownSymbols) {
+        return new ValuationSnapshotService(props, scope, gateway, valuations, days, unknownSymbols, Clock.systemUTC());
     }
 
     @Bean
@@ -225,8 +238,9 @@ public class MarketDataConfiguration {
 
     @Bean
     public QuoteSubscriptionService quoteSubscriptionService(MarketDataProperties props, MarketDataGateway gateway, UniverseScope scope,
-                                                             QuoteCache cache, RotationRefresher rotation, PoolService pool) {
-        QuoteSubscriptionService service = new QuoteSubscriptionService(props.realtime(), gateway, scope, cache, Clock.systemUTC());
+                                                             QuoteCache cache, RotationRefresher rotation, PoolService pool,
+                                                             UnknownSymbolGuard unknownSymbols) {
+        QuoteSubscriptionService service = new QuoteSubscriptionService(props.realtime(), gateway, scope, cache, unknownSymbols, Clock.systemUTC());
         if (gateway instanceof BrokerGateway broker) {
             broker.addListener(service);
         }

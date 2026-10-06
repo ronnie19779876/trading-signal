@@ -5,9 +5,12 @@ import org.jdkxx.trader.core.marketdata.TestProperties;
 import org.jdkxx.trader.core.marketdata.jobs.JobContext;
 import org.jdkxx.trader.core.marketdata.jobs.JobService;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
+import org.jdkxx.trader.core.marketdata.universe.UnknownSymbolGuard;
+import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.SecurityType;
 import org.jdkxx.trader.gateway.MarketDataGateway;
+import org.jdkxx.trader.storage.marketdata.InstrumentRepository;
 import org.jdkxx.trader.storage.marketdata.InstrumentRow;
 import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
 import org.jdkxx.trader.storage.marketdata.ValuationRepository;
@@ -68,6 +71,8 @@ class ValuationSnapshotServiceTest {
         }
     };
 
+    private final InstrumentRepository instruments = mock(InstrumentRepository.class);
+
     private ValuationSnapshotService at(String localEt) {
         when(days.isTradingDay(eq(Market.US), any())).thenAnswer(inv -> {
             DayOfWeek w = inv.<LocalDate>getArgument(1).getDayOfWeek();
@@ -78,7 +83,52 @@ class ValuationSnapshotServiceTest {
         when(scope.poolAndHoldings()).thenReturn(List.of());
         when(gateway.snapshots(anyList())).thenReturn(CompletableFuture.completedFuture(List.of()));
         Clock clock = Clock.fixed(ZonedDateTime.of(LocalDateTime.parse(localEt), ET).toInstant(), ZoneOffset.UTC);
-        return new ValuationSnapshotService(TestProperties.defaults(), scope, gateway, valuations, days, clock);
+        return new ValuationSnapshotService(TestProperties.defaults(), scope, gateway, valuations, days,
+                new UnknownSymbolGuard(gateway, mock(InstrumentRepository.class), 200, 3), clock);
+    }
+
+    /**
+     * 批次级恢复：2026-10-06 PSKY 让快照的 400 批整批失败、当天 400 条估值一条没写
+     * （作业 #136：目标 521、写入 121、失败 400）。剔除后重取，只丢它自己。
+     */
+    @Test
+    void 一只不认识的代码只丢自己_其余照常写库() throws Exception {
+        when(days.isTradingDay(eq(Market.US), any())).thenReturn(true);
+        when(scope.universe()).thenReturn(List.of(
+                new InstrumentRow(1, Market.US, "AAPL", "AAPL", null, SecurityType.STOCK, 1, null, false, null, 1L, "RESOLVED"),
+                new InstrumentRow(2, Market.US, "PSKY", "PSKY", null, SecurityType.STOCK, 1, null, false, null, 1L, "RESOLVED")));
+        when(scope.poolAndHoldings()).thenReturn(List.of());
+
+        List<List<String>> asked = new java.util.ArrayList<>();
+        when(gateway.snapshots(anyList())).thenAnswer(inv -> {
+            List<org.jdkxx.trader.domain.Instrument> list = inv.getArgument(0);
+            asked.add(list.stream().map(org.jdkxx.trader.domain.Instrument::symbol).toList());
+            if (list.stream().anyMatch(i -> "PSKY".equals(i.symbol()))) {
+                return CompletableFuture.failedFuture(new org.jdkxx.trader.gateway.UnknownSymbolException(
+                        Broker.FUTU, -1, "getSecuritySnapshot 失败：未知股票 PSKY（retType=-1）", java.util.Set.of("PSKY")));
+            }
+            return CompletableFuture.completedFuture(List.of());
+        });
+        when(gateway.staticInfo(anyList())).thenAnswer(inv -> {
+            List<org.jdkxx.trader.domain.Instrument> list = inv.getArgument(0);
+            return CompletableFuture.completedFuture(list.stream()
+                    .map(i -> "PSKY".equals(i.symbol())
+                            ? new org.jdkxx.trader.domain.InstrumentStatic(i, "未知股票", SecurityType.OTHER, 1, null, true, null, 0)
+                            : new org.jdkxx.trader.domain.InstrumentStatic(i, i.symbol(), SecurityType.STOCK, 1, null, false, "5", 205189L))
+                    .toList());
+        });
+        when(instruments.find(any())).thenReturn(Optional.of(
+                new InstrumentRow(2, Market.US, "PSKY", "PSKY", null, SecurityType.STOCK, 1, null, false, null, 0L, "RESOLVED")));
+        when(valuations.upsertAll(anyMap(), anyList(), any())).thenReturn(0);
+
+        Clock clock = Clock.fixed(ZonedDateTime.of(LocalDateTime.parse("2026-10-06T18:00"), ET).toInstant(), ZoneOffset.UTC);
+        String summary = new ValuationSnapshotService(TestProperties.defaults(), scope, gateway, valuations, days,
+                new UnknownSymbolGuard(gateway, instruments, 200, 3), clock).run(ctx);
+
+        // 第一次问了两只被整批拒，第二次只问剔除后的 AAPL
+        assertThat(asked).containsExactly(List.of("AAPL", "PSKY"), List.of("AAPL"));
+        assertThat(summary).contains("失败 1");
+        verify(instruments).markUnresolved(2L);
     }
 
     @Test

@@ -4,6 +4,7 @@ import org.jdkxx.trader.core.account.ValuedPosition.PriceSource;
 import org.jdkxx.trader.core.marketdata.SnapshotWindow;
 import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
 import org.jdkxx.trader.core.marketdata.jobs.JobContext;
+import org.jdkxx.trader.core.marketdata.universe.UnknownSymbolGuard;
 import org.jdkxx.trader.domain.AccountSummary;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.domain.Instrument;
@@ -34,6 +35,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -62,6 +64,7 @@ public class AccountSnapshotService {
     private final TradingDayRepository days;
     private final AccountSnapshotRepository snapshots;
     private final HoldingSyncService holdingSync;
+    private final UnknownSymbolGuard unknownSymbols;
     private final Clock clock;
     private final ZoneId zone;
 
@@ -71,7 +74,8 @@ public class AccountSnapshotService {
     public AccountSnapshotService(AccountProperties props, String configuredAccount, BrokerGateway broker, AccountGateway accounts,
                                   MarketDataGateway market, InstrumentRepository instruments, DailyBarRepository bars,
                                   PoolRepository pool, TradingDayRepository days, AccountSnapshotRepository snapshots,
-                                  HoldingSyncService holdingSync, Clock clock, ZoneId zone) {
+                                  HoldingSyncService holdingSync, UnknownSymbolGuard unknownSymbols,
+                                  Clock clock, ZoneId zone) {
         this.props = props;
         this.source = new AccountPositions(configuredAccount, broker, accounts, instruments);
         this.market = market;
@@ -81,6 +85,7 @@ public class AccountSnapshotService {
         this.days = days;
         this.snapshots = snapshots;
         this.holdingSync = holdingSync;
+        this.unknownSymbols = unknownSymbols;
         this.clock = clock;
         this.zone = zone;
     }
@@ -239,19 +244,47 @@ public class AccountSnapshotService {
         return now.isBefore(next.atTime(SnapshotWindow.CLOSES).atZone(zone));
     }
 
+    /**
+     * 给库里没有当日 K 线的持仓取快照价。一只持仓改了名（富途不认识）会毒掉整批，让<b>所有</b>持仓缺价，
+     * 所以这里也做批次级恢复：核实出坏代码 → 剔除 → 重取一次，其余持仓照常有价。
+     *
+     * <p><b>持仓侧传 {@code mayMark=false}，不写库</b>：我们真正持有的标的改名，影响取价与实时订阅，
+     * 值得人看一眼，不该由快照作业悄悄把它降级。剔掉的那只按既有的"缺价（NONE）"口径走——
+     * 对账会记 WARN、账户审计会报缺价数，所以降级虽不写库，人仍然看得见。
+     */
     private Map<String, ValuationSnapshot> snapshotPrices(List<String> symbols) {
         if (symbols.isEmpty()) {
             return Map.of();
         }
+        List<Instrument> wanted = symbols.stream().distinct().map(Instrument::us).toList();
         try {
-            List<ValuationSnapshot> got = AccountPositions.await(market.snapshots(symbols.stream().distinct().map(Instrument::us).toList()));
-            Map<String, ValuationSnapshot> m = new LinkedHashMap<>();
-            got.forEach(v -> m.putIfAbsent(v.instrument().symbol(), v));
-            return m;
+            return index(AccountPositions.await(market.snapshots(wanted)));
         } catch (Exception e) {
-            log.warn("富途快照取价失败，{} 条持仓记为缺价：{}", symbols.size(), e.toString());
+            UnknownSymbolGuard.Outcome out = unknownSymbols.inspect(wanted, e, false).orElse(null);
+            if (out != null && out.canRetry()) {
+                List<Instrument> kept = wanted.stream()
+                        .filter(i -> !out.exclude().contains(i.symbol().toUpperCase(Locale.ROOT))).toList();
+                if (!kept.isEmpty()) {
+                    try {
+                        Map<String, ValuationSnapshot> m = index(AccountPositions.await(market.snapshots(kept)));
+                        log.warn("持仓里有富途不认识的代码 {}，剔除后重取成功：{} 条有价、{} 条按缺价处理。"
+                                + "持仓改名要人确认，所以不自动标 UNRESOLVED", out.exclude(), m.size(),
+                                wanted.size() - kept.size());
+                        return m;
+                    } catch (Exception retry) {
+                        log.warn("剔除 {} 只未知代码后重取持仓快照仍失败：{}", wanted.size() - kept.size(), retry.toString());
+                    }
+                }
+            }
+            log.warn("富途快照取价失败，{} 条持仓记为缺价：{}", symbols.size(), out == null ? e.toString() : out.detail());
             return Map.of();
         }
+    }
+
+    private static Map<String, ValuationSnapshot> index(List<ValuationSnapshot> got) {
+        Map<String, ValuationSnapshot> m = new LinkedHashMap<>();
+        got.forEach(v -> m.putIfAbsent(v.instrument().symbol(), v));
+        return m;
     }
 
     private static String sources(List<ValuedPosition> valued) {

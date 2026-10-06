@@ -2,12 +2,14 @@ package org.jdkxx.trader.core.marketdata.quotes;
 
 import org.jdkxx.trader.core.marketdata.MarketDataProperties;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
+import org.jdkxx.trader.core.marketdata.universe.UnknownSymbolGuard;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.SecurityType;
 import org.jdkxx.trader.domain.SubscriptionInfo;
 import org.jdkxx.trader.gateway.MarketDataGateway;
+import org.jdkxx.trader.storage.marketdata.InstrumentRepository;
 import org.jdkxx.trader.storage.marketdata.InstrumentRow;
 import org.junit.jupiter.api.Test;
 
@@ -74,10 +76,56 @@ class QuoteSubscriptionServiceTest {
         });
         when(gateway.subscriptionInfo()).thenReturn(CompletableFuture.completedFuture(new SubscriptionInfo(2, 98, Map.of("Basic", 2), Instant.now())));
         MarketDataProperties.Realtime props = new MarketDataProperties.Realtime(true, autoSubscribe, 10, pauseDuringRefresh, Duration.ofSeconds(1), Duration.ofSeconds(61));
-        return new QuoteSubscriptionService(props, gateway, scope, cache, clock, d -> {
+        return new QuoteSubscriptionService(props, gateway, scope, cache,
+                new UnknownSymbolGuard(gateway, mock(InstrumentRepository.class), 200, 3), clock, d -> {
             sleeps.add(d);
             now.set(now.get().plus(d));
         });
+    }
+
+    /**
+     * 标记 UNRESOLVED 带出来的陷阱：标了之后标的掉出 desired()，于是每次对账都把它放进 toRemove，
+     * 而券商压根不认识这个代码、那边没有订阅可退——留在本地账本里会让<b>每一次</b>对账都失败，
+     * 实时报价就此冻住。既然券商不认识它，本地摘掉就是正确结果。
+     */
+    @Test
+    void 反订阅一只券商已不认识的代码时从本地账本摘掉而不是让对账永久失败() {
+        QuoteSubscriptionService s = service(true);
+        assertThat(s.reconcile().added()).isEqualTo(2);
+
+        // MSFT 改了名：从池里消失，而券商也不再认识它
+        pool.set(List.of(row(1, "AAPL")));
+        when(gateway.staticInfo(anyList())).thenAnswer(inv -> {
+            List<Instrument> asked = inv.getArgument(0);
+            return CompletableFuture.completedFuture(asked.stream()
+                    .map(i -> "MSFT".equals(i.symbol())
+                            ? new org.jdkxx.trader.domain.InstrumentStatic(i, "未知股票", SecurityType.OTHER, 1, null, true, null, 0)
+                            : new org.jdkxx.trader.domain.InstrumentStatic(i, i.symbol(), SecurityType.STOCK, 1, null, false, "5", 205189L))
+                    .toList());
+        });
+        when(gateway.unsubscribeQuotes(anyList())).thenAnswer(inv -> {
+            List<Instrument> asked = inv.getArgument(0);
+            unsubs.add(List.copyOf(asked));
+            if (asked.stream().anyMatch(i -> "MSFT".equals(i.symbol()))) {
+                return CompletableFuture.failedFuture(new org.jdkxx.trader.gateway.UnknownSymbolException(
+                        Broker.FUTU, -1, "unsub 失败：未知股票 MSFT（retType=-1）", java.util.Set.of("MSFT")));
+            }
+            return CompletableFuture.completedFuture(null);
+        });
+
+        now.set(now.get().plusSeconds(70));                  // 订阅满 1 分钟，可以反订阅
+        QuoteSubscriptionService.Result r = s.reconcile();
+
+        // 对账<b>没有</b>失败，MSFT 已从本地账本摘掉
+        assertThat(r.error()).isNull();
+        assertThat(r.removed()).isEqualTo(1);
+        assertThat(s.status().subscribed()).isEqualTo(1);
+
+        // 再对账一次：不该再去退一只券商不认识的代码
+        unsubs.clear();
+        QuoteSubscriptionService.Result again = s.reconcile();
+        assertThat(again.error()).isNull();
+        assertThat(unsubs).isEmpty();
     }
 
     @Test
