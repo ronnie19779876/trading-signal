@@ -12,6 +12,14 @@ import { EXIT_LABEL, ROLE_LABEL, TRACK_LABEL, errMsg, num, pct, signedR, trend }
  */
 const props = defineProps<{ universe: InstrumentView[] }>()
 
+/** 浮动收益率：两个变体必然相同（同入场价、同当前价），浮动 R 则因 R 不同而不同。 */
+const unrealizedPct = (t: SignalTrack) =>
+  t.lastClose === null || t.entryPrice === null || t.entryPrice === 0 ? null : (t.lastClose - t.entryPrice) / t.entryPrice
+
+/** 当前价是否滞后于账本算到的日期（停牌、缺 K 线）。 */
+const stale = (t: SignalTrack) =>
+  t.lastCloseDate !== null && t.updatedThrough !== null && t.lastCloseDate < t.updatedThrough
+
 const ledger = ref<Ledger | null>(null)
 const variant = ref<string>('BASE')
 const status = ref<string>('')
@@ -117,7 +125,7 @@ defineExpose({ load })
         <table class="dtable">
           <thead>
             <tr>
-              <th>判定日</th><th>代码</th><th>角色</th><th>状态</th><th>入场</th><th class="r">止损</th><th>离场</th>
+              <th>判定日</th><th>代码</th><th>角色</th><th>状态</th><th>入场</th><th class="r">止损</th><th>当前</th><th>离场</th>
               <th class="r">R</th><th class="r">收益</th><th class="r">持有天数</th>
             </tr>
           </thead>
@@ -128,7 +136,18 @@ defineExpose({ load })
               <td>{{ ROLE_LABEL[row.signal.role] }}</td>
               <td>{{ TRACK_LABEL[row.track.status] }}</td>
               <td class="num">{{ row.track.entryDate ?? '—' }} {{ row.track.entryPrice === null ? '' : num(row.track.entryPrice) }}</td>
-              <td class="r num">{{ num(row.track.stop) }}</td>
+              <td class="r num">
+                <!-- 当前价只有持有中才有；日期必须一起给——停牌时它会早于算到的日期，不给就看不出价是陈旧的 -->
+                {{ num(row.track.stop) }}
+              </td>
+              <td class="num" :class="trend(row.track.unrealizedR)">
+                <template v-if="row.track.lastClose !== null">
+                  {{ row.track.lastCloseDate }} {{ num(row.track.lastClose) }}
+                  <span class="name">{{ signedR(row.track.unrealizedR) }} / {{ pct(unrealizedPct(row.track)) }}</span>
+                  <span v-if="stale(row.track)" class="name" title="最后一根 K 线早于账本算到的日期，多半是停牌或缺 K 线">滞后</span>
+                </template>
+                <template v-else>—</template>
+              </td>
               <td class="num">
                 <template v-if="row.track.exitDate">{{ row.track.exitDate }} {{ num(row.track.exitPrice) }}（{{ EXIT_LABEL[row.track.exitReason ?? 'OPEN'] }}）</template>
                 <template v-else>—</template>
@@ -137,7 +156,7 @@ defineExpose({ load })
               <td class="r num" :class="trend(row.track.returnPct)">{{ pct(row.track.returnPct) }}</td>
               <td class="r num">{{ row.track.barsHeld ?? '—' }}</td>
             </tr>
-            <tr v-if="!entries.length"><td colspan="10" class="empty">{{ loading ? '加载中…' : '没有符合条件的纸面交易' }}</td></tr>
+            <tr v-if="!entries.length"><td colspan="11" class="empty">{{ loading ? '加载中…' : '没有符合条件的纸面交易' }}</td></tr>
           </tbody>
         </table>
       </div>

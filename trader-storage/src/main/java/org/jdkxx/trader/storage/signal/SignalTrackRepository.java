@@ -19,7 +19,9 @@ public class SignalTrackRepository {
             rs.getBigDecimal("plus_one_r"), date(rs.getDate("entry_date")), rs.getBigDecimal("entry_price"),
             rs.getBoolean("touched_plus_one_r"), date(rs.getDate("exit_date")), rs.getBigDecimal("exit_price"),
             rs.getString("exit_reason"), rs.getBigDecimal("r_multiple"), rs.getBigDecimal("return_pct"),
-            rs.getBigDecimal("mfe_r"), rs.getBigDecimal("mae_r"), rs.getObject("bars_held") == null ? null : rs.getInt("bars_held"),
+            rs.getBigDecimal("mfe_r"), rs.getBigDecimal("mae_r"),
+            rs.getBigDecimal("last_close"), date(rs.getDate("last_close_date")), rs.getBigDecimal("unrealized_r"),
+            rs.getObject("bars_held") == null ? null : rs.getInt("bars_held"),
             date(rs.getDate("updated_through")), rs.getTimestamp("updated_at").toInstant());
 
     private final JdbcTemplate jdbc;
@@ -42,12 +44,15 @@ public class SignalTrackRepository {
     public void update(SignalTrackRow r) {
         jdbc.update("""
                 UPDATE signal_track SET status = ?, entry_date = ?, entry_price = ?, touched_plus_one_r = ?, exit_date = ?,
-                       exit_price = ?, exit_reason = ?, r_multiple = ?, return_pct = ?, mfe_r = ?, mae_r = ?, bars_held = ?,
+                       exit_price = ?, exit_reason = ?, r_multiple = ?, return_pct = ?, mfe_r = ?, mae_r = ?,
+                       last_close = ?, last_close_date = ?, unrealized_r = ?, bars_held = ?,
                        updated_through = ?, updated_at = now()
                 WHERE signal_id = ? AND variant = ?""",
                 r.status(), r.entryDate() == null ? null : Date.valueOf(r.entryDate()), r.entryPrice(), r.touchedPlusOneR(),
                 r.exitDate() == null ? null : Date.valueOf(r.exitDate()), r.exitPrice(), r.exitReason(), r.rMultiple(),
-                r.returnPct(), r.mfeR(), r.maeR(), r.barsHeld(),
+                r.returnPct(), r.mfeR(), r.maeR(),
+                r.lastClose(), r.lastCloseDate() == null ? null : Date.valueOf(r.lastCloseDate()), r.unrealizedR(),
+                r.barsHeld(),
                 r.updatedThrough() == null ? null : Date.valueOf(r.updatedThrough()), r.signalId(), r.variant());
     }
 

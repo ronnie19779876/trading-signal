@@ -59,9 +59,11 @@ public final class SignalTrades {
         if (r == null) {
             return null;
         }
+        // lastClose 和 entry / stop / exit 走同一条折回路径：当前价必须与 entry_price 同口径，
+        // 否则持有期间一拆股两者就不在一个尺度上（这是加这个字段时最容易踩的坑）
         return new PaperTrade.Result(r.signalDate(), r.entryDate(), r.entry() / scale, r.stop() / scale, r.plusOneR() / scale,
                 r.touchedPlusOneR(), r.exitDate(), r.exit() == null ? null : r.exit() / scale, r.reason(), r.r(),
-                r.mfeR(), r.maeR(), r.barsHeld());
+                r.mfeR(), r.maeR(), r.barsHeld(), r.lastClose() / scale, r.lastCloseDate());
     }
 
     /**

@@ -56,6 +56,6 @@ class SignalFacadeLedgerTest {
 
     private static SignalTrackRow track(long signalId) {
         return new SignalTrackRow(signalId, "BASE", "PENDING_ENTRY", null, null, null, null, false, null, null, null, null, null,
-                null, null, null, DAY, null);
+                null, null, null, null, null, null, DAY, null);
     }
 }

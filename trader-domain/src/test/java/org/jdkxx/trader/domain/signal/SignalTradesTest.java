@@ -54,6 +54,60 @@ class SignalTradesTest {
         assertThat(r.r()).isCloseTo(-6 / 5.0, within(1e-9));
     }
 
+    /**
+     * 要害：当前价必须和 entry 走同一条折回路径。持有期间拆股后原始价减半，
+     * 若 lastClose 漏了 {@code / scale}，页面上就会显示"当前价 51、入场价 100、浮亏 −49%"这种假亏损。
+     */
+    @Test
+    void 持有期间拆股时当前价也按判定日口径() {
+        List<DailyBar> raw = new ArrayList<>();
+        Set<LocalDate> days = new HashSet<>();
+        LocalDate d = SIGNAL.minusDays(30);
+        for (; !d.isAfter(SIGNAL); d = d.plusDays(1)) {
+            raw.add(bar(d, 100, 101, 99, 100));
+            days.add(d);
+        }
+        LocalDate splitDay = SIGNAL.plusDays(1);                 // 次日 1 拆 2：原始价减半
+        LocalDate last = splitDay.plusDays(1);
+        raw.add(bar(splitDay, 50, 50.5, 49.5, 50));              // 判定日口径 100
+        raw.add(bar(last, 50.5, 51.5, 50, 51));                  // 判定日口径 102，在止损之上 → 未平仓
+        days.add(splitDay);
+        days.add(last);
+        RehabFactor split = new RehabFactor(X, splitDay, new BigDecimal("0.5"), BigDecimal.ZERO, BigDecimal.ONE, BigDecimal.ZERO,
+                1, null, null, 1, 2);
+
+        PaperTrade.Result r = SignalTrades.simulate(raw, List.of(split), days, SIGNAL, 100, 95, last, TH,
+                PaperTrade.Rules.of(TH));
+
+        assertThat(r.reason()).as("还没触止损，应为未平仓").isEqualTo(PaperTrade.ExitReason.OPEN);
+        assertThat(r.entry()).as("入场价是判定日口径").isCloseTo(100, within(1e-9));
+        assertThat(r.lastClose()).as("当前价必须同口径——漏了折回就会是 51").isCloseTo(102, within(1e-9));
+        assertThat(r.lastCloseDate()).isEqualTo(last);
+    }
+
+    /** 停牌/缺 K 线时当前价会滞后：lastCloseDate 早于查询截止日，调用方必须把这个日期一起展示。 */
+    @Test
+    void 缺K线时当前价的日期早于截止日() {
+        List<DailyBar> raw = new ArrayList<>();
+        Set<LocalDate> days = new HashSet<>();
+        for (LocalDate d = SIGNAL.minusDays(30); !d.isAfter(SIGNAL.plusDays(3)); d = d.plusDays(1)) {
+            raw.add(bar(d, 100, 101, 99, 100));
+            days.add(d);
+        }
+        LocalDate lastBar = SIGNAL.plusDays(3);
+        LocalDate through = SIGNAL.plusDays(8);                  // 之后停牌，没有 K 线
+        for (LocalDate d = lastBar.plusDays(1); !d.isAfter(through); d = d.plusDays(1)) {
+            days.add(d);
+        }
+
+        PaperTrade.Result r = SignalTrades.simulate(raw, List.of(), days, SIGNAL, 100, 95, through, TH,
+                PaperTrade.Rules.of(TH));
+
+        assertThat(r.reason()).isEqualTo(PaperTrade.ExitReason.OPEN);
+        assertThat(r.lastCloseDate()).as("最后一根 K 线").isEqualTo(lastBar);
+        assertThat(r.lastCloseDate()).as("早于截止日，所以当前价是陈旧的").isBefore(through);
+    }
+
     @Test
     void 查询截止日不同时同一信号的结果只随截止日变化() {
         List<DailyBar> raw = new ArrayList<>();

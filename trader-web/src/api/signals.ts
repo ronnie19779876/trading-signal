@@ -141,6 +141,12 @@ export interface SignalTrack {
   returnPct: number | null
   mfeR: number | null
   maeR: number | null
+  /** 当前价（判定日口径，与 entryPrice 可直接比）；只有持有中（OPEN）才有 */
+  lastClose: number | null
+  /** 当前价那根 K 线的日期；可能早于 updatedThrough（标的停牌或缺 K 线时会滞后） */
+  lastCloseDate: string | null
+  /** 浮动盈亏 ÷ R；R = 判定日收盘 − 本变体止损，所以两个变体通常不同 */
+  unrealizedR: number | null
   barsHeld: number | null
   updatedThrough: string | null
   updatedAt: string

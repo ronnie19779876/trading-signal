@@ -5,6 +5,7 @@ import org.jdkxx.trader.storage.marketdata.DailyBarRepository;
 import org.jdkxx.trader.storage.marketdata.RehabFactorRepository;
 import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
 import org.jdkxx.trader.storage.signal.EntrySignalRepository;
+import org.jdkxx.trader.storage.signal.EntrySignalRow;
 import org.jdkxx.trader.storage.signal.SignalTrackRepository;
 import org.jdkxx.trader.storage.signal.SignalTrackRow;
 import org.junit.jupiter.api.Test;
@@ -13,6 +14,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -42,7 +44,7 @@ class SignalLedgerServiceTest {
 
     private static SignalTrackRow track(long signalId, LocalDate updatedThrough) {
         return new SignalTrackRow(signalId, "BASE", "OPEN", null, null, null, null, false, null, null, null, null, null,
-                null, null, null, updatedThrough, null);
+                null, null, null, null, null, null, updatedThrough, null);
     }
 
     /** 要害：补跑到一个更早的日期时，已经算到更晚的条目一条都不能动。 */
@@ -84,5 +86,92 @@ class SignalLedgerServiceTest {
 
         assertThat(service().update(LocalDate.of(2026, 9, 17)).updated()).isZero();
         verify(tracks, never()).update(any());
+    }
+
+    // ------------------------------------------------------------------ 当前价与浮动盈亏（3.1.4）
+
+    private static final org.jdkxx.trader.domain.Instrument X = org.jdkxx.trader.domain.Instrument.us("X");
+
+    private static org.jdkxx.trader.domain.DailyBar bar(LocalDate d, double c) {
+        return new org.jdkxx.trader.domain.DailyBar(X, d, java.math.BigDecimal.valueOf(c), java.math.BigDecimal.valueOf(c + 1),
+                java.math.BigDecimal.valueOf(c - 1), java.math.BigDecimal.valueOf(c), null, 1000, null, null, null, null, false);
+    }
+
+    private static EntrySignalRow sig(LocalDate day, double close) {
+        return new EntrySignalRow(1, 1, "X", day, "sentinel-v1", "UNIVERSE", "LIVE", java.math.BigDecimal.valueOf(close),
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, "NEW",
+                day.plusDays(3), null, null, null, null);
+    }
+
+    private static SignalTrackRow trackWithStop(String variant, double stop) {
+        return new SignalTrackRow(1, variant, "OPEN", java.math.BigDecimal.valueOf(stop), null, null, null, false,
+                null, null, null, null, null, null, null, null, null, null, null, null, null);
+    }
+
+    /** 造一段行情：判定日 100，之后走到 end 的收盘价为 lastClose。 */
+    private static Object[] series(LocalDate signalDay, LocalDate end, double lastClose) {
+        List<org.jdkxx.trader.domain.DailyBar> raw = new java.util.ArrayList<>();
+        java.util.Set<LocalDate> cal = new java.util.HashSet<>();
+        for (LocalDate d = signalDay.minusDays(30); !d.isAfter(signalDay); d = d.plusDays(1)) {
+            raw.add(bar(d, 100));
+            cal.add(d);
+        }
+        for (LocalDate d = signalDay.plusDays(1); !d.isAfter(end); d = d.plusDays(1)) {
+            raw.add(bar(d, d.equals(end) ? lastClose : 100));
+            cal.add(d);
+        }
+        return new Object[] {raw, cal};
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 未平仓填当前价_已平仓三列留空() {
+        LocalDate day = LocalDate.of(2026, 3, 2);
+        LocalDate end = day.plusDays(3);
+
+        Object[] openSeries = series(day, end, 104);        // 高于止损 → 未平仓
+        SignalTrackRow open = service().recompute(sig(day, 100), trackWithStop("BASE", 95),
+                (List<org.jdkxx.trader.domain.DailyBar>) openSeries[0], List.of(),
+                (java.util.Set<LocalDate>) openSeries[1], end);
+
+        assertThat(open.status()).isEqualTo("OPEN");
+        assertThat(open.lastClose()).isNotNull().satisfies(v -> assertThat(v.doubleValue()).isCloseTo(104, within(1e-6)));
+        assertThat(open.lastCloseDate()).isEqualTo(end);
+        assertThat(open.unrealizedR()).isNotNull();
+
+        Object[] closedSeries = series(day, end, 90);       // 跌破止损 → 已平仓
+        SignalTrackRow closed = service().recompute(sig(day, 100), trackWithStop("BASE", 95),
+                (List<org.jdkxx.trader.domain.DailyBar>) closedSeries[0], List.of(),
+                (java.util.Set<LocalDate>) closedSeries[1], end);
+
+        assertThat(closed.status()).isEqualTo("CLOSED");
+        assertThat(closed.lastClose()).as("已平仓看 exit_price，当前价留空——不是 0").isNull();
+        assertThat(closed.lastCloseDate()).isNull();
+        assertThat(closed.unrealizedR()).as("已平仓看 r_multiple").isNull();
+    }
+
+    /**
+     * 两个变体的当前价与浮动收益率必然相同（同入场价、同现价），但 <b>unrealized_r 不同</b>：
+     * R = 判定日收盘 − 本变体止损，止损不同则 R 不同。2026-10-09 生产实录：
+     * AMAT 的 R 是 43.88（BASE）对 54.10（STOP_2_5）。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void 两个变体当前价相同但浮动R不同() {
+        LocalDate day = LocalDate.of(2026, 3, 2);
+        LocalDate end = day.plusDays(3);
+        Object[] s = series(day, end, 104);
+        List<org.jdkxx.trader.domain.DailyBar> raw = (List<org.jdkxx.trader.domain.DailyBar>) s[0];
+        java.util.Set<LocalDate> cal = (java.util.Set<LocalDate>) s[1];
+
+        SignalTrackRow base = service().recompute(sig(day, 100), trackWithStop("BASE", 95), raw, List.of(), cal, end);
+        SignalTrackRow wide = service().recompute(sig(day, 100), trackWithStop("STOP_2_5", 93.75), raw, List.of(), cal, end);
+
+        assertThat(base.lastClose()).isEqualByComparingTo(wide.lastClose());
+        assertThat(base.lastCloseDate()).isEqualTo(wide.lastCloseDate());
+        // 入场 100、现价 104 → BASE: 4/5 = 0.8；STOP_2_5: 4/6.25 = 0.64
+        assertThat(base.unrealizedR().doubleValue()).isCloseTo(0.8, within(1e-6));
+        assertThat(wide.unrealizedR().doubleValue()).isCloseTo(0.64, within(1e-6));
+        assertThat(base.unrealizedR()).isNotEqualByComparingTo(wide.unrealizedR());
     }
 }

@@ -39,13 +39,16 @@ public final class PaperTrade {
     }
 
     /**
-     * @param r      已实现盈亏 ÷ R（减半仓时按两半加权）；未平仓为 null
-     * @param mfeR   持有期最大浮盈 ÷ R（按盘中最高）
-     * @param maeR   持有期最大浮亏 ÷ R（按盘中最低，负数）
+     * @param r             已实现盈亏 ÷ R（减半仓时按两半加权）；未平仓为 null
+     * @param mfeR          持有期最大浮盈 ÷ R（按盘中最高）——是<b>曾经到过</b>的位置，不是当前位置
+     * @param maeR          持有期最大浮亏 ÷ R（按盘中最低，负数）
+     * @param lastClose     模拟走到的<b>最后一根 K 线</b>的收盘：未平仓时就是当前价，已平仓时等于 {@code exit}
+     * @param lastCloseDate 那根 K 线的日期。<b>可能早于查询的截止日</b>——标的停牌或缺 K 线时就会滞后
+     *                      （2026-10 的 WBD 即如此），所以展示当前价必须连这个日期一起给，否则陈旧价看起来像今天的
      */
     public record Result(LocalDate signalDate, LocalDate entryDate, double entry, double stop, double plusOneR,
                          boolean touchedPlusOneR, LocalDate exitDate, Double exit, ExitReason reason, Double r,
-                         double mfeR, double maeR, int barsHeld) {
+                         double mfeR, double maeR, int barsHeld, double lastClose, LocalDate lastCloseDate) {
     }
 
     /**
@@ -105,11 +108,13 @@ public final class PaperTrade {
                         : 0.5 * (halfExit - entry) + 0.5 * (b.close() - entry);
                 return new Result(bars.get(signal).date(), bars.get(entryIndex).date(), entry, stop,
                         target, touched, b.date(), b.close(), reason, pnl / risk,
-                        (highest - entry) / risk, (lowest - entry) / risk, i - entryIndex + 1);
+                        (highest - entry) / risk, (lowest - entry) / risk, i - entryIndex + 1,
+                        b.close(), b.date());
             }
         }
+        SignalBar last = bars.get(bars.size() - 1);
         return new Result(bars.get(signal).date(), bars.get(entryIndex).date(), entry, stop, target, touched,
                 null, null, ExitReason.OPEN, null, (highest - entry) / risk, (lowest - entry) / risk,
-                bars.size() - entryIndex);
+                bars.size() - entryIndex, last.close(), last.date());
     }
 }

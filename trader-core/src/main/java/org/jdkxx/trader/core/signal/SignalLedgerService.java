@@ -103,15 +103,32 @@ public class SignalLedgerService {
         PaperTrade.Result r = SignalTrades.simulate(raw, factors, calendar, signal.tradeDate(), signal.close().doubleValue(),
                 t.stop().doubleValue(), through, th, PaperTrade.Rules.of(th));
         if (r == null) {
-            return new SignalTrackRow(t.signalId(), t.variant(), "PENDING_ENTRY", t.stop(), t.plusOneR(), null, null, false,
-                    null, null, null, null, null, null, null, null, through, null);
+            return new SignalTrackRow(t.signalId(), t.variant(), "PENDING_ENTRY", t.stop(), t.plusOneR(),
+                    null, null, false, null, null, null, null, null, null, null,
+                    null, null, null,                       // 当前价/日期/浮动 R：还没入场，没有成本可比
+                    null, through, null);
         }
         boolean open = r.reason() == PaperTrade.ExitReason.OPEN;
+        // 当前价只给未平仓填：待入场没有成本，已平仓看 exit_price。
+        // lastClose 已在 SignalTrades 里折回判定日口径，与 entryPrice 同尺度，可直接相减。
+        BigDecimal lastClose = open ? d(r.lastClose()) : null;
+        LocalDate lastCloseDate = open ? r.lastCloseDate() : null;
+        BigDecimal unrealizedR = open ? unrealized(r.lastClose(), r.entry(), signal, t) : null;
         return new SignalTrackRow(t.signalId(), t.variant(), open ? "OPEN" : "CLOSED", t.stop(), t.plusOneR(), r.entryDate(),
                 d(r.entry()), r.touchedPlusOneR(), r.exitDate(), r.exit() == null ? null : d(r.exit()),
                 open ? null : r.reason().name(), r.r() == null ? null : d(r.r()),
-                r.exit() == null ? null : d((r.exit() - r.entry()) / r.entry()), d(r.mfeR()), d(r.maeR()), r.barsHeld(),
-                through, null);
+                r.exit() == null ? null : d((r.exit() - r.entry()) / r.entry()), d(r.mfeR()), d(r.maeR()),
+                lastClose, lastCloseDate, unrealizedR, r.barsHeld(), through, null);
+    }
+
+    /**
+     * 浮动盈亏 ÷ R。R = 判定日收盘 − <b>本变体</b>止损，所以 BASE 与 STOP_2_5 的 R 通常不同
+     * （止损取 min(收盘 − m×ATR, 区底 − 0.5×ATR)，区底腿生效时才与 ATR 倍数无关、两个变体相同）。
+     * 浮动收益率两个变体则必然相同——同入场价、同当前价。
+     */
+    private static BigDecimal unrealized(double lastClose, double entry, EntrySignalRow signal, SignalTrackRow t) {
+        double risk = signal.close().doubleValue() - t.stop().doubleValue();
+        return risk > 0 ? d((lastClose - entry) / risk) : null;
     }
 
     private static BigDecimal d(double v) {
