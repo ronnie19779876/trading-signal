@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -143,20 +144,50 @@ class IbkrLiveAccountTest {
     }
 
     /**
-     * 守护（3.0.10）：当天有平仓时，账户当日含已平仓标的的当日已实现，逐只之和只覆盖在持的——扣掉已实现才对得上。
+     * 守护：当天有平仓（realized ≠ 0）时<b>不比当日</b>，只用浮盈把关——当日差多少都不影响采用。
      *
-     * <p>取自 2026-09-23 生产实况：卖掉 TSLA 之后当日盈亏整天判不通过、界面一直空着。
-     * 这里用同一形态造数：逐只之和当日 915.99，账户当日 1280.50 = 915.99 + 已实现 364.51（TSLA 卖出对当日的贡献，
-     * 由当天净值反推核出：(384.9752 − 378.90) × 60 = 364.51）。
+     * <p>这里当日差 364.51，浮盈精确相等；按新口径应当采用。3.0.10 的「扣掉 realized 再比」恰好也能让
+     * 这组数通过（1280.50 − 364.51 = 915.99），所以它<b>区分不出新旧</b>——真正区分新旧的是
+     * {@link #按2026_10_09生产真实数字_平仓日照常采用()}。
      */
     @Test
-    void 有平仓时扣掉已实现再核对() {
+    void 有平仓时不比当日_只看浮盈() {
         positionsAndSingles(true);
 
         wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(1280.50, 22328.76, 364.51));
 
         assertThat(rec.pnls).extracting(x -> x.daily().toPlainString()).containsExactly("1280.5");
         assertThat(rec.pnls.get(0).realized().toPlainString()).isEqualTo("364.51");   // 显示仍是盈透原值
+    }
+
+    /**
+     * <b>这条是本次修正的要害</b>，数字全部取自 2026-10-09 生产日志（卖出 BRK.B 80 股那天）：
+     * <pre>
+     * 账户   当日=1093.3018226278286  浮盈=26615.850201798563  已实现=477.157432
+     * 逐只之和 当日=1099.14422262783    浮盈=26615.850201798563
+     * </pre>
+     * 浮盈差 0.0、当日差 −5.8424。3.0.10 扣掉 realized 后差变成 −483.00，当天当日盈亏整天空着。
+     * 新口径：平仓日不比当日 → 采用。
+     *
+     * <p>逐只在这里拆成两只，逻辑只看合计，与真实的 5 只等价。
+     */
+    @Test
+    void 按2026_10_09生产真实数字_平仓日照常采用() {
+        live.subscribe();
+        wire.handlers.get(POS).item(pos(43645865, "IBKR", 11.1142));
+        wire.handlers.get(POS).item(pos(756733, "SPY", 210));
+        wire.handlers.get(POS).end();
+        // 合计：当日 1099.14422262783、浮盈 26615.850201798563
+        wire.handlers.get(SINGLE_IBKR).item(new IbkrAccounts.PnlSingleRow(
+                Decimal.get(11.1142), 99.14422262783, 615.850201798563, Double.MAX_VALUE, 1007.95));
+        wire.handlers.get(SINGLE_SPY).item(new IbkrAccounts.PnlSingleRow(
+                Decimal.get(210), 1000.0, 26000.0, Double.MAX_VALUE, 160225.80));
+
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(1093.3018226278286, 26615.850201798563, 477.157432));
+
+        assertThat(rec.pnls).as("平仓日的当日盈亏不该再整天空着").hasSize(1);
+        assertThat(rec.pnls.get(0).daily().doubleValue()).isCloseTo(1093.3018226278286, within(1e-9));
+        assertThat(rec.pnls.get(0).realized().doubleValue()).isCloseTo(477.157432, within(1e-9));
     }
 
     /** 守护：无平仓的日子 realized = 0，行为与 3.0.9 之前完全一致（零回归）。 */
@@ -172,23 +203,29 @@ class IbkrLiveAccountTest {
     }
 
     /**
-     * 守护：realized 未设（Double.MAX_VALUE → null）时不作调整，于是当日对不上就判不通过。
-     * 这是安全方向——宁可当日盈亏空着，也不放行一条对不上的推送；日志里会写"已实现=未设"便于事后分辨。
+     * 守护：realized 未设（Double.MAX_VALUE → null）时<b>判断不了当天有没有平仓</b>，按「有平仓」处理——
+     * 只比浮盈。宁可少一道，也不要在平仓日把当日盈亏整天挂空（2026-09-23 与 2026-10-09 都栽在这上面）。
+     * 日志里会写"已实现=未设"便于事后分辨。
      */
     @Test
-    void 已实现未设时不作调整_对不上就不采用() {
+    void 已实现未设时只用浮盈把关() {
         positionsAndSingles(true);
 
-        // 当日比逐只之和多 364.51，但 realized 未设：无从扣除，判不通过
+        // 当日比逐只之和多 364.51，但浮盈精确相等：采用
         wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(1280.50, 22328.76, Double.MAX_VALUE));
-        assertThat(rec.pnls).isEmpty();
-
-        // 不需要调整就对得上的照常采用
-        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(915.99, 22328.76, Double.MAX_VALUE));
         assertThat(rec.pnls).hasSize(1);
     }
 
-    /** 守护：浮盈那一半不因为扣已实现而放松——只有当日含已实现，浮盈两边口径本来就一致。 */
+    /** 守护：realized 未设时浮盈仍然是硬门槛——不完整的推送照样挡住。 */
+    @Test
+    void 已实现未设但浮盈对不上_仍不采用() {
+        positionsAndSingles(true);
+
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(25.67, 183.65, Double.MAX_VALUE));
+        assertThat(rec.pnls).isEmpty();
+    }
+
+    /** 守护：平仓日跳过当日比较，<b>不等于</b>浮盈也放松——浮盈两边口径一致，任何时候都是硬门槛。 */
     @Test
     void 浮盈对不上仍然不采用() {
         positionsAndSingles(true);

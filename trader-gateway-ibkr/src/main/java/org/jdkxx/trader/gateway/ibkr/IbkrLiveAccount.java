@@ -99,6 +99,7 @@ final class IbkrLiveAccount {
     private Runnable pnlWatchdog;
     /** 核对不通过的日志每次订阅只记一条，免得 5 秒一推刷屏。 */
     private boolean pnlMismatchLogged;
+    private boolean pnlDailySkipLogged;
 
     IbkrLiveAccount(String accountId, LiveAccountListener listener, Wire wire) {
         this.accountId = accountId;
@@ -236,6 +237,7 @@ final class IbkrLiveAccount {
         singleRows.clear();
         pnlPending = null;
         pnlMismatchLogged = false;
+        pnlDailySkipLogged = false;
         if (pnlWatchdog != null) {
             pnlWatchdog.run();   // 取消
             pnlWatchdog = null;
@@ -408,8 +410,29 @@ final class IbkrLiveAccount {
     }
 
     /**
-     * 核对挂起的账户盈亏：逐只盈亏覆盖了全部持仓、且当日与浮盈之和都对得上（容差 {@value #PNL_TOLERANCE}）才采用。
-     * 逐只之和只用来判断这条推送完整与否，发出去的仍是账户盈亏的原值。
+     * 核对挂起的账户盈亏：逐只盈亏要覆盖全部持仓，<b>浮盈之和</b>对得上才采用（容差 {@value #PNL_TOLERANCE}）；
+     * 当日之和只在<b>当天没有平仓</b>时一并核对。逐只之和只用来判断这条推送完整与否，发出去的仍是账户盈亏的原值。
+     *
+     * <h2>为什么当日在平仓日不能比（2026-10-09 实测，推翻了 3.0.10 的做法）</h2>
+     * 当天卖掉 BRK.B 80 股之后的真实推送：
+     * <pre>
+     * 账户   当日=1093.3018226278286  浮盈=26615.850201798563  已实现=477.157432
+     * 逐只之和 当日=1099.14422262783    浮盈=26615.850201798563
+     * </pre>
+     * <ul>
+     *   <li><b>浮盈差 = 0.0</b>：两边口径都只含在持，平仓日照样精确对得上——它才是完整性的干净判据；</li>
+     *   <li><b>当日差 = −5.8424</b>，而 {@code realized = 477.157432}。3.0.10 扣掉 realized 之后差变成
+     *       <b>−483.00</b>，<b>方向反了、量级放大 82 倍</b>；</li>
+     *   <li>账户当日含的是已平仓标的的<b>当日变动</b>（卖出价相对前收，含手续费），<b>不是</b>它相对成本的终身已实现。
+     *       佐证：BRK.B 前收市值 80 × 511.05 = 40,884.00，卖出到账现金 40,878.16，差 <b>5.84</b>；
+     *       相隔 40 分钟的两条日志差值是完全相同的 −482.99983200000133（固定量，不是时间漂移）。</li>
+     * </ul>
+     * <b>正确的调整量我们拿不到</b>：标的一平仓就从 {@code reqPositionsMulti} 消失，
+     * 而 {@code reqPnLSingle} 的 realized 恒为 {@code Double.MAX_VALUE}。扩大容差也不行——
+     * 平仓标的的当日变动无界（今天只有 5.84 是因为几乎平价卖出）。所以平仓日<b>不比当日</b>，
+     * 改由浮盈单独把关；当日仍照常显示盈透原值。
+     *
+     * <p><b>n = 1</b>：一个交易日、一只平仓标的、两次采样。等下一次平仓日复核。
      */
     private void verifyPnl() {
         IbkrAccounts.PnlRow row = pnlPending;
@@ -426,19 +449,43 @@ final class IbkrLiveAccount {
             daily += r.daily();
             unreal += r.unrealized();
         }
-        // 账户当日含<b>已平仓标的</b>的当日已实现，逐只之和只覆盖在持的：有平仓的日子必须把已实现扣掉再比。
-        // realized 未设时不作调整（等同于不扣）——这是安全方向：宁可判不通过、当日盈亏空着，也不放行一条对不上的推送。
+        // 当天有没有平仓：账户级 realized 非 0 即有（逐只的 realized 恒为 Double.MAX_VALUE，不可用）。
+        // realized 不可用时判断不了，按「有平仓」处理——只比浮盈，宁可少一道也不要在平仓日把当日盈亏整天挂空。
         java.math.BigDecimal realizedAmount = IbkrAccounts.amount(row.realized());
         Double realized = realizedAmount == null ? null : realizedAmount.doubleValue();
-        double accountDaily = row.daily() - (realized == null ? 0 : realized);
-        if (Math.abs(accountDaily - daily) <= PNL_TOLERANCE && Math.abs(row.unrealized() - unreal) <= PNL_TOLERANCE) {
+        boolean closedToday = realized == null || realized != 0;
+
+        // 浮盈是判断推送完整与否的干净判据：两边口径都只含在持，平仓日也精确对得上（2026-10-09 实测差 0.0）。
+        boolean unrealOk = Math.abs(row.unrealized() - unreal) <= PNL_TOLERANCE;
+        boolean dailyOk = closedToday || Math.abs(row.daily() - daily) <= PNL_TOLERANCE;
+
+        if (unrealOk && dailyOk) {
             pnlValid = true;
             pnlPending = null;
             pnlMismatchLogged = false;
+            if (closedToday) {
+                logDailyNotChecked(row, realized, daily);
+            }
             listener.onPnl(IbkrAccounts.pnl(row, wire.now()));
             return;
         }
-        logPnlMismatch(row, realized, daily, unreal);
+        logPnlMismatch(row, realized, daily, unreal, closedToday);
+    }
+
+    /**
+     * 平仓日跳过当日比较时记一条（每次订阅最多一条）。
+     *
+     * <p>把两个当日与 realized 都打出来，是为了积累「平仓日账户当日与逐只之和差多少」的实测样本：
+     * 2026-10-09 差 −5.84，若将来某天差到几百上千，就说明这条口径还有别的成分，到时有据可查。
+     * 顺带也能看出 realized 在正常日是不是真的给 0（若常年「未设」，这条检查等于每天都被跳过）。
+     */
+    private void logDailyNotChecked(IbkrAccounts.PnlRow row, Double realized, double singlesDaily) {
+        if (pnlDailySkipLogged) {
+            return;
+        }
+        pnlDailySkipLogged = true;
+        log.info("当天有平仓（已实现={}），当日盈亏不与逐只之和比对、只用浮盈把关：账户当日={} 逐只之和当日={} 差={}",
+                realized == null ? "未设" : realized, row.daily(), singlesDaily, row.daily() - singlesDaily);
     }
 
     /**
@@ -447,16 +494,17 @@ final class IbkrLiveAccount {
      * <p>2026-09-23 生产上当日盈亏整天空着，日志里只有"没有有效推送，重订第 N 次"，<b>一个数字都没有</b>，
      * 事后只能靠净值反推去猜盈透的口径。这条日志就是为了让下一次失败留下证据而不是沉默。
      */
-    private void logPnlMismatch(IbkrAccounts.PnlRow row, Double realized, double singlesDaily, double singlesUnrealized) {
+    private void logPnlMismatch(IbkrAccounts.PnlRow row, Double realized, double singlesDaily, double singlesUnrealized,
+                                boolean closedToday) {
         if (pnlMismatchLogged) {
             return;
         }
         pnlMismatchLogged = true;
         log.warn("实时账户盈亏核对不通过（{} 只持仓）：账户 当日={} 浮盈={} 已实现={}；逐只之和 当日={} 浮盈={}；"
-                        + "扣除已实现后当日差={} 浮盈差={}（容差 {}）",
+                        + "当日差={}（{}）浮盈差={}（容差 {}）",
                 positions.size(), row.daily(), row.unrealized(), realized == null ? "未设" : realized,
                 singlesDaily, singlesUnrealized,
-                (realized == null ? row.daily() : row.daily() - realized) - singlesDaily,
+                row.daily() - singlesDaily, closedToday ? "当天有平仓，未参与判定" : "参与判定",
                 row.unrealized() - singlesUnrealized, PNL_TOLERANCE);
     }
 
