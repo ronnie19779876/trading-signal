@@ -20,6 +20,10 @@ import org.jdkxx.trader.domain.Quote;
 import org.jdkxx.trader.domain.RehabFactor;
 import org.jdkxx.trader.domain.SubscriptionInfo;
 import org.jdkxx.trader.domain.TradingDay;
+import org.jdkxx.trader.domain.selection.EarningsEvent;
+import org.jdkxx.trader.domain.selection.ValuationMetric;
+import org.jdkxx.trader.domain.selection.ValuationPoint;
+import org.jdkxx.trader.domain.selection.ValuationRange;
 import org.jdkxx.trader.gateway.BrokerGateway;
 import org.jdkxx.trader.gateway.GatewayException;
 import org.jdkxx.trader.gateway.GatewayListener;
@@ -28,6 +32,7 @@ import org.jdkxx.trader.gateway.GatewayStatus;
 import org.jdkxx.trader.gateway.MarketDataGateway;
 import org.jdkxx.trader.gateway.NotConnectedException;
 import org.jdkxx.trader.gateway.QuoteListener;
+import org.jdkxx.trader.gateway.SelectionDataGateway;
 import org.jdkxx.trader.gateway.futu.mapper.FutuAccounts;
 import org.jdkxx.trader.gateway.futu.mapper.FutuQuotes;
 import org.jdkxx.trader.gateway.futu.mapper.FutuStates;
@@ -55,7 +60,7 @@ import java.util.function.Consumer;
  * 富途网关适配器的对外入口。两条通道（行情 QOT、交易 TRD）各有自己的 {@link ConnectionSupervisor}，
  * 网关级状态是两者的合成：都 CONNECTED 才算 CONNECTED。监听器收到的是网关级事件（不会一条通道一次）。
  */
-public class FutuGateway implements BrokerGateway, MarketDataGateway, AutoCloseable {
+public class FutuGateway implements BrokerGateway, MarketDataGateway, SelectionDataGateway, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(FutuGateway.class);
 
@@ -361,6 +366,23 @@ public class FutuGateway implements BrokerGateway, MarketDataGateway, AutoClosea
     @Override
     public CompletableFuture<List<FinancialReport>> financials(Instrument instrument, FinancialStatement statement, int periods) {
         return requireQot(() -> marketData.financials(instrument, statement, periods));
+    }
+
+    // ------------------------------------------------------------------ 量化选股（§25.6）
+
+    @Override
+    public CompletableFuture<List<FinancialReport>> quarterlyFinancials(Instrument instrument, FinancialStatement statement, int periods) {
+        return requireQot(() -> marketData.quarterlyFinancials(instrument, statement, periods));
+    }
+
+    @Override
+    public CompletableFuture<List<ValuationPoint>> valuationHistory(Instrument instrument, ValuationMetric metric, ValuationRange range) {
+        return requireQot(() -> marketData.valuationHistory(instrument, metric, range));
+    }
+
+    @Override
+    public CompletableFuture<List<EarningsEvent>> earningsHistory(Instrument instrument) {
+        return requireQot(() -> marketData.earningsHistory(instrument));
     }
 
     @Override

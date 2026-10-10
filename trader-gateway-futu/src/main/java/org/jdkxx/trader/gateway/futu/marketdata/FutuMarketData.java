@@ -2,10 +2,12 @@ package org.jdkxx.trader.gateway.futu.marketdata;
 
 import com.futu.openapi.pb.QotCommon;
 import com.futu.openapi.pb.QotGetCompanyProfile;
+import com.futu.openapi.pb.QotGetFinancialsEarningsPriceHistory;
 import com.futu.openapi.pb.QotGetFinancialsStatements;
 import com.futu.openapi.pb.QotGetKL;
 import com.futu.openapi.pb.QotGetSecuritySnapshot;
 import com.futu.openapi.pb.QotGetSubInfo;
+import com.futu.openapi.pb.QotGetValuationDetail;
 import com.futu.openapi.pb.QotGetStaticInfo;
 import com.futu.openapi.pb.QotRequestHistoryKL;
 import com.futu.openapi.pb.QotRequestHistoryKLQuota;
@@ -24,10 +26,15 @@ import org.jdkxx.trader.domain.RehabFactor;
 import org.jdkxx.trader.domain.SubscriptionInfo;
 import org.jdkxx.trader.domain.TradingDay;
 import org.jdkxx.trader.domain.ValuationSnapshot;
+import org.jdkxx.trader.domain.selection.EarningsEvent;
+import org.jdkxx.trader.domain.selection.ValuationMetric;
+import org.jdkxx.trader.domain.selection.ValuationPoint;
+import org.jdkxx.trader.domain.selection.ValuationRange;
 import org.jdkxx.trader.gateway.futu.mapper.FutuBars;
 import org.jdkxx.trader.gateway.futu.mapper.FutuFundamentals;
 import org.jdkxx.trader.gateway.futu.mapper.FutuRehabs;
 import org.jdkxx.trader.gateway.futu.mapper.FutuSecurities;
+import org.jdkxx.trader.gateway.futu.mapper.FutuSelection;
 import org.jdkxx.trader.gateway.futu.mapper.FutuStatics;
 import org.jdkxx.trader.gateway.futu.QotCalls;
 
@@ -254,16 +261,49 @@ public final class FutuMarketData {
      * 这样一次就能拿到季度序列而不用分两种周期各拉一遍。
      */
     public CompletableFuture<List<FinancialReport>> financials(Instrument instrument, FinancialStatement statement, int periods) {
+        return financials(instrument, statement, periods, QotCommon.F10Type.F10Type_QuarterlyAnnual);
+    }
+
+    /** 只要季报（量化选股，§25.6）：一页最多 50 季，实测约回到 2014，够 2016 起的同比。 */
+    public CompletableFuture<List<FinancialReport>> quarterlyFinancials(Instrument instrument, FinancialStatement statement, int periods) {
+        return financials(instrument, statement, periods, QotCommon.F10Type.F10Type_Quarterly);
+    }
+
+    private CompletableFuture<List<FinancialReport>> financials(Instrument instrument, FinancialStatement statement, int periods,
+                                                                QotCommon.F10Type type) {
         QotGetFinancialsStatements.C2S c2s = QotGetFinancialsStatements.C2S.newBuilder()
                 .setSecurity(FutuSecurities.of(instrument))
                 .setStatementType(QotCommon.FinancialStatementsType.forNumber(FutuFundamentals.statementType(statement)))
-                .setFinancialType(QotCommon.F10Type.F10Type_QuarterlyAnnual)
+                .setFinancialType(type)
                 .setNum(Math.clamp(periods, 1, MAX_FINANCIAL_PERIODS))
                 .build();
         QotGetFinancialsStatements.Request req = QotGetFinancialsStatements.Request.newBuilder().setC2S(c2s).build();
         return qot.call("get-financials", "getFinancialsStatements", QotGetFinancialsStatements.Response.class,
                         c -> c.getFinancialsStatements(req))
                 .thenApply(rsp -> FutuFundamentals.toReports(instrument, statement, rsp.getS2C()));
+    }
+
+    /** 逐日估值历史（量化选股，§25.6）。YEAR10 实测 2016-10 起约 2513 天。 */
+    public CompletableFuture<List<ValuationPoint>> valuationHistory(Instrument instrument, ValuationMetric metric, ValuationRange range) {
+        QotGetValuationDetail.Request req = QotGetValuationDetail.Request.newBuilder()
+                .setC2S(QotGetValuationDetail.C2S.newBuilder()
+                        .setSecurity(FutuSecurities.of(instrument))
+                        .setValuationType(FutuSelection.valuationType(metric))
+                        .setIntervalType(FutuSelection.interval(range)))
+                .build();
+        return qot.call("get-valuation-detail", "getValuationDetail", QotGetValuationDetail.Response.class,
+                        c -> c.getValuationDetail(req))
+                .thenApply(rsp -> FutuSelection.toValuationPoints(rsp.getS2C()));
+    }
+
+    /** 财报公告日（量化选股，§25.6）：实测最近 20 季，含未来预定日期。 */
+    public CompletableFuture<List<EarningsEvent>> earningsHistory(Instrument instrument) {
+        QotGetFinancialsEarningsPriceHistory.Request req = QotGetFinancialsEarningsPriceHistory.Request.newBuilder()
+                .setC2S(QotGetFinancialsEarningsPriceHistory.C2S.newBuilder().setSecurity(FutuSecurities.of(instrument)))
+                .build();
+        return qot.call("get-earnings-history", "getFinancialsEarningsPriceHistory",
+                        QotGetFinancialsEarningsPriceHistory.Response.class, c -> c.getFinancialsEarningsPriceHistory(req))
+                .thenApply(rsp -> FutuSelection.toEarningsEvents(rsp.getS2C()));
     }
 
     public CompletableFuture<CompanyProfile> companyProfile(Instrument instrument) {

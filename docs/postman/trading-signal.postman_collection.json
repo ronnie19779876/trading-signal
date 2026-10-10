@@ -2300,6 +2300,213 @@
       ]
     },
     {
+      "name": "量化选股（第 6 期）",
+      "item": [
+        {
+          "name": "输入覆盖报告（6.1 验收）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/selection/inputs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "selection",
+                "inputs"
+              ]
+            },
+            "description": "四个部分的回补状态与没取过的只数、失败与空回明细、盈透日线覆盖、接缝通过数、估值历史 vs 快照同日核对、公告日与季报的匹配、季报深度。只读。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"四个部分都在\", () => [\"PRICES\",\"VALUATION\",\"EARNINGS\",\"FINANCIALS\"].forEach(p => pm.expect(body.parts[p]).to.be.an(\"object\")));",
+                  "pm.test(\"范围只数为正\", () => pm.expect(body.targets).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "接缝核对明细",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/selection/seams?failedOnly=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "selection",
+                "seams"
+              ],
+              "query": [
+                {
+                  "key": "failedOnly",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "盈透拆股调整日线与富途不复权日 K 在重叠段逐日比收益（股数变动除权日不比）；不通过的标的在需要盈透段的日子动能记缺。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "⚠ 写操作（改状态或触发跑批，别对生产整组跑）",
+          "item": [
+            {
+              "name": "输入回补（异步）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/selection/backfill?part=earnings&symbols={{symbol}}&force=false",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "selection",
+                    "backfill"
+                  ],
+                  "query": [
+                    {
+                      "key": "part",
+                      "value": "earnings"
+                    },
+                    {
+                      "key": "symbols",
+                      "value": "{{symbol}}"
+                    },
+                    {
+                      "key": "force",
+                      "value": "false"
+                    }
+                  ]
+                },
+                "description": "part 取 prices / valuation / earnings / financials；symbols 缺省为全部范围（全量很慢：盈透约 100 分钟、富途三项合计约 3 小时）。续跑跳过已完成的，force=true 重取。⚠ 会写库、会占券商请求。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                      "const body = pm.response.json();",
+                      "pm.test(\"返回 jobId\", () => pm.expect(body.jobId).to.be.a(\"number\"));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "范围外的代码 → 400",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/selection/backfill?part=earnings&symbols=SPY",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "selection",
+                    "backfill"
+                  ],
+                  "query": [
+                    {
+                      "key": "part",
+                      "value": "earnings"
+                    },
+                    {
+                      "key": "symbols",
+                      "value": "SPY"
+                    }
+                  ]
+                },
+                "description": "只取成分股或池内的普通股；ETF / REITs 与不认识的代码当场拒绝，不提交作业。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "基本面（第 2 期·步骤 3）",
       "item": [
         {

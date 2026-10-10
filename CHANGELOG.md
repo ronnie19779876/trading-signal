@@ -1,5 +1,40 @@
 # CHANGELOG
 
+## 3.2.0（开发中）
+
+- 新增：**第 6 期「量化选股」6.1 输入补齐**（设计见 ARCHITECTURE §25，2026-10-10 用户认可）。
+  **独立的新功能，不与入场信号混用**：各层 `selection` 包、`selection_` 前缀的表、`/api/selection` 接口，不调用、不修改 `signal` 的任何代码。
+  - 可行性依据（10-10 只读探针）：富途财报一页 50 季约回到 2014、与 EDGAR 逐季一致，但是**重述后口径**（MSFT FY17 Q3 净利 54.86 亿 = 重述值，首次申报 48.01 亿）；
+    `getValuationDetail` 给逐日 PE / PB / PS 十年序列、近似时点口径，PE 与估值快照 `pe_ttm` 逐位一致；公告日只有最近 20 季；
+    494 只普通股的富途日 K 中位数从 2022-09-08 起，2016~2022 用盈透日线补（用户拍板）。
+  - 网关：gateway-api 新增两个端口——`PriceHistoryGateway`（盈透 `reqHistoricalData`，TRADES 日线按 conId，节奏 10 分钟 50 次、超时 120 秒）、
+    `SelectionDataGateway`（富途：季报 `F10Type_Quarterly`、`getValuationDetail`、`getFinancialsEarningsPriceHistory`；两个新接口在 `FutuChannel` 的 SPI 注册回调，限频先按 10/30s）。
+    不往现有 `MarketDataGateway` 里加方法。
+  - 盈透合约：`IbkrContracts.stock` 把代码里的点换成空格（`BRK.B` → `BRK B`），否则查无此标的（开发实例实测）；
+    `primaryExch=NASDAQ` 对纽交所的票照样查得到（JPM、KO、XOM）。
+  - 存储：V16 建 `selection_backfill_state`（逐只进度，续跑跳过 OK / EMPTY / SKIPPED）、`selection_price_bar`（盈透原样，**不进 `daily_bar`**）、
+    `selection_price_seam`、`selection_valuation`、`selection_earnings_event`。深度季报写进共用的 `financial_report`（期别同键幂等追加，现有每周作业不删旧期）。
+  - 接缝核对 `PriceSeam`（纯函数）：盈透已按拆股调整、富途不复权，比日收益不比价格；只在两边都有收盘的相邻日上比，股数变动除权日跳过；
+    比较 ≥ 60 对且 ≥ 95% 收益差 < 0.1% 才通过。
+  - 接口：`POST /api/selection/backfill?part=&symbols=&force=`、`GET /api/selection/inputs`、`GET /api/selection/seams`。
+    **Postman 集合需重新导入**。没有定时作业、没有前端（用户定：前端等引擎在生产跑稳后再做）。
+  - 回补遇网关断线整批停下（作业记 PARTIAL），不把后面的都记成失败——10-10 开发实例上链路抖动时真实触发过一次，行为符合设计。
+  - **真实数据验证（2026-10-11 开发实例，样本 12 只：AAPL MSFT JPM KO XOM BRK.B NVDA INTC SOLV TSLA ASML + PANW）**：
+    - 估值历史 11/11：10 只 2016-10-11 ~ 2026-10-09 各 2513 天，SOLV 自 2024-03-26 上市起 638 天；与估值快照同日核对 **PE、PB 11/11 逐位一致**（PB 一致性此前未实测，这次补上）。
+    - 季报 11/11：三类各 50 期回到 2014（SOLV 16 期，分拆前的独立报表自 2022-09）；**季度现金流 4 季之和 = 年报，11 只全部一致**（含 JPM 银行模板），确认是单季口径。
+    - 价格：6 只富途日 K 已早于 2016（SKIPPED）；6 只取盈透 2016-01-04 起 1766 根，**接缝 6/6 通过**，重叠段 84 天收盘价逐日完全相同（官方收盘价，SQL 直接比两张表）。
+      PANW 2022-09-14 拆股落在重叠段：除权那一对被跳过、82/82 通过；两边价格比在除权前恒为 1/6、后恒为 1/2，确认盈透按抓取日为止的全部拆股调整。
+      XOM 重组后的新合约 id（EXXONMOBIL HOLDINGS CORP）照样取到 2016 起的历史。
+    - 公告日 11/11；近 4 年季报 167 期对上 160 期。**新发现：富途公告日列表不只「最近 20 条」，中间还会缺期**（KO 缺 2020/Q4、2022/Q3~2023/Q1，BRK.B 缺多期，NVDA 缺 2023/Q2）；
+      没对上的 7 期 = SOLV 分拆前 5 季 + KO 缺的 2 季。§25.5 改为「缺的期同样走法定期限规则」。
+    - 续跑：已完成的 11 只重发后全部跳过（作业 #98）。
+  - 修正（同一轮验证中发现）：覆盖报告「晚于法定期限」的核对改按交易日比——规则日落在周末顺延到下一交易日。
+    原口径把 BRK.B 两期（周六发、富途记下周一）误报成晚到；新 SQL 在开发库实测误报清零，事务里造一条真晚到的能抓到，ROLLBACK 后复查数据未变。
+  - 设计订正：§25.3「外国发行人因季报不足自然排除」**被证伪**（ASML 有完整 50 期季报）；纳指独有的 ADR 实际被「没有 GICS 板块」挡住，**纳不纳入在 6.2 开工前由用户拍板**。
+  - 测试：新增 `PriceSeamTest`、`FutuSelectionTest`、`IbkrBarsTest`、`SelectionBackfillServiceTest`、`SelectionTargetsTest`，补 `IbkrContractsTest`、`IbkrWrapperTest`。
+    「没取过的标的状态为 null」一条**反证确认变红**（改回 `Set.of(...).contains(null)` 写法后 8 条全部 NPE）。
+  - 版本递增为 3.2.0-SNAPSHOT（新功能）。
+
 ## 3.1.5（2026-10-09 发布）
 
 - 修正：**实时账户当日盈亏的核对口径——3.0.10 的「扣掉账户级已实现」是错的**（ARCHITECTURE §23）。

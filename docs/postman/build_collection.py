@@ -296,6 +296,28 @@ ENDPOINTS = [
         ],
     },
     {
+        "folder": "量化选股（第 6 期）",
+        "items": [
+            {"name": "输入覆盖报告（6.1 验收）", "method": "GET", "path": "/api/selection/inputs",
+             "desc": "四个部分的回补状态与没取过的只数、失败与空回明细、盈透日线覆盖、接缝通过数、估值历史 vs 快照同日核对、"
+                     "公告日与季报的匹配、季报深度。只读。",
+             "tests": T_200 + T_JSON + ['pm.test("四个部分都在", () => ["PRICES","VALUATION","EARNINGS","FINANCIALS"].forEach(p => pm.expect(body.parts[p]).to.be.an("object")));',
+                                        'pm.test("范围只数为正", () => pm.expect(body.targets).to.be.above(0));']},
+            {"name": "接缝核对明细", "method": "GET", "path": "/api/selection/seams", "query": [{"key": "failedOnly", "value": "false"}],
+             "desc": "盈透拆股调整日线与富途不复权日 K 在重叠段逐日比收益（股数变动除权日不比）；不通过的标的在需要盈透段的日子动能记缺。",
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
+            {"name": "输入回补（异步）", "method": "POST", "path": "/api/selection/backfill",
+             "query": [{"key": "part", "value": "earnings"}, {"key": "symbols", "value": "{{symbol}}"}, {"key": "force", "value": "false"}],
+             "desc": "part 取 prices / valuation / earnings / financials；symbols 缺省为全部范围（全量很慢：盈透约 100 分钟、富途三项合计约 3 小时）。"
+                     "续跑跳过已完成的，force=true 重取。⚠ 会写库、会占券商请求。",
+             "tests": T_200 + T_JSON + ['pm.test("返回 jobId", () => pm.expect(body.jobId).to.be.a("number"));']},
+            {"name": "范围外的代码 → 400", "method": "POST", "path": "/api/selection/backfill",
+             "query": [{"key": "part", "value": "earnings"}, {"key": "symbols", "value": "SPY"}],
+             "desc": "只取成分股或池内的普通股；ETF / REITs 与不认识的代码当场拒绝，不提交作业。",
+             "tests": ['pm.test("HTTP 400", () => pm.response.to.have.status(400));']},
+        ],
+    },
+    {
         "folder": "基本面（第 2 期·步骤 3）",
         "items": [
             {"name": "基本面审计（收盘后必查）", "method": "GET", "path": "/api/fundamentals/audit",

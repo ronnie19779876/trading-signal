@@ -122,6 +122,16 @@ trader:
     enabled: true
     evaluation-cron: "0 10 18 * * MON-FRI"   # 美东 18:10：排在增量、估值、账户快照（含持仓同步 HOLDING）之后
     catchup-cron: "0 0 22 * * MON-FRI"       # 与 21:00 行情补偿错开：当天缺评估或有过期跳过但现已补齐的就重跑
+  # 量化选股（第 6 期，ARCHITECTURE §25）：独立功能，与入场信号互不相干。评分参数跟着模型版本写死在代码里，这里只有输入回补范围。
+  # 6.1 只有手工回补（POST /api/selection/backfill），没有定时作业
+  selection:
+    price-from: 2016-01-01        # 盈透日线从哪天起补（12 个月动能从 2018 回测要 2017 起）
+    seam-months: 4                # 取到富途日 K 起点之后几个月，保证有重叠段可核对
+    financial-periods: 50         # 季报期数（富途单次上限 50，实测约回到 2014）
+    valuation-range: YEAR10       # 估值历史回看（实测 2016-10 起）
+    seam-min-compared: 60
+    seam-tolerance: 0.001         # 接缝单日收益差容忍 0.1%
+    seam-min-share: 0.95
 
   ai:
     api-key: ${OPENAI_API_KEY:}

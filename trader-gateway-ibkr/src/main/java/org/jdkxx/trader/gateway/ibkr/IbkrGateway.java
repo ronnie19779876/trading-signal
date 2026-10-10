@@ -1,5 +1,9 @@
 package org.jdkxx.trader.gateway.ibkr;
 
+import org.jdkxx.trader.common.ratelimit.RateLimitExceededException;
+import org.jdkxx.trader.common.ratelimit.RateLimitSpec;
+import org.jdkxx.trader.common.ratelimit.RateLimiter;
+import org.jdkxx.trader.common.ratelimit.SlidingWindowRateLimiter;
 import org.jdkxx.trader.common.ratelimit.TokenBucketRateLimiter;
 import org.jdkxx.trader.domain.AccountKind;
 import org.jdkxx.trader.domain.AccountRef;
@@ -9,6 +13,7 @@ import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.InstrumentInfo;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.Position;
+import org.jdkxx.trader.domain.selection.SplitAdjustedBar;
 import org.jdkxx.trader.gateway.AccountGateway;
 import org.jdkxx.trader.gateway.BrokerGateway;
 import org.jdkxx.trader.gateway.GatewayException;
@@ -17,9 +22,11 @@ import org.jdkxx.trader.gateway.GatewayStatus;
 import org.jdkxx.trader.gateway.LiveAccountGateway;
 import org.jdkxx.trader.gateway.LiveAccountListener;
 import org.jdkxx.trader.gateway.NotConnectedException;
+import org.jdkxx.trader.gateway.PriceHistoryGateway;
 import org.jdkxx.trader.gateway.ReferenceDataGateway;
 import org.jdkxx.trader.gateway.RequestRejectedException;
 import org.jdkxx.trader.gateway.ibkr.mapper.IbkrAccounts;
+import org.jdkxx.trader.gateway.ibkr.mapper.IbkrBars;
 import org.jdkxx.trader.gateway.ibkr.mapper.IbkrContracts;
 import org.jdkxx.trader.gateway.ibkr.mapper.IbkrInstruments;
 import org.jdkxx.trader.gateway.support.ConnectionSupervisor;
@@ -28,6 +35,9 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -42,7 +52,8 @@ import java.util.concurrent.TimeUnit;
  * 盈透网关适配器的对外入口：生命周期由 {@link ConnectionSupervisor} 驱动，会话由 {@link IbkrConnection} 持有。
  * 能力：连接 / 重连 / 心跳、受管账户、合约查询；第 3 期起加持仓与账户汇总（只读）；3.0.2 起加实时账户订阅。
  */
-public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, AccountGateway, LiveAccountGateway, AutoCloseable {
+public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, AccountGateway, LiveAccountGateway, PriceHistoryGateway,
+        AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(IbkrGateway.class);
 
@@ -55,6 +66,16 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
     private final ConnectionSupervisor supervisor;
     /** 账户汇总的常驻订阅：随连接建立、随断开释放，实时账户与每日快照共用（3.0.9）。只在 dispatch 线程上读写。 */
     private IbkrAccountSummaryFeed summaryFeed;
+    /**
+     * 历史数据节奏（量化选股，§25.6）：盈透规定 10 分钟内最多 60 次，留余量按 50 次；
+     * 在调用方线程上等（作业线程，最长等一个窗口多一点），不占泵线程与 dispatch 线程。
+     */
+    private final RateLimiter historicalPacing = new SlidingWindowRateLimiter("ibkr-historical",
+            RateLimitSpec.parse("50/10m"), Duration.ofSeconds(1), Duration.ofMinutes(11));
+    /** 一次多年日线比普通请求慢，超时单独给。 */
+    static final Duration HISTORICAL_TIMEOUT = Duration.ofSeconds(120);
+    private static final DateTimeFormatter TWS_DAY = DateTimeFormatter.BASIC_ISO_DATE;
+
     /** 实时账户订阅：只在 dispatch 线程上读写。 */
     private IbkrLiveAccount live;
     private volatile boolean liveIntent;
@@ -215,6 +236,26 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
                     }
                     throw c instanceof RuntimeException re ? re : new CompletionException(c);
                 });
+    }
+
+    @Override
+    public CompletableFuture<List<SplitAdjustedBar>> splitAdjustedDailyBars(long conId, LocalDate from, LocalDate to) {
+        if (from.isAfter(to)) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("from 不能晚于 to：" + from + " > " + to));
+        }
+        if (!isConnected()) {
+            return CompletableFuture.failedFuture(new NotConnectedException(Broker.IBKR, status().detail()));
+        }
+        try {
+            historicalPacing.acquire();
+        } catch (RateLimitExceededException e) {
+            return CompletableFuture.failedFuture(e);
+        }
+        long days = ChronoUnit.DAYS.between(from, to) + 1;
+        String duration = days <= 365 ? days + " D" : ((days + 364) / 365) + " Y";
+        String end = to.format(TWS_DAY) + " 23:59:59 US/Eastern";
+        return connection.historicalDailyBars(IbkrContracts.byConId(conId), end, duration, HISTORICAL_TIMEOUT)
+                .thenApply(bars -> IbkrBars.toSplitAdjusted(bars, from, to));
     }
 
     @Override

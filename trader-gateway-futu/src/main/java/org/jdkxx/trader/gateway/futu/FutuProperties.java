@@ -58,7 +58,10 @@ public record FutuProperties(
             Map.entry("get-sub-info", "10/30s"),
             Map.entry("get-security-snapshot", "60/30s"),
             Map.entry("get-financials", "25/30s"),      // 文档 30/30s，实测按 30 发会被拒，留余量（同 request-rehab）
-            Map.entry("get-company-profile", "30/30s"));   // 文档未写限频，先按同类接口配，实测后收敛
+            Map.entry("get-company-profile", "30/30s"),   // 文档未写限频，先按同类接口配，实测后收敛
+            // 量化选股（§25.6）：文档未写限频，先保守按 10/30s，实测后再放
+            Map.entry("get-valuation-detail", "10/30s"),
+            Map.entry("get-earnings-history", "10/30s"));
 
     public FutuProperties {
         Map<String, String> merged = new LinkedHashMap<>(DEFAULT_LIMITS);

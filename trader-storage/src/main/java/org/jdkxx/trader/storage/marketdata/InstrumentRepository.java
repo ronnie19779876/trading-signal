@@ -79,6 +79,12 @@ public class InstrumentRepository {
         return jdbc.query("SELECT id FROM instrument WHERE ibkr_con_id = ?", (rs, i) -> rs.getLong(1), conId).stream().findFirst();
     }
 
+    /** 标的已绑定的盈透 conId；没绑定时为空（在 SQL 里过滤 NULL，RowMapper 不返回 null）。 */
+    public Optional<Long> ibkrConId(long id) {
+        return jdbc.query("SELECT ibkr_con_id FROM instrument WHERE id = ? AND ibkr_con_id IS NOT NULL",
+                (rs, i) -> rs.getLong(1), id).stream().findFirst();
+    }
+
     /** 记下标的的盈透 conId；该标的已绑定了别的 conId 时不覆盖，返回 false。 */
     public boolean bindIbkrConId(long id, long conId) {
         return jdbc.update("UPDATE instrument SET ibkr_con_id = ?, updated_at = now() WHERE id = ? AND (ibkr_con_id IS NULL OR ibkr_con_id = ?)",

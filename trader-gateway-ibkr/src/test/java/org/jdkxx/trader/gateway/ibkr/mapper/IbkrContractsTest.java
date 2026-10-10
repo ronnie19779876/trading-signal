@@ -21,6 +21,21 @@ class IbkrContractsTest {
         assertThat(c.primaryExch()).isEqualTo("NASDAQ");
     }
 
+    /** 类别股盈透写空格：不换的话 contractDetails 查无此标的（2026-10-10 开发实例实测 BRK.B 空、BRK B 有）。 */
+    @Test
+    void 类别股的点换成空格() {
+        assertThat(IbkrContracts.usStock("BRK.B").symbol()).isEqualTo("BRK B");
+    }
+
+    @Test
+    void 按conId定位只给conId与SMART() {
+        Contract c = IbkrContracts.byConId(265598L);
+
+        assertThat(c.conid()).isEqualTo(265598);
+        assertThat(c.exchange()).isEqualTo("SMART");
+        assertThat(c.symbol()).isNull();
+    }
+
     @Test
     void 非美股暂不支持() {
         assertThatThrownBy(() -> IbkrContracts.stock(new Instrument(Market.HK, "00700"), null))

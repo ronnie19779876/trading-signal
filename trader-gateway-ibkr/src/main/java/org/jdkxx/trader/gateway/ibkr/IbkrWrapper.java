@@ -1,5 +1,6 @@
 package org.jdkxx.trader.gateway.ibkr;
 
+import com.ib.client.Bar;
 import com.ib.client.Contract;
 import com.ib.client.ContractDetails;
 import com.ib.client.Decimal;
@@ -98,6 +99,17 @@ final class IbkrWrapper extends DefaultEWrapper {
 
     @Override
     public void contractDetailsEnd(int reqId) {
+        registry.complete(reqId);
+    }
+
+    /** 历史日线（量化选股，§25.6）：一次性请求，数据逐根到、End 收尾。 */
+    @Override
+    public void historicalData(int reqId, Bar bar) {
+        registry.item(reqId, bar);
+    }
+
+    @Override
+    public void historicalDataEnd(int reqId, String startDateStr, String endDateStr) {
         registry.complete(reqId);
     }
 

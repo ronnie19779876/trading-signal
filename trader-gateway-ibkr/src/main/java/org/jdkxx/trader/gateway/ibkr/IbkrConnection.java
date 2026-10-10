@@ -1,5 +1,6 @@
 package org.jdkxx.trader.gateway.ibkr;
 
+import com.ib.client.Bar;
 import com.ib.client.Contract;
 import com.ib.client.ContractDetails;
 import com.ib.client.EClientSocket;
@@ -289,6 +290,18 @@ final class IbkrConnection implements Transport {
         CompletableFuture<List<ContractDetails>> f = registry.open(id, "合约查询 " + contract.symbol(),
                 new PendingRequest.Many<>(ContractDetails.class), null);
         sendWithId(id, c -> c.reqContractDetails(id, contract));
+        return f;
+    }
+
+    /**
+     * 历史日线（reqHistoricalData，TRADES、1 day、只取常规时段、日期格式 yyyyMMdd、不保持更新）。
+     * 一次性请求，End 后自然结束；超时则取消，免得网关继续占着这个请求的节奏名额。
+     */
+    CompletableFuture<List<Bar>> historicalDailyBars(Contract contract, String endDateTime, String duration, Duration timeout) {
+        int id = registry.nextId();
+        CompletableFuture<List<Bar>> f = registry.open(id, "历史日线 conId=" + contract.conid(),
+                new PendingRequest.Many<>(Bar.class), () -> cancelQuietly("历史日线", c -> c.cancelHistoricalData(id)), timeout);
+        sendWithId(id, c -> c.reqHistoricalData(id, contract, endDateTime, duration, "1 day", "TRADES", 1, 1, false, null));
         return f;
     }
 

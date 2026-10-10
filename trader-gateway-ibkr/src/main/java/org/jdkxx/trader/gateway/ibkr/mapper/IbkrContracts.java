@@ -22,13 +22,22 @@ public final class IbkrContracts {
             throw new IllegalArgumentException("盈透侧目前只映射美股，收到：" + instrument);
         }
         Contract contract = new Contract();
-        contract.symbol(instrument.symbol());
+        // 类别股盈透写空格（BRK B），我们与富途写点（BRK.B）；不换的话查无此标的（2026-10-10 实测）
+        contract.symbol(instrument.symbol().replace('.', ' '));
         contract.secType("STK");
         contract.exchange("SMART");
         contract.currency("USD");
         if (primaryExchange != null && !primaryExchange.isBlank()) {
             contract.primaryExch(primaryExchange);
         }
+        return contract;
+    }
+
+    /** 按 conId 定位（历史数据用）：conId 唯一确定合约，交易所给 SMART 即可。 */
+    public static Contract byConId(long conId) {
+        Contract contract = new Contract();
+        contract.conid(Math.toIntExact(conId));
+        contract.exchange("SMART");
         return contract;
     }
 

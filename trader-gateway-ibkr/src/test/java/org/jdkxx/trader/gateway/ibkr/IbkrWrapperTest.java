@@ -92,6 +92,17 @@ class IbkrWrapperTest {
     }
 
     @Test
+    void 历史日线逐根交给注册表_End收尾() {
+        int id = registry.nextId();
+        CompletableFuture<List<com.ib.client.Bar>> f = registry.open(id, "t", new PendingRequest.Many<>(com.ib.client.Bar.class), null);
+        wrapper.historicalData(id, new com.ib.client.Bar("20160104", 1, 2, 0.5, 1.5, Decimal.get(100), 1, Decimal.get(1)));
+        wrapper.historicalData(id, new com.ib.client.Bar("20160105", 1, 2, 0.5, 1.6, Decimal.get(100), 1, Decimal.get(1)));
+        wrapper.historicalDataEnd(id, "20160101", "20160131");
+
+        assertThat(f.join()).extracting(com.ib.client.Bar::time).containsExactly("20160104", "20160105");
+    }
+
+    @Test
     void 持仓与账户汇总回调交给注册表_结束后的迟到推送被忽略() {
         int id = registry.nextId();
         CompletableFuture<List<IbkrAccounts.PositionRow>> f = registry.open(id, "t",

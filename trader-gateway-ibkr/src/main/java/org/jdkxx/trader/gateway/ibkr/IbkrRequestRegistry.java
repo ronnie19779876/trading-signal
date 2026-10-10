@@ -50,6 +50,11 @@ final class IbkrRequestRegistry {
      * @param onTimeout 超时后要执行的取消动作（例如 cancelMktData），可为 null
      */
     <T> CompletableFuture<T> open(int id, String what, PendingRequest<T> request, Runnable onTimeout) {
+        return open(id, what, request, onTimeout, timeout);
+    }
+
+    /** 同上，但用指定的超时（历史数据一次多年日线，比普通请求慢）。 */
+    <T> CompletableFuture<T> open(int id, String what, PendingRequest<T> request, Runnable onTimeout, Duration timeout) {
         CompletableFuture<T> future = new CompletableFuture<>();
         ScheduledFuture<?> t = scheduler.schedule(() -> {
             if (pending.remove(id) != null) {

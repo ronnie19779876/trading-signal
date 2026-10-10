@@ -10,9 +10,11 @@ import com.futu.openapi.pb.GetGlobalState;
 import com.futu.openapi.pb.Notify;
 import com.futu.openapi.pb.QotGetKL;
 import com.futu.openapi.pb.QotGetCompanyProfile;
+import com.futu.openapi.pb.QotGetFinancialsEarningsPriceHistory;
 import com.futu.openapi.pb.QotGetFinancialsStatements;
 import com.futu.openapi.pb.QotGetSecuritySnapshot;
 import com.futu.openapi.pb.QotGetSubInfo;
+import com.futu.openapi.pb.QotGetValuationDetail;
 import com.futu.openapi.pb.QotUpdateBasicQot;
 import com.futu.openapi.pb.QotGetStaticInfo;
 import com.futu.openapi.pb.QotRequestHistoryKL;
@@ -162,6 +164,18 @@ final class FutuChannel implements Transport {
 
         @Override
         public void onReply_GetCompanyProfile(FTAPI_Conn client, int nSerialNo, QotGetCompanyProfile.Response rsp) {
+            reply(client, nSerialNo, rsp);
+        }
+
+        // 量化选股（§25.6）。新增请求忘了在这里注册，表现是超时而不是编译错误
+        @Override
+        public void onReply_GetValuationDetail(FTAPI_Conn client, int nSerialNo, QotGetValuationDetail.Response rsp) {
+            reply(client, nSerialNo, rsp);
+        }
+
+        @Override
+        public void onReply_GetFinancialsEarningsPriceHistory(FTAPI_Conn client, int nSerialNo,
+                                                              QotGetFinancialsEarningsPriceHistory.Response rsp) {
             reply(client, nSerialNo, rsp);
         }
 
