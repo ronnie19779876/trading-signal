@@ -42,3 +42,6 @@ docs/postman/.postman/
 docs/postman/postman/
 docs/postman/trading-signal/
 docs/postman/*.environment.yaml
+
+# 研究数据（分钟 K 线缓存、冻结清单、中间结果）不入库，只入库代码
+research/*/data/
