@@ -136,6 +136,7 @@ storage → common ；ai → common
 | `mvn test` 与 `mvn verify` 的 <b>classpath 不一样</b>：reactor 在 package 之后给下游模块的是 <b>jar</b> 而不是 `target/classes` 目录。`SpringBeanConstructorTest` 的多模块扫描从 classpath 挑目录，于是 test 下扫到九个模块、verify 下只剩一个——本地全绿、发布前跑 verify 才炸（3.1.2 发布时实际发生） | 要遍历「本仓库各模块的编译产物」就按仓库布局直接找目录，别从 classpath 挑。另：**发布前必须跑 `./mvnw clean verify`，不能只跑 `test`**。还有一条顺带的：javadoc 里别写 `<仓库>/*/target`——注释里的 `*` 加 `/` 就是块注释结束符，会把文件截断 |
 | 盈透的资金恒等式是**四项**：现金 + 股票市值 + 应计股息 + <b>应计利息</b>（`$LEDGER-AccruedCash`）= 净值。对账只加前三项，在现金余额小、应计利息为 0 时正好成立、连续 8 次快照全判 OK；现金涨到两万多后它变成 1.49，对账就天天误报 WARN、作业记 PARTIAL、`jobs` 健康降级，而数据分毫不差 | 等式用四项（3.1.3）；缺项按 0 计并在文案里注明，别整条弃核——盈透对不同账户类型返回的标签不同。detail 把各项数字都打出来，否则定位要翻 `raw` 里 31 个标签。**注意还有 13 类其它资产标签当前全是 0**（债券、期权、基金、外汇现金、TBill/TBond、认股权证、加密），账上一出现就会以同样方式少算一项 |
 | 富途财报接口**没有公告日**；`getFinancialsEarningsPriceHistory` 有，但只给最近 20 条、含未来预定日期，**而且中间会缺期**（2026-10-11 实测 KO 缺 2022/Q3~2023/Q1、BRK.B 缺多期）；它给的是「生效交易日」，周六发的财报记成下周一 | 公告日按期别匹配，没匹配上的（2021 年前或中间缺的）按法定期限规则兜底、落在非交易日顺延；核对「是否晚于规则」必须按交易日比（ARCHITECTURE §25.5） |
+| 盈透历史日线按 **SMART** 取时**只从最近一次转板开始**（2026-10-11 实测 PEP 2017-12-20 纽交所转纳斯达克：SMART 132 根，NASDAQ 给 2015 起 755 根且跨过转板日；WDAY、UAL、XEL、PFG、COO 同样）；另有**把被收购方历史挂到收购方名下**的情况（OKE 新 conId 的 2016~2022 是 Magellan 的价格，换交易所也一样） | 取历史按 conId 查主交易所再请求（`IbkrContracts.historical`），KO、AAPL 两种取法逐根相同；盈透段必须与富途重叠段比日收益（`PriceSeam`），不通过的不用。162「HMDS query returned no data」记 EMPTY 不记失败 |
 | 同一份输入模型立场会摇摆（实测 HWM 连调 4 次：NEUTRAL、BULLISH×3）；OpenAI SDK 的类在 core 模块不可见（optional），Mockito 替身不了引用它的类 | 否决要设门槛（非 LOW + ≥2 条核对通过的证据）；core 只认 `VetoClient` 接口，`com.openai.*` 只在 `OpenAiVetoClient` |
 
 ## 当前状态
@@ -181,7 +182,7 @@ storage → common ；ai → common
 **第 6 期「量化选股」3.2.0 开发中（ARCHITECTURE §25，2026-10-10 用户认可）**：独立的新功能，**不与入场信号混用**——各层 `selection` 包、`selection_` 表、`/api/selection` 接口。
 四因子（估值、成长、盈利能力、动能）、GICS 板块内百分位、强制分布五档、重放落库；前端等引擎在生产跑稳后再做。
 **6.1 输入补齐已完成、样本验证通过**（盈透 2016 起日线 + 接缝核对、富途估值历史、公告日、50 期季报），未发布；
-6.2 评分引擎开工前待拍板：纳指独有的 ADR（ASML、TSM 等）纳不纳入。
+用户 10-11 拍板 **ADR 不纳入**（Alpha Picks 口径），判据拟用盈透合约明细 `stockType`，取值待 6.2 实测。
 富途公告日列表中间会缺期，缺的期按法定期限规则兜底（§25.5）。
 
 **日内可行性研究·第 0 期进行中（ARCHITECTURE §24，代码 `research/intraday/`，数据目录不入库）**：

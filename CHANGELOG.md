@@ -30,6 +30,17 @@
     - 续跑：已完成的 11 只重发后全部跳过（作业 #98）。
   - 修正（同一轮验证中发现）：覆盖报告「晚于法定期限」的核对改按交易日比——规则日落在周末顺延到下一交易日。
     原口径把 BRK.B 两期（周六发、富途记下周一）误报成晚到；新 SQL 在开发库实测误报清零，事务里造一条真晚到的能抓到，ROLLBACK 后复查数据未变。
+  - **全量价格回补（2026-10-11，494 只）与随之的修正**：
+    - 首轮（SMART 路由）发现**盈透按 SMART 取历史只从最近一次转板开始**：PEP、WDAY、UAL、XEL、PFG 的盈透起点正好是各自由纽交所转纳斯达克的日子，
+      COO 直接回 162。临时 client-id 95 探针：PEP 按 SMART 只有 132 根，按主交易所 NASDAQ 给 2015 起 755 根、跨过转板日；
+      转板前 2016~2017 按 NASDAQ 与按 NYSE 取逐日完全相同（504/504）；KO、AAPL 两种取法逐根相同。
+      → `IbkrGateway.splitAdjustedDailyBars` 改为先按 conId 查主交易所再请求（`IbkrContracts.historical`）。
+    - **盈透把被收购方的历史挂到收购方名下**：OKE 新 conId 的 2016~2022 是 Magellan 的价格（2016-01-04 68.66、2022-09-08 50.20；富途 61.31 与实际一致），
+      换交易所也一样；接缝核对 83 对只有 4 对一致、拦下。这正是接缝核对存在的理由。
+    - 162「HMDS query returned no data」改记 EMPTY（ODFL 2024-05 前、CRH 2023-09 前、SW 上市前确实没有），续跑不再重试；
+      盈透最早一根不早于富途起点的新股（FER、HONA、SPCX、PLTR 等）改记 SKIPPED，不存不核对。两条都有单测并**反证确认变红**。
+    - 对受影响的 62 只强制重跑后：PRICES OK 455、SKIPPED 34、EMPTY 3、FAILED 2（PSKY、WBD：成分股清单过期、盈透查无此代码）；
+      **接缝 453/455 通过**，不通过的是 OKE（错挂历史）与 COO（61/83，盈透转板前收盘与官方收盘差到 0.3%，比值在 0.25 ± 0.03% 内抖动，是价格噪声不是错位）。
   - 设计订正：§25.3「外国发行人因季报不足自然排除」**被证伪**（ASML 有完整 50 期季报）；纳指独有的 ADR 实际被「没有 GICS 板块」挡住，**纳不纳入在 6.2 开工前由用户拍板**。
   - 测试：新增 `PriceSeamTest`、`FutuSelectionTest`、`IbkrBarsTest`、`SelectionBackfillServiceTest`、`SelectionTargetsTest`，补 `IbkrContractsTest`、`IbkrWrapperTest`。
     「没取过的标的状态为 null」一条**反证确认变红**（改回 `Set.of(...).contains(null)` 写法后 8 条全部 NPE）。

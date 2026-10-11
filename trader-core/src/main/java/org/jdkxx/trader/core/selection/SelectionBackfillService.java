@@ -15,6 +15,7 @@ import org.jdkxx.trader.domain.selection.ValuationPoint;
 import org.jdkxx.trader.gateway.NotConnectedException;
 import org.jdkxx.trader.gateway.PriceHistoryGateway;
 import org.jdkxx.trader.gateway.ReferenceDataGateway;
+import org.jdkxx.trader.gateway.RequestRejectedException;
 import org.jdkxx.trader.gateway.SelectionDataGateway;
 import org.jdkxx.trader.storage.marketdata.DailyBarRepository;
 import org.jdkxx.trader.storage.marketdata.FinancialRepository;
@@ -59,6 +60,8 @@ public class SelectionBackfillService {
     private static final List<FinancialStatement> STATEMENTS = List.of(FinancialStatement.INCOME,
             FinancialStatement.BALANCE_SHEET, FinancialStatement.CASH_FLOW);
     /** 股数变动类公司行动：除权当天盈透（已调整）与富途（不复权）的收益本来就对不上，接缝核对跳过。 */
+    /** 盈透历史数据服务「没有数据」。 */
+    static final int NO_DATA = 162;
     private static final long SHARE_CHANGE = RehabFactor.ACT_SPLIT | RehabFactor.ACT_JOIN | RehabFactor.ACT_BONUS
             | RehabFactor.ACT_TRANSFER | RehabFactor.ACT_SPIN_OFF;
 
@@ -178,13 +181,30 @@ public class SelectionBackfillService {
         long conId = conId(row);
         LocalDate today = LocalDate.now(clock.withZone(zone));
         LocalDate to = min(futuFrom.plusMonths(props.seamMonths()), today.minusDays(1));
-        List<SplitAdjustedBar> bars = prices.splitAdjustedDailyBars(conId, props.priceFrom(), to).get(180, TimeUnit.SECONDS);
+        List<SplitAdjustedBar> bars;
+        try {
+            bars = prices.splitAdjustedDailyBars(conId, props.priceFrom(), to).get(180, TimeUnit.SECONDS);
+        } catch (ExecutionException e) {
+            // 162「HMDS query returned no data」是券商明确说没有，不是失败：记 EMPTY，续跑不再重试
+            // （2026-10-11 实测 ODFL 2024-05 前、CRH 2023-09 前、SW 上市前都是这样）
+            if (unwrap(e) instanceof RequestRejectedException r && r.code() == NO_DATA) {
+                clearPrices(row.id());
+                return Outcome.empty("盈透 conId " + conId + " 在 " + props.priceFrom() + "~" + to + " 没有日线（162）");
+            }
+            throw e;
+        }
         if (bars.isEmpty()) {
+            clearPrices(row.id());
             return Outcome.empty("盈透 conId " + conId + " 在 " + props.priceFrom() + "~" + to + " 没有日线");
         }
-        priceBars.replaceAll(row.id(), bars, today);
         LocalDate ibFrom = bars.getFirst().tradeDate();
         LocalDate ibTo = bars.getLast().tradeDate();
+        if (!ibFrom.isBefore(futuFrom)) {
+            // 盈透没有比富途更早的数据（新上市的票）：盈透段没有用处，不存、也不核对接缝
+            clearPrices(row.id());
+            return Outcome.skipped("盈透最早 " + ibFrom + "，不早于富途起点 " + futuFrom + "，富途已覆盖，不需要盈透");
+        }
+        priceBars.replaceAll(row.id(), bars, today);
 
         Map<LocalDate, BigDecimal> futuCloses = new HashMap<>();
         for (DailyBar b : dailyBars.find(instrument, row.id(), futuFrom, to)) {
@@ -206,6 +226,12 @@ public class SelectionBackfillService {
             head += "；盈透最早只到 " + ibFrom;
         }
         return Outcome.ok(head + "；接缝" + (seam.ok() ? "通过" : "不通过") + "：" + seam.detail());
+    }
+
+    /** 重取后不再需要盈透段时，清掉之前存的日线与接缝结论，免得留下旧口径的数据。 */
+    private void clearPrices(long instrumentId) {
+        priceBars.replaceAll(instrumentId, List.of(), LocalDate.now(clock.withZone(zone)));
+        seams.delete(instrumentId);
     }
 
     /** 已绑定的 conId 优先（持仓同步写的）；没有就查合约并绑定。只认美元计价的唯一候选，多个候选不猜。 */

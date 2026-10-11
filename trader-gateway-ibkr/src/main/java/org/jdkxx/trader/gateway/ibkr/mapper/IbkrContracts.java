@@ -41,6 +41,18 @@ public final class IbkrContracts {
         return contract;
     }
 
+    /**
+     * 取历史数据用的合约：conId + 主交易所。主交易所查不到时退回 SMART。
+     * 不能一律用 SMART——SMART 的历史只从最近一次转板开始（见 {@code IbkrGateway#splitAdjustedDailyBars}）。
+     */
+    public static Contract historical(long conId, String primaryExchange) {
+        Contract contract = byConId(conId);
+        if (primaryExchange != null && !primaryExchange.isBlank()) {
+            contract.exchange(primaryExchange);
+        }
+        return contract;
+    }
+
     public static Contract usStock(String symbol) {
         return stock(Instrument.us(symbol), DEFAULT_US_PRIMARY_EXCHANGE);
     }

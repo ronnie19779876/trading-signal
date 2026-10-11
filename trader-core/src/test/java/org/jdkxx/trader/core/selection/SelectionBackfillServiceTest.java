@@ -196,6 +196,59 @@ class SelectionBackfillServiceTest {
         verify(states).save(eq(7L), eq("PRICES"), eq("OK"), org.mockito.ArgumentMatchers.contains("接缝通过"));
     }
 
+    private void youngListing(long id, String symbol, LocalDate futuFrom) {
+        when(dailyBars.coverage(id)).thenReturn(Optional.of(new DailyBarRepository.InstrumentCoverage(id, 80, futuFrom,
+                LocalDate.of(2026, 10, 9))));
+        when(instruments.ibkrConId(id)).thenReturn(Optional.of(100L + id));
+    }
+
+    /** 162「没有数据」是券商明确说没有：记 EMPTY（续跑不再重试），并清掉旧数据。实测 ODFL、CRH、SW。 */
+    @Test
+    void 盈透回162没有数据记EMPTY不记失败() throws Exception {
+        when(targets.only(any())).thenReturn(List.of(row(1, "ODFL")));
+        youngListing(1, "ODFL", LocalDate.of(2022, 9, 8));
+        when(prices.splitAdjustedDailyBars(eq(101L), any(), any())).thenReturn(CompletableFuture.failedFuture(
+                new org.jdkxx.trader.gateway.RequestRejectedException(Broker.IBKR, 162,
+                        "Historical Market Data Service error message:HMDS query returned no data")));
+
+        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+
+        verify(states).save(eq(1L), eq("PRICES"), eq("EMPTY"), org.mockito.ArgumentMatchers.contains("162"));
+        verify(priceBars).replaceAll(eq(1L), eq(List.of()), any());
+        verify(seams).delete(1L);
+        assertThat(partials).isEmpty();
+    }
+
+    @Test
+    void 盈透其他拒绝照旧记失败() throws Exception {
+        when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
+        youngListing(1, "AAA", LocalDate.of(2022, 9, 8));
+        when(prices.splitAdjustedDailyBars(eq(101L), any(), any())).thenReturn(CompletableFuture.failedFuture(
+                new org.jdkxx.trader.gateway.RequestRejectedException(Broker.IBKR, 321, "Error validating request")));
+
+        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+
+        verify(states).save(eq(1L), eq("PRICES"), eq("FAILED"), org.mockito.ArgumentMatchers.contains("321"));
+    }
+
+    /** 新上市的票：盈透最早一根不早于富途起点，盈透段没有用处（实测 FER、HONA、SPCX、PLTR）。 */
+    @Test
+    void 盈透不比富途早就跳过_不存不核对() throws Exception {
+        LocalDate futuFrom = LocalDate.of(2026, 6, 15);
+        when(targets.only(any())).thenReturn(List.of(row(1, "HONA")));
+        youngListing(1, "HONA", futuFrom);
+        BigDecimal c = BigDecimal.TEN;
+        when(prices.splitAdjustedDailyBars(eq(101L), any(), any())).thenReturn(CompletableFuture.completedFuture(
+                List.of(new SplitAdjustedBar(futuFrom, c, c, c, c, 0), new SplitAdjustedBar(futuFrom.plusDays(1), c, c, c, c, 0))));
+
+        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+
+        verify(states).save(eq(1L), eq("PRICES"), eq("SKIPPED"), org.mockito.ArgumentMatchers.contains("富途已覆盖"));
+        verify(priceBars).replaceAll(eq(1L), eq(List.of()), any());
+        verify(seams).delete(1L);
+        verify(seams, never()).save(anyLong(), anyLong(), any(), any(), any(), anyInt(), anyInt(), anyInt(), any(), anyBoolean(), anyString());
+    }
+
     @Test
     void 网关未连接整批停下_不把后面的都记成失败() throws Exception {
         when(targets.only(any())).thenReturn(List.of(row(1, "AAA"), row(2, "BBB")));

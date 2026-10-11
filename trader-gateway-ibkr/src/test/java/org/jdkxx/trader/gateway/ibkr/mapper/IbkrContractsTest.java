@@ -36,6 +36,15 @@ class IbkrContractsTest {
         assertThat(c.symbol()).isNull();
     }
 
+    /** SMART 的历史只从最近一次转板开始（实测 PEP），取历史要按主交易所；查不到主交易所才退回 SMART。 */
+    @Test
+    void 取历史按主交易所_缺省退回SMART() {
+        assertThat(IbkrContracts.historical(11017L, "NASDAQ").exchange()).isEqualTo("NASDAQ");
+        assertThat(IbkrContracts.historical(11017L, "NASDAQ").conid()).isEqualTo(11017);
+        assertThat(IbkrContracts.historical(11017L, null).exchange()).isEqualTo("SMART");
+        assertThat(IbkrContracts.historical(11017L, " ").exchange()).isEqualTo("SMART");
+    }
+
     @Test
     void 非美股暂不支持() {
         assertThatThrownBy(() -> IbkrContracts.stock(new Instrument(Market.HK, "00700"), null))

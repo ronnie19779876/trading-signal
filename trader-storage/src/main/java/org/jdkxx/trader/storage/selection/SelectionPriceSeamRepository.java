@@ -49,6 +49,10 @@ public class SelectionPriceSeamRepository {
                 maxAbsDiff, ok, detail);
     }
 
+    public void delete(long instrumentId) {
+        jdbc.update("DELETE FROM selection_price_seam WHERE instrument_id = ?", instrumentId);
+    }
+
     public List<SeamRow> findAll(boolean failedOnly) {
         return jdbc.query("SELECT s.*, i.symbol FROM selection_price_seam s JOIN instrument i ON i.id = s.instrument_id"
                 + (failedOnly ? " WHERE NOT s.ok" : "") + " ORDER BY s.ok, i.symbol", MAPPER);

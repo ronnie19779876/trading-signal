@@ -254,7 +254,14 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
         long days = ChronoUnit.DAYS.between(from, to) + 1;
         String duration = days <= 365 ? days + " D" : ((days + 364) / 365) + " Y";
         String end = to.format(TWS_DAY) + " 23:59:59 US/Eastern";
-        return connection.historicalDailyBars(IbkrContracts.byConId(conId), end, duration, HISTORICAL_TIMEOUT)
+        // 按主交易所取，不用 SMART：SMART 只给转板之后的历史（2026-10-11 实测 PEP 2017-12-20 由纽交所转纳斯达克，
+        // SMART 只有 132 根、NASDAQ 给 2015 起 755 根且跨过转板日；WDAY、COO 同样）。KO、AAPL 两种取法逐根相同。
+        return connection.contractDetails(IbkrContracts.byConId(conId))
+                .thenCompose(details -> {
+                    String primary = details.isEmpty() || details.getFirst().contract() == null ? null
+                            : details.getFirst().contract().primaryExch();
+                    return connection.historicalDailyBars(IbkrContracts.historical(conId, primary), end, duration, HISTORICAL_TIMEOUT);
+                })
                 .thenApply(bars -> IbkrBars.toSplitAdjusted(bars, from, to));
     }
 
