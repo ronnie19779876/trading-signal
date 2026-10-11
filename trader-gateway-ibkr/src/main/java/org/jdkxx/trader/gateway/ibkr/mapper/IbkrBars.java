@@ -11,7 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 盈透历史日线 → 领域。TRADES 已按拆股调整（§24.3 实测 NVDA、AAPL），这里不做任何复权。
+ * 盈透历史日线 → 领域。TRADES 已按拆股调整（2026-10-10 只读探针实测 NVDA、AAPL），这里不做任何复权。
  * 日线在 formatDate=1 时时间串是 {@code yyyyMMdd}；解析不了或价格非正的条目丢弃，不编造。
  */
 public final class IbkrBars {
