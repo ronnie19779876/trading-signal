@@ -243,8 +243,33 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | `GET /api/selection/audit?date=` | 量化选股审计（统一审计结构，`check-daily.sh` 第六段）：关键项 `scored`（当天有评分）、`ratedShare`（可评级 ≥ 范围 80%）、`valuationFresh`（当天有估值 ≥ 90%）；附评级分布、排除原因、各板块评级只数、接缝通过数、已知偏差 |
 | `POST /api/selection/score?date=` | 重算某一天（异步作业 `SELECTION_SCORE`，只打分）。不是交易日或还没收盘落定的日子 400 |
 | `POST /api/selection/replay?from=&to=` | 历史重放（异步 `SELECTION_REPLAY`）：逐个交易日打分落库，`sbStreak` 按日期顺序接续，只到已收盘落定的那天 |
-| `POST /api/selection/daily?date=` | 每日作业（异步 `SELECTION_DAILY`）：估值快照续接 → 近 6 天发了财报的补取最近 4 季季报与近 3 个月估值 → 打分；定时任务美东 18:30，22:30 缺失补跑 |
+| `POST /api/selection/daily?date=` | 每日作业（异步 `SELECTION_DAILY`）：估值快照续接 → 近 6 天发了财报的补取最近 4 季季报与近 3 个月估值 → 打分 → 模拟交易重算；定时任务美东 18:30，22:30 评分缺失或模拟交易没算到当天时补跑 |
 | `GET /api/selection/seams?failedOnly=` | 接缝核对明细：盈透 conId、盈透与富途各自起止、重叠天数、比较对数、达标对数、最大单日收益差、是否通过。通过 = 比较 ≥ 60 对且 ≥ 95% 的对收益差 < 0.1%（股数变动除权日不比） |
+
+### 量化选股·模拟交易（3.4.0）
+
+验证选股准不准用的纸面账户（设计见 ARCHITECTURE §26）：**不下单、不连网关**，只用收盘后的日 K 记账。规则版本 `sim-v1`，写死在代码里：
+模拟资金 50 万美元；**等权**（每笔名义 = (初始资金 + 已实现盈亏) ÷ 10，受可用现金限制，整股）；只有最新评分日合成分前 10 名能加，同一只同时一笔、最多 10 笔（含待成交）；
+入场 = 点击之后的第一个开盘价（开盘已不高于止损则取消）；止损 = 入场信号第四门的公式，距离超过 10% 封顶；盘中触及 +1R 后启用吊灯止损；
+**收盘 ≤ 有效止损时按收盘自动平仓**；止盈目标 = 上方最近压力区的区底，没有或开盘已越过时 = 入场 + 2R，**到价只提示**；手动平仓 = 点击之后的第一个开盘价；不计成本、价格不含普通分红。
+价格都是评分日口径（持有期拆股时价与股数同比换算，金额不变）。比例字段为小数。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/selection/sim` | 概况：`rules`（规则原文）、`account`、`startDate`（第一笔入场日）、`cash`、`positionsValue`（各笔最近收盘）、`equity`、`realized`、`unrealized`、`totalReturn`、`spySinceStart`、`markedThrough`（持仓估值里最早的收盘日）、各状态笔数、`targetAlerts`（已触及止盈目标、还没请求平仓的笔数）、`candidates`（最新评分日前 10 名：`state` 为 AVAILABLE / ACTIVE / FULL） |
+| `GET /api/selection/sim/preview?symbol=` | 加入前预览（不写库）：`setup`（评分日收盘、ATR、公式止损、实际止损与来源 `leg` = ATR / ZONE / CAP、压力区底）、`plannedEntryDate`、按评分日收盘估的股数与名义。不在前 10 名 400，已在池或池满 409，评分日判定不了（K 线不足、缺口、口径换算失败）409 |
+| `POST /api/selection/sim/trades?symbol=` | 加入（状态 PENDING_ENTRY），校验同 preview。返回这一笔 |
+| `POST /api/selection/sim/trades/{id}/close?note=` | 持有中的：记平仓请求，点击之后的第一个开盘价成交，`closeKind` = TAKE_PROFIT（触及过止盈目标）或 MANUAL；入场开盘之前的：直接撤销（CANCELLED）；已过入场开盘、作业还没记成持有的：记平仓请求。重复请求、已平仓或已取消 409 |
+| `GET /api/selection/sim/trades?status=` | 逐笔，按加入时间倒序；`status` 取 pending_entry / open / closed / cancelled。字段：加入时的评分（日期、名次、评级、合成分）、定下的价位（`setupClose`、`setupAtr`、`formulaStop`、`stop`、`stopLeg`、`resistance`）、入场（日期、价、股数）、`plusOneR`、`target` 与 `targetSource`（RESISTANCE / FALLBACK_2R）、`targetHitDate`、`activeStop` 与 `chandelierActive`、平仓请求、结果（`exitReason` = STOP / CHANDELIER / TAKE_PROFIT / MANUAL、`pnl`、`returnPct`、`rMultiple`、`mfeR`、`maeR`）、持有中的 `lastClose` / `lastCloseDate` / `unrealizedPnl`、`spyReturn` 与 `excessReturn`（SPY 同一持有期）、影子变体（不做手动平仓、只按止损走：`shadowStatus`、`shadowPnl` 等）、`updatedThrough` |
+| `GET /api/selection/sim/trades/{id}` | `{trade, events}`：一笔与它的留痕。不存在 404 |
+| `GET /api/selection/sim/events?limit=` | 留痕（ADDED / FILLED / CANCELLED / TARGET_HIT / CLOSE_REQUESTED / CLOSED / WEEKLY_REPORT / WEEKLY_REGENERATED），新的在前 |
+| `GET /api/selection/sim/equity?from=&to=` | 逐日权益（收盘后的现金、持仓市值、权益、持仓笔数），默认最近一年 |
+| `GET /api/selection/sim/weekly?limit=` | 周报列表，新的在前，不带正文（`report` 为 null） |
+| `GET /api/selection/sim/weekly/{weekEnd}` | 某周周报（`weekEnd` = 该周最后一个交易日），`report` 是 JSON 对象：周初 / 周末权益、本周盈亏与收益、累计收益、本周已实现与周末浮动、SPY 本周与自开始以来、范围等权本周（`universeCount` 只数）、最大回撤、本周平仓逐笔（含影子）、累计已平仓汇总（`n`、胜负、平均收益、平均超额、手动平仓 − 影子的配对差与配对数）、周末持仓（**按周末那天的收盘估值**）、`generatedThrough`、固定说明。没有 404 |
+| `POST /api/selection/sim/weekly?weekEnd=&force=` | 生成周报（异步 `SELECTION_SIM_WEEKLY`）：先重算到最近收盘落定日；缺省为最近一个已收盘落定的交易日所在周，那周还没结束 400；已有的不覆盖，`force=true` 覆盖并留痕。定时任务周六美东 10:00 |
+| `POST /api/selection/sim/update?through=` | 重算（异步 `SELECTION_SIM`）：未完结的逐笔（含影子还没平仓的）从加入时的价位整段重算到 `through`（缺省 = 最近一个已收盘落定的交易日），**只往前走**；待成交的轮到入场日按等权定股数（同一天按请求先后分现金，买不起 1 股的取消并说明）；再补逐日权益。每日作业（18:30）打分之后也会跑一次，22:30 补偿检查发现没算到当天会补跑 |
+
+审计：`GET /api/selection/audit` 增加 `simUpdated`（有进行中的笔数时为关键项：都已算到审计日）与 `simTargetHits`（提示项：触及止盈目标、等你决定是否平仓的笔数与清单）。
 
 ## 实时报价（第 2 期·步骤 2，不落库）
 

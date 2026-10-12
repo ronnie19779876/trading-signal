@@ -1,20 +1,23 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, useTemplateRef } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
-import { selectionApi, type ScoreView } from '../api/selection'
+import { selectionApi, simApi, type ScoreView, type SimOverview } from '../api/selection'
 import type { AuditReport } from '../api/account'
 import { getUniverse } from '../api/marketdata'
 import { auditCheckLabel } from '../lib/audit'
-import { errMsg } from '../lib/format'
+import { errMsg, money } from '../lib/format'
 import RankingTab from '../components/selection/RankingTab.vue'
 import ChangesTab from '../components/selection/ChangesTab.vue'
 import SectorsTab from '../components/selection/SectorsTab.vue'
 import InputsTab from '../components/selection/InputsTab.vue'
 import ScoreDrawer from '../components/selection/ScoreDrawer.vue'
+import SimTab from '../components/selection/SimTab.vue'
 
 /**
- * 量化选股页（§25.9 第 6.3 期）：只读。顶部是评分日的概况与审计（有问题才列），下面四个标签页：
- * 评分榜、评级变动（与上一个评分日比）、板块、数据与审计。点任一行打开详情抽屉。
+ * 量化选股页（§25.9 第 6.3 期）：顶部是评分日的概况与审计（有问题才列），下面五个标签页：
+ * 评分榜、评级变动（与上一个评分日比）、板块、数据与审计、模拟交易（§26）。点任一行打开详情抽屉。
+ * 评分部分只读；唯一的写操作是模拟交易的加入（评分榜最新评分日前 N 名上的「模拟」）与平仓。
  * 日期只能选库里有评分的交易日；评级变动的「上一日」也取自评分日列表，而不是日历上的前一天。
  */
 const days = ref<string[]>([])
@@ -36,6 +39,46 @@ const prevDate = computed(() => {
 })
 
 const inputsTab = useTemplateRef<{ load: () => void }>('inputsTab')
+const simTab = useTemplateRef<{ load: () => void }>('simTab')
+
+// ---- 模拟交易：概况单独取，失败不影响评分部分
+const sim = ref<SimOverview | null>(null)
+async function loadSim() {
+  try {
+    sim.value = await simApi.overview()
+  } catch (e) {
+    sim.value = null
+    ElMessage.error('模拟交易概况取数失败：' + errMsg(e))
+  }
+}
+/** 只在看的就是最新评分日时，评分榜上才出现「模拟」列 */
+const simTop = computed(() => (sim.value && sim.value.candidates.scoreDate === date.value ? sim.value.candidates.top : null))
+
+async function simAdd(symbol: string) {
+  // 预览要按评分日的 K 线现算止损（开发库走隧道要几秒），先给个提示
+  const hint = ElMessage({ message: `正在计算 ${symbol} 的止损与入场日…`, type: 'info', duration: 0 })
+  try {
+    const p = await simApi.preview(symbol).finally(() => hint.close())
+    const s = p.setup
+    const legText = s.leg === 'CAP' ? `公式止损 ${s.formulaStop.toFixed(4)} 距离超过 10%，封顶` : s.leg === 'ZONE' ? '支撑区底 − 0.5×ATR' : '收盘 − 2×ATR'
+    await ElMessageBox.confirm(
+      `${p.symbol}（${p.scoreDate} 第 ${p.rank} 名）加入模拟池：\n` +
+        `· 入场：${p.plannedEntryDate} 起的第一个开盘价（开盘已不高于止损则取消）\n` +
+        `· 止损 ${s.stop.toFixed(4)}（${legText}；评分日收盘 ${s.close}，ATR ${s.atr.toFixed(4)}）\n` +
+        `· 止盈目标：${s.resistance !== null ? `压力区底 ${s.resistance}（开盘已越过则改用 +2R）` : '没有上方压力区，用入场 + 2R'}，到价只提示\n` +
+        `· 仓位：等权，按评分日收盘估约 ${p.estimatedShares} 股（${money(p.estimatedNotional)}）；真实股数按入场那天的开盘价与可用现金定`,
+      '模拟交易',
+      { confirmButtonText: '加入', cancelButtonText: '取消', type: 'info', customStyle: { whiteSpace: 'pre-line', maxWidth: '560px' } },
+    )
+    await simApi.add(symbol)
+    ElMessage.success(`${symbol} 已加入模拟池，${p.plannedEntryDate} 起第一个开盘入场（收盘后的作业里落账）`)
+    await loadSim()
+    simTab.value?.load()
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(errMsg(e))
+  }
+}
 
 async function load() {
   loading.value = true
@@ -75,8 +118,9 @@ async function load() {
 
 async function refresh() {
   days.value = []
-  await load()
+  await Promise.all([load(), loadSim()])
   inputsTab.value?.load()
+  simTab.value?.load()
 }
 
 async function pickDate(d: string | null) {
@@ -97,6 +141,7 @@ function open(row: ScoreView) {
 
 onMounted(() => {
   void load()
+  void loadSim()
   getUniverse().then((u) => (names.value = new Map(u.map((i) => [i.symbol, i.nameCn ?? i.name])))).catch(() => { /* 中文名只是锦上添花 */ })
 })
 </script>
@@ -137,7 +182,7 @@ onMounted(() => {
 
     <el-tabs v-model="tab" v-loading="loading && !rows.length">
       <el-tab-pane label="评分榜" name="ranking" lazy>
-        <RankingTab :rows="rows" :names="names" @open="open" />
+        <RankingTab :rows="rows" :names="names" :sim-top="simTop" @open="open" @sim-add="simAdd" />
       </el-tab-pane>
       <el-tab-pane label="评级变动" name="changes" lazy>
         <div v-loading="prevLoading || loading">
@@ -150,6 +195,10 @@ onMounted(() => {
       <el-tab-pane label="数据与审计" name="inputs" lazy>
         <InputsTab ref="inputsTab" :audit="audit" />
       </el-tab-pane>
+      <el-tab-pane name="sim" lazy>
+        <template #label>模拟交易<el-badge v-if="sim?.targetAlerts" :value="sim.targetAlerts" type="warning" class="tab-badge" /></template>
+        <SimTab ref="simTab" :overview="sim" :names="names" @changed="loadSim" />
+      </el-tab-pane>
     </el-tabs>
 
     <ScoreDrawer v-model="drawer" :row="opened" :name="opened ? names.get(opened.symbol) ?? null : null" />
@@ -158,6 +207,8 @@ onMounted(() => {
 
 <style scoped>
 .up { color: var(--tr-up); }
+.tab-badge { margin-left: 4px; }
+.tab-badge :deep(.el-badge__content) { position: static; transform: none; }
 .issues { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .issue { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 13px; }
 .issue--critical b { color: var(--el-color-danger); }

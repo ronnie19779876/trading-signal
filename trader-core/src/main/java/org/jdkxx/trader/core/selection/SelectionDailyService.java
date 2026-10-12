@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * 量化选股的每日与每周维护（§25.7）。
  * <ul>
- *   <li>每日：估值快照续上估值序列 → 近几天发了财报的标的补取最近 4 季季报与近 3 个月估值 → 打分；</li>
+ *   <li>每日：估值快照续上估值序列 → 近几天发了财报的标的补取最近 4 季季报与近 3 个月估值 → 打分 → 模拟交易重算（§26）；</li>
  *   <li>每周：全部标的刷新公告日，证券类型、估值历史、季报、盈透价格只补缺的（新进成分股由此补齐）。</li>
  * </ul>
  * 补取失败只记部分失败、照样打分（用的是库里已有的数据，审计会显示新鲜度）。
@@ -46,10 +46,11 @@ public class SelectionDailyService {
     private final SelectionDataGateway fundamentals;
     private final SelectionScoringService scoring;
     private final SelectionBackfillService backfill;
+    private final SelectionSimService sim;
 
     public SelectionDailyService(SelectionTargets targets, SelectionValuationRepository valuations, SelectionEarningsRepository earnings,
                                  FinancialRepository financials, SelectionDataGateway fundamentals, SelectionScoringService scoring,
-                                 SelectionBackfillService backfill) {
+                                 SelectionBackfillService backfill, SelectionSimService sim) {
         this.targets = targets;
         this.valuations = valuations;
         this.earnings = earnings;
@@ -57,6 +58,7 @@ public class SelectionDailyService {
         this.fundamentals = fundamentals;
         this.scoring = scoring;
         this.backfill = backfill;
+        this.sim = sim;
     }
 
     public String daily(LocalDate date, JobContext ctx) {
@@ -97,7 +99,16 @@ public class SelectionDailyService {
             ctx.partial("新公告补取失败 " + failed + " 只");
         }
         String scored = scoring.scoreDay(date, ctx);
-        return "估值续接 " + appended + " 只；新公告补取 " + ok + "/" + refresh.size() + "；" + scored;
+        // 模拟交易排在打分之后：只用日 K，与打分结果无关，失败不影响评分（审计的 simUpdated 会提示，22:30 补偿会再跑）
+        String simulated;
+        try {
+            simulated = sim.update(date, ctx);
+        } catch (RuntimeException e) {
+            log.warn("模拟交易重算失败：{}", e.toString());
+            ctx.partial("模拟交易重算失败：" + e.getMessage());
+            simulated = "模拟交易重算失败";
+        }
+        return "估值续接 " + appended + " 只；新公告补取 " + ok + "/" + refresh.size() + "；" + scored + "；" + simulated;
     }
 
     /**

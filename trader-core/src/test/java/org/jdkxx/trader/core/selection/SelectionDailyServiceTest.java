@@ -36,7 +36,7 @@ class SelectionDailyServiceTest {
         when(backfill.run(any(), any(), anyBoolean(), any())).thenReturn("ok");
         SelectionDailyService service = new SelectionDailyService(mock(SelectionTargets.class), mock(SelectionValuationRepository.class),
                 mock(SelectionEarningsRepository.class), mock(FinancialRepository.class), mock(SelectionDataGateway.class),
-                mock(SelectionScoringService.class), backfill);
+                mock(SelectionScoringService.class), backfill, mock(SelectionSimService.class));
 
         service.weekly(ctx);
 

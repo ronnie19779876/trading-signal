@@ -12,6 +12,10 @@ public final class SelectionJobs {
     public static final String SCORE = "SELECTION_SCORE";
     /** 历史重放 */
     public static final String REPLAY = "SELECTION_REPLAY";
+    /** 模拟交易重算（每日作业里也会跑一次） */
+    public static final String SIM_UPDATE = "SELECTION_SIM";
+    /** 模拟交易周报 */
+    public static final String SIM_WEEKLY = "SELECTION_SIM_WEEKLY";
 
     private SelectionJobs() {
     }

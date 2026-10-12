@@ -141,6 +141,8 @@ storage → common ；ai → common
 | 富途把部分 **REITs 记成普通股**（DOC、WELL、VMRK；另有 25 只 REITs 记成 Trust→ETF），按 sec_type 排除 REITs 会漏 | 判证券类型以盈透合约明细 `stockType` 为准（COMMON / ADR / REIT / NY REG SHRS，2026-10-12 实测）；ASML 是 NY REG SHRS 不是 ADR |
 | **12-12-12-16 周财年**（COST、KR、PEP、AZO、DPZ）季度长 84 天与 112~119 天交替；按「相邻季度 80~100 天」判连续会把它们的同比整段算丢 | 只用期末间隔识别缺季：70~125 天算连续（缺一季约 180 天） |
 | 财报里**同一季可能存成两行**：富途不同时间抓取给的期末不同（HD、NVDA、TDY 同期别两行），改财年的过渡期两条期别不同数值也不同（GEN、COHR）；不处理的话 TTM 重复计算 | 期末相差不到 30 天的只留较晚的那条（`FundamentalMetrics.dedupe`，对照当年财报核过） |
+| Java 文本块（`"""`）**按最少缩进剥掉每行行首空白**：`SELECT + """\n     WHERE ..."""` 拼出来是 `instrument_idWHERE`，SQL 语法错。3.4.0 模拟交易的 `unfinished()` 首跑即 500，单测里仓库是替身、验不到 | 文本块只用于完整的一段 SQL；要拼接就用普通字符串并显式写出前导空格。改仓库层 SQL 照例对开发库实测 |
+| 吊灯止损的 22 日最高**含入场之前的日子**（`PaperTrade` 与模拟交易同一约定）：入场前从高位回落的标的，一触及 +1R 吊灯可能立刻高过收盘、当天平仓（开发实测 EIX 08-20：07-28 高点 81.62 → 吊灯 74.85，收盘 74.66） | 是规则的一部分不是缺陷；要改得换规则版本、两边一起改 |
 | 同一份输入模型立场会摇摆（实测 HWM 连调 4 次：NEUTRAL、BULLISH×3）；OpenAI SDK 的类在 core 模块不可见（optional），Mockito 替身不了引用它的类 | 否决要设门槛（非 LOW + ≥2 条核对通过的证据）；core 只认 `VetoClient` 接口，`com.openai.*` 只在 `OpenAiVetoClient` |
 
 ## 当前状态
@@ -193,9 +195,11 @@ storage → common ；ai → common
 **3.3.0 开发中（未发布）**：6.3 前端（`/selection` 页：评分榜、评级变动、板块、数据与审计，详情抽屉带评分历史图）、`GET /api/selection/days`，
 合并 3.2.1 的修正（新进成分股补不到深度输入，PENDING 状态 + 周作业补缺）。已在开发实例对真实数据逐页实测。
 富途公告日列表中间会缺期，缺的期按法定期限规则兜底（§25.5）。
+**3.4.0 开发中（未提交）**：量化选股·模拟交易（ARCHITECTURE §26，用户 10-12 认可）——纸面账户，不下单；规则 `sim-v1` 等权、止损封顶 10%、无压力区 +2R、成本 0；
+止损 / 吊灯自动平仓（收盘判定收盘成交），止盈只提示；每笔带 SPY 超额与影子变体；周报周六 10:00。**「稳定盈利」的判据用户尚未定，看结果前要定**；2018 起历史检验排进下一期。
 
 每一期的设计决策、实测结论与已知边界都在
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~24 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~26 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
 
 - 数据规模：521 只标的、58.8 万根日 K（池/持仓/基准 20 年深度）、3.7 万条复权因子、
   5052 天交易日历（2006 起）、2.5 万期财报、逐日估值快照。

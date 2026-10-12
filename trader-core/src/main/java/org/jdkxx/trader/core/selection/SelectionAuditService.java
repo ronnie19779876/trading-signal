@@ -36,17 +36,24 @@ public class SelectionAuditService {
     private final SelectionScoreRepository scores;
     private final SelectionValuationRepository valuations;
     private final SelectionPriceSeamRepository seams;
+    private final SelectionSimService sim;
     private final Supplier<LocalDate> settledCutoff;
     private final Clock clock;
 
     public SelectionAuditService(SelectionTargets targets, SelectionScoreRepository scores, SelectionValuationRepository valuations,
-                                 SelectionPriceSeamRepository seams, Supplier<LocalDate> settledCutoff, Clock clock) {
+                                 SelectionPriceSeamRepository seams, SelectionSimService sim, Supplier<LocalDate> settledCutoff, Clock clock) {
         this.targets = targets;
         this.scores = scores;
         this.valuations = valuations;
         this.seams = seams;
+        this.sim = sim;
         this.settledCutoff = settledCutoff;
         this.clock = clock;
+    }
+
+    /** 默认审计日 = 最近一个已收盘落定的交易日（模拟交易重算的缺省截止日也用它）。 */
+    public LocalDate cutoff() {
+        return settledCutoff.get();
     }
 
     public BarAuditService.Report audit(LocalDate date) {
@@ -74,6 +81,7 @@ public class SelectionAuditService {
         checks.add(new BarAuditService.Check("priceSeams", true, false,
                 "盈透接缝 " + seam.ok() + "/" + seam.checked() + " 通过（不通过的在需要盈透段的日子动能记缺）",
                 seam.checked() - seam.ok(), List.of()));
+        checks.addAll(sim.auditChecks(d));
         checks.add(new BarAuditService.Check("knownBiases", true, false, "已知偏差（回测报告必须原样带出）", BIASES.size(), BIASES));
 
         Map<String, Object> summary = new LinkedHashMap<>();

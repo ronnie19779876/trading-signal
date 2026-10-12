@@ -1,11 +1,16 @@
 package org.jdkxx.trader.app.web;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jdkxx.trader.core.marketdata.audit.BarAuditService;
 import org.jdkxx.trader.core.selection.BackfillPart;
 import org.jdkxx.trader.core.selection.SelectionFacade;
 import org.jdkxx.trader.core.selection.SelectionInputsService;
+import org.jdkxx.trader.core.selection.SelectionSimService;
 import org.jdkxx.trader.storage.selection.SelectionPriceSeamRepository;
 import org.jdkxx.trader.storage.selection.SelectionScoreRepository;
+import org.jdkxx.trader.storage.selection.SelectionSimRepository;
+import org.jdkxx.trader.storage.selection.SimTradeRow;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -30,9 +35,11 @@ import java.util.Map;
 public class SelectionController {
 
     private final SelectionFacade facade;
+    private final ObjectMapper json;
 
-    public SelectionController(SelectionFacade facade) {
+    public SelectionController(SelectionFacade facade, ObjectMapper json) {
         this.facade = facade;
+        this.json = json;
     }
 
     /**
@@ -110,6 +117,98 @@ public class SelectionController {
     @PostMapping("/daily")
     public Map<String, Object> daily(@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         return Map.of("jobId", facade.daily("MANUAL", date));
+    }
+
+    // ---------------------------------------------------------------- 模拟交易（§26）
+
+    /** 模拟账户概况：规则、现金、持仓、已实现与浮动盈亏、SPY 同期、最新评分日前 N 名能否加入。 */
+    @GetMapping("/sim")
+    public SelectionSimService.Overview simOverview() {
+        return facade.simOverview();
+    }
+
+    /** 加入前预览：止损（及其来源）、压力区、最早入场日、估算股数。不写库。 */
+    @GetMapping("/sim/preview")
+    public SelectionSimService.Preview simPreview(@RequestParam String symbol) {
+        return facade.simPreview(symbol);
+    }
+
+    /** 加入模拟池：只接受最新评分日合成分前 N 名；点击之后的第一个开盘价入场。 */
+    @PostMapping("/sim/trades")
+    public SimTradeRow simAdd(@RequestParam String symbol) {
+        return facade.simAdd(symbol);
+    }
+
+    /** 平仓：持有中的点击之后第一个开盘价成交；还没入场的直接撤销。 */
+    @PostMapping("/sim/trades/{id}/close")
+    public SimTradeRow simClose(@PathVariable long id, @RequestParam(required = false) String note) {
+        return facade.simClose(id, note);
+    }
+
+    /** 逐笔，按加入时间倒序；status 取 pending_entry / open / closed / cancelled，缺省全部。 */
+    @GetMapping("/sim/trades")
+    public List<SimTradeRow> simTrades(@RequestParam(required = false) String status) {
+        return facade.simTrades(status);
+    }
+
+    @GetMapping("/sim/trades/{id}")
+    public SelectionSimService.TradeDetail simTrade(@PathVariable long id) {
+        return facade.simTrade(id);
+    }
+
+    /** 操作留痕（加入、成交、止盈提示、平仓请求、平仓、周报），新的在前。 */
+    @GetMapping("/sim/events")
+    public List<SelectionSimRepository.Event> simEvents(@RequestParam(defaultValue = "100") int limit) {
+        return facade.simEvents(limit);
+    }
+
+    /** 逐日权益（收盘后）。默认最近一年。 */
+    @GetMapping("/sim/equity")
+    public List<SelectionSimRepository.EquityRow> simEquity(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        LocalDate end = to == null ? LocalDate.now() : to;
+        return facade.simEquity(from == null ? end.minusYears(1) : from, end);
+    }
+
+    /** 周报列表（新的在前，不带正文）。 */
+    @GetMapping("/sim/weekly")
+    public List<WeeklyView> simWeeklies(@RequestParam(defaultValue = "52") int limit) {
+        return facade.simWeeklies(limit).stream().map(w -> view(w, false)).toList();
+    }
+
+    /** 某周周报（weekEnd = 该周最后一个交易日），带正文。 */
+    @GetMapping("/sim/weekly/{weekEnd}")
+    public WeeklyView simWeekly(@PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate weekEnd) {
+        return view(facade.simWeeklyRow(weekEnd), true);
+    }
+
+    /** 生成周报（异步）：weekEnd 缺省 = 最近一个已收盘落定的交易日所在周；已有的不覆盖，force=true 覆盖并留痕。 */
+    @PostMapping("/sim/weekly")
+    public Map<String, Object> simWeeklyGenerate(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate weekEnd,
+                                                 @RequestParam(defaultValue = "false") boolean force) {
+        return Map.of("jobId", facade.simWeekly("MANUAL", weekEnd, force));
+    }
+
+    /** 重算到 through（异步，缺省 = 最近一个已收盘落定的交易日）；每日作业里也会跑一次。 */
+    @PostMapping("/sim/update")
+    public Map<String, Object> simUpdate(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate through) {
+        return Map.of("jobId", facade.simUpdate("MANUAL", through));
+    }
+
+    /** 周报：正文是落库的 jsonb，原样转成 JSON 对象返回（不是字符串）。 */
+    public record WeeklyView(LocalDate weekEnd, LocalDate weekStart, String rulesVersion, java.math.BigDecimal equityEnd,
+                             java.math.BigDecimal weekReturn, java.math.BigDecimal spyWeekReturn, int closedTrades,
+                             java.time.Instant generatedAt, JsonNode report) {
+    }
+
+    private WeeklyView view(SelectionSimRepository.WeeklyRow w, boolean withReport) {
+        try {
+            return new WeeklyView(w.weekEnd(), w.weekStart(), w.rulesVersion(), w.equityEnd(), w.weekReturn(), w.spyWeekReturn(),
+                    w.closedTrades(), w.generatedAt(), withReport ? json.readTree(w.report()) : null);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("周报正文解析失败：" + e.getOriginalMessage());
+        }
     }
 
     private static BackfillPart part(String raw) {

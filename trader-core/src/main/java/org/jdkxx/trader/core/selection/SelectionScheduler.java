@@ -17,8 +17,9 @@ import java.time.ZoneId;
 
 /**
  * 量化选股的定时任务（只在 schedule-enabled 且 trader.selection.enabled 的实例装配）。
- * 美东 18:30 每日评分（排在 17:40 估值快照、18:10 信号评估之后）；22:30 补偿：当天没有评分就重跑；周六 09:00 刷新公告日与证券类型。
- * 碰撞重试与 SKIPPED 留痕沿用 {@link ScheduledSubmitter}。三个 cron 必须写进 jar 内 application.yml（ScheduledPlaceholdersTest）。
+ * 美东 18:30 每日评分（排在 17:40 估值快照、18:10 信号评估之后，模拟交易重算跟在打分后面）；22:30 补偿：当天没有评分、
+ * 或模拟交易没算到当天就重跑；周六 09:00 刷新公告日与证券类型，10:00 模拟交易周报。
+ * 碰撞重试与 SKIPPED 留痕沿用 {@link ScheduledSubmitter}。四个 cron 必须写进 jar 内 application.yml（ScheduledPlaceholdersTest）。
  */
 public class SelectionScheduler {
 
@@ -26,15 +27,17 @@ public class SelectionScheduler {
 
     private final SelectionFacade facade;
     private final SelectionScoreRepository scores;
+    private final SelectionSimService sim;
     private final TradingDayRepository days;
     private final Clock clock;
     private final ZoneId zone;
     private final ScheduledSubmitter submitter;
 
-    public SelectionScheduler(SelectionFacade facade, SelectionScoreRepository scores, TradingDayRepository days,
+    public SelectionScheduler(SelectionFacade facade, SelectionScoreRepository scores, SelectionSimService sim, TradingDayRepository days,
                               JobRunRepository jobRuns, Clock clock, ZoneId zone) {
         this.facade = facade;
         this.scores = scores;
+        this.sim = sim;
         this.days = days;
         this.clock = clock;
         this.zone = zone;
@@ -58,11 +61,13 @@ public class SelectionScheduler {
             if (!days.isTradingDay(Market.US, today)) {
                 return;
             }
-            if (scores.latestDate(SelectionModel.VERSION).filter(d -> !d.isBefore(today)).isPresent()) {
-                log.info("{} 量化选股评分齐了，无需补跑", today);
+            boolean scored = scores.latestDate(SelectionModel.VERSION).filter(d -> !d.isBefore(today)).isPresent();
+            boolean simStale = sim.stale(today);
+            if (scored && !simStale) {
+                log.info("{} 量化选股评分与模拟交易都齐了，无需补跑", today);
                 return;
             }
-            log.warn("{} 量化选股评分缺失，补跑", today);
+            log.warn("{} 量化选股{}，补跑", today, scored ? "模拟交易没算到当天" : "评分缺失");
         } catch (RuntimeException e) {
             log.error("量化选股补偿检查失败：{}", e.toString());
             return;
@@ -73,6 +78,11 @@ public class SelectionScheduler {
     @Scheduled(cron = "${trader.selection.weekly-cron}", zone = "${trader.marketdata.zone}")
     public void weekly() {
         submitter.submit("量化选股周刷新", SelectionJobs.WEEKLY, "SCHEDULE", () -> facade.weekly("SCHEDULE"));
+    }
+
+    @Scheduled(cron = "${trader.selection.sim-weekly-cron}", zone = "${trader.marketdata.zone}")
+    public void simWeekly() {
+        submitter.submit("模拟交易周报", SelectionJobs.SIM_WEEKLY, "SCHEDULE", () -> facade.simWeekly("SCHEDULE", null, false));
     }
 
     @PreDestroy

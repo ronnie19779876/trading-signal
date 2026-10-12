@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { Rating, ScoreView } from '../../api/selection'
+import type { Rating, ScoreView, SimCandidate } from '../../api/selection'
 import { usePager } from '../../composables/usePager'
 import { sectorCn } from '../../lib/sector'
 import { EXCLUSION_LABEL, RATINGS, RATING_LABEL, RATING_RANK, score } from '../../lib/selection'
@@ -11,8 +11,12 @@ import FactorBars from './FactorBars.vue'
  * 评分榜：当天全表。默认按合成分从高到低，可按板块、评级筛、按代码搜、换排序列。
  * 被排除的标的另起一段（默认收起），列出排除原因——它们不占板块名额、不参与排名。
  */
-const props = defineProps<{ rows: ScoreView[]; names: Map<string, string | null> }>()
-const emit = defineEmits<{ open: [row: ScoreView] }>()
+/**
+ * simTop：最新评分日合成分前 N 名的模拟交易状态（只在看的就是最新评分日时给）；给了才显示「模拟」列。
+ */
+const props = defineProps<{ rows: ScoreView[]; names: Map<string, string | null>; simTop?: SimCandidate[] | null }>()
+const emit = defineEmits<{ open: [row: ScoreView]; simAdd: [symbol: string] }>()
+const simBy = computed(() => new Map((props.simTop ?? []).map((c) => [c.instrumentId, c])))
 
 const sector = ref<string>('')
 const ratings = ref<Rating[]>([])
@@ -94,7 +98,7 @@ const rankOf = (r: ScoreView) => (r.rating ? RATING_RANK[r.rating] : 9)
         <table class="dtable">
           <thead>
             <tr>
-              <th class="r">#</th><th>代码</th><th>板块</th><th>评级</th><th class="r">合成分</th><th class="r">全市场分位</th>
+              <th class="r">#</th><th>代码</th><th>板块</th><th>评级</th><th v-if="simTop" class="c">模拟</th><th class="r">合成分</th><th class="r">全市场分位</th>
               <th style="min-width: 360px">四个因子（板块内百分位的平均，0~100）</th><th class="r">连续强烈买入</th>
             </tr>
           </thead>
@@ -104,13 +108,21 @@ const rankOf = (r: ScoreView) => (r.rating ? RATING_RANK[r.rating] : 9)
               <td><b>{{ row.symbol }}</b><span v-if="names.get(row.symbol)" class="name">{{ names.get(row.symbol) }}</span></td>
               <td>{{ sectorCn(row.sector) ?? '—' }}</td>
               <td><RatingTag :rating="row.rating" /></td>
+              <td v-if="simTop" class="c" @click.stop>
+                <template v-if="simBy.get(row.instrumentId)">
+                  <el-button v-if="simBy.get(row.instrumentId)!.state === 'AVAILABLE'" size="small" type="primary" plain
+                             @click="emit('simAdd', row.symbol)">模拟</el-button>
+                  <el-tag v-else-if="simBy.get(row.instrumentId)!.state === 'ACTIVE'" size="small" type="success" effect="plain">已在池</el-tag>
+                  <span v-else class="muted" title="进行中的笔数已到上限">池满</span>
+                </template>
+              </td>
               <td class="r num"><b>{{ score(row.composite) }}</b></td>
               <td class="r num">{{ score(row.compositePct) }}</td>
               <td><FactorBars :row="row" /></td>
               <td class="r num">{{ row.sbStreak ? `${row.sbStreak} 天` : '—' }}</td>
             </tr>
             <tr v-if="!filtered.length">
-              <td colspan="8" class="empty">没有符合条件的标的</td>
+              <td :colspan="simTop ? 9 : 8" class="empty">没有符合条件的标的</td>
             </tr>
           </tbody>
         </table>

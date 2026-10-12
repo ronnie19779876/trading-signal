@@ -22,6 +22,7 @@ import org.jdkxx.trader.storage.selection.SelectionInputRepository;
 import org.jdkxx.trader.storage.selection.SelectionPriceBarRepository;
 import org.jdkxx.trader.storage.selection.SelectionPriceSeamRepository;
 import org.jdkxx.trader.storage.selection.SelectionScoreRepository;
+import org.jdkxx.trader.storage.selection.SelectionSimRepository;
 import org.jdkxx.trader.storage.selection.SelectionSecurityRepository;
 import org.jdkxx.trader.storage.selection.SelectionValuationRepository;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -79,25 +80,34 @@ public class SelectionConfiguration {
     }
 
     @Bean
+    public SelectionSimService selectionSimService(SelectionSimRepository sim, SelectionScoreRepository scores, SelectionTargets targets,
+                                                   InstrumentRepository instruments, DailyBarRepository dailyBars, RehabFactorRepository rehabs,
+                                                   TradingDayRepository days, SettledCutoff cutoff, ObjectMapper json,
+                                                   MarketDataProperties marketData) {
+        return new SelectionSimService(sim, scores, targets, instruments, dailyBars, rehabs, days, cutoff::current, json,
+                Clock.systemUTC(), ZoneId.of(marketData.zone()));
+    }
+
+    @Bean
     public SelectionDailyService selectionDailyService(SelectionTargets targets, SelectionValuationRepository valuations,
                                                        SelectionEarningsRepository earnings, FinancialRepository financials,
                                                        SelectionDataGateway fundamentals, SelectionScoringService scoring,
-                                                       SelectionBackfillService backfill) {
-        return new SelectionDailyService(targets, valuations, earnings, financials, fundamentals, scoring, backfill);
+                                                       SelectionBackfillService backfill, SelectionSimService sim) {
+        return new SelectionDailyService(targets, valuations, earnings, financials, fundamentals, scoring, backfill, sim);
     }
 
     @Bean
     public SelectionAuditService selectionAuditService(SelectionTargets targets, SelectionScoreRepository scores,
                                                        SelectionValuationRepository valuations, SelectionPriceSeamRepository seams,
-                                                       SettledCutoff cutoff) {
-        return new SelectionAuditService(targets, scores, valuations, seams, cutoff::current, Clock.systemUTC());
+                                                       SelectionSimService sim, SettledCutoff cutoff) {
+        return new SelectionAuditService(targets, scores, valuations, seams, sim, cutoff::current, Clock.systemUTC());
     }
 
     @Bean
     @ConditionalOnExpression("${trader.marketdata.schedule-enabled:false} and ${trader.selection.enabled:true}")
-    public SelectionScheduler selectionScheduler(SelectionFacade facade, SelectionScoreRepository scores, TradingDayRepository days,
-                                                 JobRunRepository jobRuns, MarketDataProperties marketData) {
-        return new SelectionScheduler(facade, scores, days, jobRuns, Clock.systemUTC(), ZoneId.of(marketData.zone()));
+    public SelectionScheduler selectionScheduler(SelectionFacade facade, SelectionScoreRepository scores, SelectionSimService sim,
+                                                 TradingDayRepository days, JobRunRepository jobRuns, MarketDataProperties marketData) {
+        return new SelectionScheduler(facade, scores, sim, days, jobRuns, Clock.systemUTC(), ZoneId.of(marketData.zone()));
     }
 
     @Bean
@@ -114,7 +124,7 @@ public class SelectionConfiguration {
     public SelectionFacade selectionFacade(JobService jobs, SelectionTargets targets, SelectionBackfillService backfill,
                                            SelectionInputsService inputs, SelectionPriceSeamRepository seams,
                                            SelectionScoringService scoring, SelectionDailyService daily, SelectionAuditService audit,
-                                           SelectionScoreRepository scores) {
-        return new SelectionFacade(jobs, targets, backfill, inputs, seams, scoring, daily, audit, scores);
+                                           SelectionScoreRepository scores, SelectionSimService sim) {
+        return new SelectionFacade(jobs, targets, backfill, inputs, seams, scoring, daily, audit, scores, sim);
     }
 }

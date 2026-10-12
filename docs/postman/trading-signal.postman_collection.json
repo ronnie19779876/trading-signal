@@ -2837,6 +2837,587 @@
       ]
     },
     {
+      "name": "量化选股·模拟交易（3.4.0）",
+      "item": [
+        {
+          "name": "模拟账户概况",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/selection/sim",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "selection",
+                "sim"
+              ]
+            },
+            "description": "规则 sim-v1、现金、持仓（按各笔最近收盘）、已实现与浮动盈亏、SPY 同期、最新评分日前 10 名能否加入。只读。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"有规则与候选\", () => { pm.expect(body.rules.version).to.be.a(\"string\"); pm.expect(body.candidates.top).to.be.an(\"array\"); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "加入前预览",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/selection/sim/preview?symbol={{symbol}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "selection",
+                "sim",
+                "preview"
+              ],
+              "query": [
+                {
+                  "key": "symbol",
+                  "value": "{{symbol}}"
+                }
+              ]
+            },
+            "description": "止损（ATR / 支撑区 / 封顶 10%）、压力区、最早入场日、按评分日收盘估的股数。不写库。不在最新评分日前 10 名 → 400。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 或 400（不在前 10）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 400]));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "逐笔",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/selection/sim/trades?status=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "selection",
+                "sim",
+                "trades"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "按加入时间倒序；status 取 pending_entry / open / closed / cancelled，空 = 全部。价格为评分日口径。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "一笔详情与留痕",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/selection/sim/trades/{{simTradeId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "selection",
+                "sim",
+                "trades",
+                "{{simTradeId}}"
+              ]
+            },
+            "description": "这一笔的全部字段与它的操作留痕。不存在 404。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 或 404\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "操作留痕",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/selection/sim/events?limit=100",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "selection",
+                "sim",
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            },
+            "description": "加入、成交、取消、止盈提示、平仓请求、平仓、周报，新的在前。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "逐日权益",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/selection/sim/equity?from=&to=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "selection",
+                "sim",
+                "equity"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": ""
+                },
+                {
+                  "key": "to",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "收盘后的现金、持仓市值、权益、持仓笔数。默认最近一年。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "周报列表",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/selection/sim/weekly?limit=52",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "selection",
+                "sim",
+                "weekly"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "52"
+                }
+              ]
+            },
+            "description": "新的在前，不带正文（report 为 null）。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "某周周报",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/selection/sim/weekly/2026-10-16",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "selection",
+                "sim",
+                "weekly",
+                "2026-10-16"
+              ]
+            },
+            "description": "weekEnd = 该周最后一个交易日；带正文（本周与累计、SPY 与范围等权对照、逐笔与影子配对、周末持仓按周末收盘估值）。没有 404。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 或 404\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "⚠ 写操作（改状态或触发跑批，别对生产整组跑）",
+          "item": [
+            {
+              "name": "加入模拟池",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/selection/sim/trades?symbol={{symbol}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "selection",
+                    "sim",
+                    "trades"
+                  ],
+                  "query": [
+                    {
+                      "key": "symbol",
+                      "value": "{{symbol}}"
+                    }
+                  ]
+                },
+                "description": "只接受最新评分日合成分前 10 名；同一只同时只能一笔、最多 10 笔。点击之后的第一个开盘价入场（收盘后的作业里落账）。⚠ 会写库。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"200 / 400 / 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 400, 409]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "平仓或撤销",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/selection/sim/trades/{{simTradeId}}/close?note=",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "selection",
+                    "sim",
+                    "trades",
+                    "{{simTradeId}}",
+                    "close"
+                  ],
+                  "query": [
+                    {
+                      "key": "note",
+                      "value": ""
+                    }
+                  ]
+                },
+                "description": "持有中的按点击之后第一个开盘价平（触及过止盈目标的记 TAKE_PROFIT，否则 MANUAL）；入场开盘之前的直接撤销。⚠ 会写库。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"200 / 404 / 409\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404, 409]));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "重算（异步）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/selection/sim/update?through=",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "selection",
+                    "sim",
+                    "update"
+                  ],
+                  "query": [
+                    {
+                      "key": "through",
+                      "value": ""
+                    }
+                  ]
+                },
+                "description": "把未完结的逐笔算到 through（缺省 = 最近一个已收盘落定的交易日），再补逐日权益；每日作业里也会跑一次。⚠ 会写库。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                      "const body = pm.response.json();",
+                      "pm.test(\"返回 jobId\", () => pm.expect(body.jobId).to.be.a(\"number\"));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "生成周报（异步）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/selection/sim/weekly?weekEnd=&force=false",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "selection",
+                    "sim",
+                    "weekly"
+                  ],
+                  "query": [
+                    {
+                      "key": "weekEnd",
+                      "value": ""
+                    },
+                    {
+                      "key": "force",
+                      "value": "false"
+                    }
+                  ]
+                },
+                "description": "缺省 = 最近一个已收盘落定的交易日所在周；已有的不覆盖，force=true 覆盖并留痕。定时任务周六美东 10:00。⚠ 会写库。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                      "const body = pm.response.json();",
+                      "pm.test(\"返回 jobId\", () => pm.expect(body.jobId).to.be.a(\"number\"));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "基本面（第 2 期·步骤 3）",
       "item": [
         {

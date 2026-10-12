@@ -54,7 +54,7 @@ import static org.mockito.Mockito.when;
 class SelectionBackfillServiceTest {
 
     private static final SelectionProperties PROPS = new SelectionProperties(true, "0 30 18 * * MON-FRI", "0 30 22 * * MON-FRI",
-            "0 0 9 * * SAT", LocalDate.of(2016, 1, 1), 4, 50,
+            "0 0 9 * * SAT", "0 0 10 * * SAT", LocalDate.of(2016, 1, 1), 4, 50,
             ValuationRange.YEAR10, 3, 0.001, 0.95);
 
     private final SelectionTargets targets = mock(SelectionTargets.class);

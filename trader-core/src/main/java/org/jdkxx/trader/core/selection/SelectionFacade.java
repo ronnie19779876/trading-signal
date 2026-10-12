@@ -6,6 +6,8 @@ import org.jdkxx.trader.domain.selection.SelectionModel;
 import org.jdkxx.trader.storage.marketdata.InstrumentRow;
 import org.jdkxx.trader.storage.selection.SelectionPriceSeamRepository;
 import org.jdkxx.trader.storage.selection.SelectionScoreRepository;
+import org.jdkxx.trader.storage.selection.SelectionSimRepository;
+import org.jdkxx.trader.storage.selection.SimTradeRow;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -24,10 +26,12 @@ public class SelectionFacade {
     private final SelectionDailyService daily;
     private final SelectionAuditService audit;
     private final SelectionScoreRepository scores;
+    private final SelectionSimService sim;
 
     public SelectionFacade(JobService jobs, SelectionTargets targets, SelectionBackfillService backfill,
                            SelectionInputsService inputs, SelectionPriceSeamRepository seams, SelectionScoringService scoring,
-                           SelectionDailyService daily, SelectionAuditService audit, SelectionScoreRepository scores) {
+                           SelectionDailyService daily, SelectionAuditService audit, SelectionScoreRepository scores,
+                           SelectionSimService sim) {
         this.jobs = jobs;
         this.targets = targets;
         this.backfill = backfill;
@@ -37,6 +41,7 @@ public class SelectionFacade {
         this.daily = daily;
         this.audit = audit;
         this.scores = scores;
+        this.sim = sim;
     }
 
     public long daily(String trigger, LocalDate date) {
@@ -93,5 +98,60 @@ public class SelectionFacade {
 
     public List<SelectionPriceSeamRepository.SeamRow> seams(boolean failedOnly) {
         return seams.findAll(failedOnly);
+    }
+
+    // ---- 模拟交易（§26）：加入、平仓是同步写；重算与周报走作业队列
+
+    public SelectionSimService.Overview simOverview() {
+        return sim.overview();
+    }
+
+    public SelectionSimService.Preview simPreview(String symbol) {
+        return sim.preview(symbol);
+    }
+
+    public SimTradeRow simAdd(String symbol) {
+        return sim.add(symbol);
+    }
+
+    public SimTradeRow simClose(long id, String note) {
+        return sim.requestClose(id, note);
+    }
+
+    public List<SimTradeRow> simTrades(String status) {
+        return sim.trades(status);
+    }
+
+    public SelectionSimService.TradeDetail simTrade(long id) {
+        return sim.trade(id);
+    }
+
+    public List<SelectionSimRepository.Event> simEvents(int limit) {
+        return sim.events(limit);
+    }
+
+    public List<SelectionSimRepository.EquityRow> simEquity(LocalDate from, LocalDate to) {
+        return sim.equity(from, to);
+    }
+
+    public List<SelectionSimRepository.WeeklyRow> simWeeklies(int limit) {
+        return sim.weeklies(limit);
+    }
+
+    public SelectionSimRepository.WeeklyRow simWeeklyRow(LocalDate weekEnd) {
+        return sim.weeklyRow(weekEnd);
+    }
+
+    /** 重算到 through（缺省 = 最近一个已收盘落定的交易日）。 */
+    public long simUpdate(String trigger, LocalDate through) {
+        return jobs.submit(SelectionJobs.SIM_UPDATE, trigger, ctx -> sim.update(through != null ? through : cutoff(), ctx));
+    }
+
+    public long simWeekly(String trigger, LocalDate weekEnd, boolean force) {
+        return jobs.submit(SelectionJobs.SIM_WEEKLY, trigger, ctx -> sim.weekly(weekEnd, force, ctx));
+    }
+
+    private LocalDate cutoff() {
+        return audit.cutoff();
     }
 }
