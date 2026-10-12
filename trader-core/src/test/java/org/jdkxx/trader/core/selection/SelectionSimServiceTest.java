@@ -254,4 +254,34 @@ class SelectionSimServiceTest {
         assertThat(service(Instant.EPOCH).criteria(null, 500_000, D).verdict())
                 .isEqualTo(org.jdkxx.trader.domain.selection.sim.SimCriteria.Verdict.NOT_STARTED);
     }
+
+    /**
+     * 回归（2026-10-12 生产误报）：18:30 作业之后加入、入场日是第二天的待成交，当天没有东西可算——
+     * 审计 simUpdated 不该判失败，22:30 补偿也不该为它们重跑整个每日作业。入场日已到的待成交照样要算。
+     */
+    @Test
+    void 入场日在审计日之后的待成交_不算没算到() {
+        LocalDate d = D;                                    // 审计日
+        SimTradeRow tomorrow = pending(1, d.plusDays(1), Instant.parse("2026-08-03T23:44:00Z"));
+        when(sim.list(null)).thenReturn(List.of(tomorrow));
+        when(sim.unfinished()).thenReturn(List.of(tomorrow));
+        SelectionSimService s = service(Instant.EPOCH);
+
+        org.jdkxx.trader.core.marketdata.audit.BarAuditService.Check c = s.auditChecks(d).getFirst();
+        assertThat(c.name()).isEqualTo("simUpdated");
+        assertThat(c.ok()).isTrue();
+        assertThat(c.critical()).as("当天没有要算的，不是关键项").isFalse();
+        assertThat(s.stale(d)).as("不该触发 22:30 补偿").isFalse();
+
+        // 入场日已到、却没算过：照样报
+        SimTradeRow today = pending(2, d, Instant.parse("2026-08-02T23:44:00Z"));
+        when(sim.list(null)).thenReturn(List.of(tomorrow, today));
+        when(sim.unfinished()).thenReturn(List.of(tomorrow, today));
+        c = s.auditChecks(d).getFirst();
+        assertThat(c.ok()).isFalse();
+        assertThat(c.critical()).isTrue();
+        assertThat(c.samples()).containsExactly("S2 #2 算到 （从未）");
+        assertThat(c.detail()).contains("另有 1 笔待成交");
+        assertThat(s.stale(d)).isTrue();
+    }
 }

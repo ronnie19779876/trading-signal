@@ -269,9 +269,19 @@ public class SelectionSimService {
 
     // ------------------------------------------------------------------ 每日重算
 
-    /** 有进行中的笔数却还没算到 through：每日作业的补偿与审计用。 */
+    /** 有需要算的笔数却还没算到 through：每日作业的 22:30 补偿用（判定条件与审计的 simUpdated 同一个，见 {@link #due}）。 */
     public boolean stale(LocalDate through) {
-        return sim.unfinished().stream().anyMatch(t -> t.updatedThrough() == null || t.updatedThrough().isBefore(through));
+        return sim.unfinished().stream().filter(t -> due(t, through))
+                .anyMatch(t -> t.updatedThrough() == null || t.updatedThrough().isBefore(through));
+    }
+
+    /**
+     * 这一笔到 d 为止有没有东西要算：持有中的（含已平仓、影子还开着的）都要；待成交的只有入场日不晚于 d 时才要——
+     * 入场日在 d 之后的还没有任何 K 线可算，「没算到 d」是正常的。3.4.1 没有这条：18:30 作业之后加入的 10 笔
+     * （入场日是第二天）让审计关键项 simUpdated 误报失败，22:30 补偿也会为它们把整个每日作业重跑一遍（2026-10-12 生产）。
+     */
+    static boolean due(SimTradeRow t, LocalDate d) {
+        return !"PENDING_ENTRY".equals(t.status()) || !t.plannedEntryDate().isAfter(d);
     }
 
     /**
@@ -787,13 +797,18 @@ public class SelectionSimService {
     /** 并进量化选股审计（check-daily 第六段）。有进行中的笔数时，「算到当天」是关键项；止盈提示是待处理的提示项。 */
     public List<BarAuditService.Check> auditChecks(LocalDate d) {
         List<SimTradeRow> active = sim.list(null).stream().filter(SimTradeRow::active).toList();
-        List<String> behind = active.stream().filter(t -> !t.scoreDate().isAfter(d))
+        List<SimTradeRow> dueOnD = active.stream().filter(t -> !t.scoreDate().isAfter(d)).filter(t -> due(t, d)).toList();
+        List<String> behind = dueOnD.stream()
                 .filter(t -> t.updatedThrough() == null || t.updatedThrough().isBefore(d))
                 .map(t -> t.symbol() + " #" + t.id() + " 算到 " + (t.updatedThrough() == null ? "（从未）" : t.updatedThrough())).toList();
+        int later = active.size() - dueOnD.size();
+        String waiting = later == 0 ? "" : "；另有 " + later + " 笔待成交、入场日在 " + d + " 之后，当天没有要算的";
         List<BarAuditService.Check> out = new ArrayList<>();
-        out.add(new BarAuditService.Check("simUpdated", behind.isEmpty(), !active.isEmpty(),
-                active.isEmpty() ? "模拟池没有进行中的交易" : behind.isEmpty() ? "进行中 " + active.size() + " 笔都已算到 " + d
-                        : behind.size() + " 笔没有算到 " + d, behind.size(), behind));
+        out.add(new BarAuditService.Check("simUpdated", behind.isEmpty(), !dueOnD.isEmpty(),
+                active.isEmpty() ? "模拟池没有进行中的交易"
+                        : behind.isEmpty() ? (dueOnD.isEmpty() ? "进行中 " + active.size() + " 笔都还没到入场日，当天没有要算的"
+                                : dueOnD.size() + " 笔都已算到 " + d + waiting)
+                        : behind.size() + " 笔没有算到 " + d + waiting, behind.size(), behind));
         List<String> alerts = active.stream().filter(t -> "OPEN".equals(t.status()) && t.targetHitDate() != null && t.closeRequestedAt() == null)
                 .map(t -> t.symbol() + " #" + t.id() + " " + t.targetHitDate() + " 触及目标 " + fmt(t.target().doubleValue()) + "，最近收盘 "
                         + fmt(t.lastClose().doubleValue()) + "（" + t.lastCloseDate() + "）").toList();

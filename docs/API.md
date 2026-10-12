@@ -269,7 +269,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | `POST /api/selection/sim/weekly?weekEnd=&force=` | 生成周报（异步 `SELECTION_SIM_WEEKLY`）：先重算到最近收盘落定日；缺省为最近一个已收盘落定的交易日所在周，那周还没结束 400；已有的不覆盖，`force=true` 覆盖并留痕。定时任务周六美东 10:00 |
 | `POST /api/selection/sim/update?through=` | 重算（异步 `SELECTION_SIM`）：未完结的逐笔（含影子还没平仓的）从加入时的价位整段重算到 `through`（缺省 = 最近一个已收盘落定的交易日），**只往前走**；待成交的轮到入场日按等权定股数（同一天按请求先后分现金，买不起 1 股的取消并说明）；再补逐日权益。每日作业（18:30）打分之后也会跑一次，22:30 补偿检查发现没算到当天会补跑 |
 
-审计：`GET /api/selection/audit` 增加 `simUpdated`（有进行中的笔数时为关键项：都已算到审计日）与 `simTargetHits`（提示项：触及止盈目标、等你决定是否平仓的笔数与清单）。
+审计：`GET /api/selection/audit` 增加 `simUpdated`（有需要算的笔数时为关键项：持有中的与入场日不晚于审计日的待成交都已算到审计日；3.4.2 起入场日在后的待成交不计入）与 `simTargetHits`（提示项：触及止盈目标、等你决定是否平仓的笔数与清单）。
 
 ## 实时报价（第 2 期·步骤 2，不落库）
 
