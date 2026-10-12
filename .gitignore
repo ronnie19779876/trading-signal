@@ -20,6 +20,7 @@ sdk/tws-api/IBJts/
 .vscode/
 .DS_Store
 .claude/settings.local.json
+.claude/launch.json
 
 # ---- 敏感配置：密码、网关地址/端口/client-id、交易密码 MD5、API key，永不入库 ----
 config/secrets.yml
