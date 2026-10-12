@@ -48,8 +48,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 量化选股的输入回补（ARCHITECTURE §25.6）。四个部分各自幂等、可续跑：
- * 已经 OK / EMPTY / SKIPPED 的标的跳过，FAILED 的重取；{@code force} 全部重取。
+ * 量化选股的输入回补（ARCHITECTURE §25.6）。各部分幂等、可续跑：
+ * 已经 OK / EMPTY / SKIPPED 的标的跳过，FAILED 与 PENDING（暂时取不了）的重取；{@code force} 全部重取。
  *
  * <p>一只标的失败只记状态、不中断整批；网关没连上则整批停下（再往下跑只会把每只都记成失败）。
  * 富途侧请求的限频在网关里，盈透历史数据的节奏（10 分钟 50 次）也在网关里，这里只管顺序与记账。
@@ -123,6 +123,11 @@ public class SelectionBackfillService {
         static Outcome skipped(String detail) {
             return new Outcome("SKIPPED", detail);
         }
+
+        /** 暂时取不了（不是失败）：不算完成，下次回补重试。 */
+        static Outcome pending(String detail) {
+            return new Outcome("PENDING", detail);
+        }
     }
 
     public String run(BackfillPart part, Collection<String> symbols, boolean force, JobContext ctx) {
@@ -178,7 +183,8 @@ public class SelectionBackfillService {
         Instrument instrument = row.instrument();
         LocalDate futuFrom = dailyBars.coverage(row.id()).map(DailyBarRepository.InstrumentCoverage::earliest).orElse(null);
         if (futuFrom == null) {
-            return Outcome.empty("富途还没有日 K，没有接缝可核对，先不取");
+            // 3.2.0 记成 EMPTY，被当成已完成永久跳过（生产 SKYD、TWLO、VYLR：成分股同步新进、日 K 还没取）
+            return Outcome.pending("富途还没有日 K，没有接缝可核对；等日 K 到了下次回补重试");
         }
         if (!futuFrom.isAfter(props.priceFrom())) {
             return Outcome.skipped("富途日 K 自 " + futuFrom + " 起，已早于 " + props.priceFrom() + "，不需要盈透");

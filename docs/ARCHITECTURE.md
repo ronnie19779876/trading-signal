@@ -1235,7 +1235,7 @@ realized 不可用（null）  → 判断不了   → 只比浮盈（宁可少一
 
 | 表 | 主键 | 说明 |
 | --- | --- | --- |
-| `selection_backfill_state` | instrument, part | 回补进度：OK / EMPTY / SKIPPED / FAILED + 说明，续跑据此跳过 |
+| `selection_backfill_state` | instrument, part | 回补进度：OK / EMPTY / SKIPPED / FAILED / PENDING（暂时取不了、下次重试，3.2.1 加）+ 说明，续跑跳过前三种 |
 | `selection_price_bar` | instrument, trade_date | 盈透原样日线，含 `split_basis_date` |
 | `selection_price_seam` | instrument | 重叠天数、比较天数、达标天数、最大收益差、通过与否 |
 | `selection_valuation` | instrument, trade_date | pe_ttm / pb / ps + `source`（HIST / SNAPSHOT / CARRIED） |
@@ -1250,7 +1250,7 @@ realized 不可用（null）  → 判断不了   → 只比浮盈（宁可少一
 | --- | --- | --- |
 | 量化选股回补 `SELECTION_BACKFILL`，`part=PRICES/VALUATION/EARNINGS/FINANCIALS` | 手工 | 幂等、可续跑（按 `selection_backfill_state` 跳过已完成的，`force=true` 重取），可只取 `symbols` |
 | 每日评分 | 18:30 周一~五（排在 18:10 信号评估后），22:30 补偿 | 追加估值 → 补新公告的财报与估值 → 打分 → 审计 |
-| 公告日周刷新 | 周六 09:00 | 全部 494 只 |
+| 周刷新 | 周六 09:00 | 全部标的刷新公告日；证券类型、估值历史、季报、盈透价格**只补缺的**（新进成分股由此补齐，3.2.1 加） |
 | 历史重放 | 手工 `from/to` | 按日顺序算（`sb_streak` 依赖前一天） |
 
 新 cron 同时写进 jar 内 `application.yml`（`ScheduledPlaceholdersTest`）。

@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit;
  * 量化选股的每日与每周维护（§25.7）。
  * <ul>
  *   <li>每日：估值快照续上估值序列 → 近几天发了财报的标的补取最近 4 季季报与近 3 个月估值 → 打分；</li>
- *   <li>每周：全部标的刷新公告日（拿到下一季预定日），补取还没有证券类型的标的。</li>
+ *   <li>每周：全部标的刷新公告日，证券类型、估值历史、季报、盈透价格只补缺的（新进成分股由此补齐）。</li>
  * </ul>
  * 补取失败只记部分失败、照样打分（用的是库里已有的数据，审计会显示新鲜度）。
  */
@@ -100,11 +100,25 @@ public class SelectionDailyService {
         return "估值续接 " + appended + " 只；新公告补取 " + ok + "/" + refresh.size() + "；" + scored;
     }
 
+    /**
+     * 每周：全部标的刷新公告日（拿到下一季预定日），再对证券类型、估值历史、季报、盈透价格各跑一次<b>只补缺的</b>回补——
+     * 已完成的跳过，平时几乎没有请求；成分股同步新进的标的由此补齐深度输入（3.2.0 漏了这条，新成员永远缺 10 年估值与 50 期季报）。
+     */
     public String weekly(JobContext ctx) {
-        String e = backfill.run(BackfillPart.EARNINGS, List.of(), true, ctx);
-        String t = backfill.run(BackfillPart.TYPES, List.of(), false, ctx);
-        return e + "；" + t;
+        List<String> out = new java.util.ArrayList<>();
+        out.add(backfill.run(BackfillPart.EARNINGS, List.of(), true, ctx));
+        for (BackfillPart p : WEEKLY_FILL) {
+            if (ctx.cancelled()) {
+                break;
+            }
+            out.add(backfill.run(p, List.of(), false, ctx));
+        }
+        return String.join("；", out);
     }
+
+    /** 周作业只补缺的部分；盈透放最后（节奏最慢）。 */
+    static final List<BackfillPart> WEEKLY_FILL = List.of(BackfillPart.TYPES, BackfillPart.VALUATION, BackfillPart.FINANCIALS,
+            BackfillPart.PRICES);
 
     private static Throwable unwrap(Throwable t) {
         Throwable c = t;

@@ -252,6 +252,23 @@ class SelectionBackfillServiceTest {
         verify(seams, never()).save(anyLong(), anyLong(), any(), any(), any(), anyInt(), anyInt(), anyInt(), any(), anyBoolean(), anyString());
     }
 
+    /**
+     * 回归（3.2.0 生产 SKYD、TWLO、VYLR）：富途日 K 还没到的记 PENDING——不算完成（下次重试）、也不算失败（不标部分失败）。
+     * 3.2.0 记成 EMPTY，被当成已完成永久跳过。
+     */
+    @Test
+    void 富途日K还没到记PENDING_下次重试且不算失败() throws Exception {
+        when(targets.only(any())).thenReturn(List.of(row(1, "TWLO")));
+        when(dailyBars.coverage(1L)).thenReturn(Optional.empty());
+        when(states.statuses("PRICES")).thenReturn(Map.of(1L, "PENDING"));
+
+        String summary = service.run(BackfillPart.PRICES, List.of(), false, ctx);
+
+        verify(states).save(eq(1L), eq("PRICES"), eq("PENDING"), org.mockito.ArgumentMatchers.contains("下次回补重试"));
+        assertThat(summary).contains("已完成跳过 0");
+        assertThat(partials).isEmpty();
+    }
+
     @Test
     void 网关未连接整批停下_不把后面的都记成失败() throws Exception {
         when(targets.only(any())).thenReturn(List.of(row(1, "AAA"), row(2, "BBB")));
