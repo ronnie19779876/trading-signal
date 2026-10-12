@@ -64,7 +64,7 @@ pkill autossh          # 停；随后按上面的命令重起
 
 | 组件 | 当前 | 托管 | 监听 |
 | --- | --- | --- | --- |
-| trading-signal | 3.3.0 | `bin/trader.sh` | 127.0.0.1:8093 |
+| trading-signal | 3.4.0 | `bin/trader.sh` | 127.0.0.1:8093 |
 | PostgreSQL | 18.6（PGDG） | systemd `postgresql` | 127.0.0.1 / ::1 :5432 |
 | 富途 OpenD | 10.10.7008 | systemd `futu-opend` | 127.0.0.1:11111，Telnet 127.0.0.1:22222 |
 | IB Gateway | 10.51（latest 通道） | VNC 桌面里手工启动，每日自动重启 | 4001（应只听回环，见 ④） |
