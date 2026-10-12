@@ -33,6 +33,17 @@ public class IndexConstituentRepository {
         return jdbc.query("SELECT * FROM index_constituent WHERE until IS NULL", MAPPER);
     }
 
+    /**
+     * 某一天有效的成分股：since ≤ d 且（未退出或 until 晚于 d）。退出那天记作 until，当天已不算成员（与同步当天的评估口径一致）。
+     * <b>首次同步之前的成员关系没有记录</b>：首次同步入库的那批（since = 表里最早的 since）视为一直是成员，否则审计更早的日期会得到空集。
+     */
+    public List<ConstituentRow> validOn(LocalDate d) {
+        return jdbc.query("""
+                SELECT * FROM index_constituent
+                WHERE (since <= ? OR since = (SELECT min(since) FROM index_constituent)) AND (until IS NULL OR until > ?)""",
+                MAPPER, Date.valueOf(d), Date.valueOf(d));
+    }
+
     public List<ConstituentRow> historyOf(long instrumentId) {
         return jdbc.query("SELECT * FROM index_constituent WHERE instrument_id = ? ORDER BY since", MAPPER, instrumentId);
     }

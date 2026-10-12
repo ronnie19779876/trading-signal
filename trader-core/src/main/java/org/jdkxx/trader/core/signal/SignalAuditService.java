@@ -6,6 +6,7 @@ import org.jdkxx.trader.core.marketdata.audit.BarAuditService.Report;
 import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.signal.SentinelThresholds;
+import org.jdkxx.trader.storage.marketdata.InstrumentRow;
 import org.jdkxx.trader.storage.marketdata.JobRunRepository;
 import org.jdkxx.trader.storage.marketdata.JobRunRow;
 import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
@@ -25,13 +26,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
  * 信号审计，收盘巡检第五段（{@code check-daily.sh}）。
  *
  * <p>评估定在美东 18:10，巡检常在 18:30 前后跑：19:00 前缺评估只提示，过了才判关键项失败。
- * 关键项：当天评估存在、覆盖完整（评估行数 = 目标数）、未平仓账本算到了当天。
+ * 关键项：当天评估存在、覆盖完整（d 当天有效的目标都有评估）、未平仓账本算到了当天。
  * 提示项：过期跳过占比 &gt; 2%、缺日与口径换算失败的标的、当天信号与重算结论不一致、最近一次作业。
  */
 public class SignalAuditService {
@@ -78,7 +80,9 @@ public class SignalAuditService {
         boolean due = now.isAfter(d.atTime(EVALUATION_DUE).atZone(zone));
 
         List<SignalEvaluationRow> rows = evaluations.on(d, version);
-        int targets = evaluation.targets().size();
+        // 分母按 d 当天有效的目标，不按现在的名单（周末同步改了成分股后，周一收盘前审 10-09 会误报，2026-10-12）
+        Map<Long, InstrumentRow> expected = evaluation.targetsOn(d);
+        int targets = expected.size();
         summary.put("targets", targets);
         summary.put("evaluations", rows.size());
         if (rows.isEmpty()) {
@@ -87,9 +91,13 @@ public class SignalAuditService {
                             : d + " 的信号评估定于美东 18:10，还没到核对时点（19:00），先不判失败", 0, List.of()));
         } else {
             checks.add(new Check("evaluationExists", true, true, d + " 有 " + rows.size() + " 条评估", rows.size(), List.of()));
-            checks.add(new Check("coverage", rows.size() >= targets, due,
-                    rows.size() >= targets ? "评估覆盖全部 " + targets + " 只目标" : "评估 " + rows.size() + " 条，少于目标 " + targets + " 只",
-                    Math.max(0, targets - rows.size()), List.of()));
+            Set<Long> evaluated = rows.stream().map(SignalEvaluationRow::instrumentId).collect(Collectors.toSet());
+            List<String> missing = expected.values().stream().filter(r -> !evaluated.contains(r.id())).map(InstrumentRow::symbol)
+                    .sorted().toList();
+            checks.add(new Check("coverage", missing.isEmpty(), due,
+                    missing.isEmpty() ? "评估覆盖 " + d + " 当天的全部 " + targets + " 只目标（评估 " + rows.size() + " 条）"
+                            : d + " 当天的 " + targets + " 只目标里缺 " + missing.size() + " 只没有评估",
+                    missing.size(), head(missing)));
 
             Map<String, List<SignalEvaluationRow>> byStatus = rows.stream().collect(Collectors.groupingBy(SignalEvaluationRow::status));
             byStatus.forEach((k, v) -> summary.put(k, v.size()));

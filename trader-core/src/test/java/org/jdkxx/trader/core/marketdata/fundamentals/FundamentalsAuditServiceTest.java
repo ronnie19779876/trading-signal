@@ -62,7 +62,7 @@ class FundamentalsAuditServiceTest {
         when(days.covers(eq(Market.US), any())).thenReturn(true);
         when(days.isTradingDay(Market.US, DAY)).thenReturn(true);
         UniverseScope scope = mock(UniverseScope.class);
-        when(scope.universe()).thenReturn(List.of(row(1, "NVDA"), row(2, "SPY")));
+        when(scope.universeOn(any())).thenReturn(List.of(row(1, "NVDA"), row(2, "SPY")));
         when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "NVDA")));
         ValuationRepository valuations = mock(ValuationRepository.class);
         when(valuations.instrumentIdsOn(DAY)).thenReturn(Set.of(1L, 2L));
@@ -89,7 +89,7 @@ class FundamentalsAuditServiceTest {
         when(days.covers(eq(Market.US), any())).thenReturn(true);
         when(days.isTradingDay(Market.US, DAY)).thenReturn(true);
         UniverseScope scope = mock(UniverseScope.class);
-        when(scope.universe()).thenReturn(List.of(row(1, "NVDA"), row(2, "AAPL")));
+        when(scope.universeOn(any())).thenReturn(List.of(row(1, "NVDA"), row(2, "AAPL")));
         when(scope.poolAndHoldings()).thenReturn(List.of());
         ValuationRepository valuations = mock(ValuationRepository.class);
         when(valuations.instrumentIdsOn(DAY)).thenReturn(Set.of(1L));
@@ -115,7 +115,7 @@ class FundamentalsAuditServiceTest {
         when(days.covers(eq(Market.US), any())).thenReturn(true);
         when(days.isTradingDay(Market.US, DAY)).thenReturn(true);
         UniverseScope scope = mock(UniverseScope.class);
-        when(scope.universe()).thenReturn(List.of(row(1, "NVDA")));
+        when(scope.universeOn(any())).thenReturn(List.of(row(1, "NVDA")));
         when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "NVDA"), row(2, "SPY")));
         ValuationRepository valuations = mock(ValuationRepository.class);
         when(valuations.instrumentIdsOn(DAY)).thenReturn(Set.of(1L, 2L));
@@ -141,7 +141,7 @@ class FundamentalsAuditServiceTest {
         when(days.covers(eq(Market.US), any())).thenReturn(true);
         when(days.isTradingDay(Market.US, DAY)).thenReturn(true);
         UniverseScope scope = mock(UniverseScope.class);
-        when(scope.universe()).thenReturn(List.of(row(1, "NVDA")));
+        when(scope.universeOn(any())).thenReturn(List.of(row(1, "NVDA")));
         when(scope.poolAndHoldings()).thenReturn(List.of(row(1, "NVDA")));
         ValuationRepository valuations = mock(ValuationRepository.class);
         when(valuations.instrumentIdsOn(DAY)).thenReturn(Set.of(1L));
@@ -160,5 +160,31 @@ class FundamentalsAuditServiceTest {
         assertThat(c.ok()).isFalse();
         assertThat(c.critical()).isFalse();
         assertThat(c.samples()).hasSize(1);
+    }
+
+    /** 回归（2026-10-12 生产误报）：估值完整性的分母按审计日当天的成分股，周末新进的不算缺。 */
+    @Test
+    void 估值完整性按审计日当天的名单() {
+        TradingDayRepository days = mock(TradingDayRepository.class);
+        when(days.covers(eq(Market.US), any())).thenReturn(true);
+        when(days.isTradingDay(Market.US, DAY)).thenReturn(true);
+        UniverseScope scope = mock(UniverseScope.class);
+        when(scope.universeOn(DAY)).thenReturn(List.of(row(1, "NVDA")));
+        when(scope.universe()).thenReturn(List.of(row(1, "NVDA"), row(3, "SKYD")));
+        when(scope.poolAndHoldings()).thenReturn(List.of());
+        ValuationRepository valuations = mock(ValuationRepository.class);
+        when(valuations.instrumentIdsOn(DAY)).thenReturn(Set.of(1L));
+        when(valuations.statsOn(DAY)).thenReturn(new ValuationRepository.DayStats(1, 0, 0, 0));
+        FinancialRepository financials = mock(FinancialRepository.class);
+        when(financials.latestPeriods()).thenReturn(List.of());
+        JobRunRepository jobs = mock(JobRunRepository.class);
+        when(jobs.latestOf(any())).thenReturn(Optional.empty());
+
+        BarAuditService.Report r = new FundamentalsAuditService(props(), scope, valuations, financials, days, jobs,
+                Clock.systemUTC()).audit(DAY);
+
+        BarAuditService.Check c = r.checks().stream().filter(x -> x.name().equals("valuationCompleteness")).findFirst().orElseThrow();
+        assertThat(c.ok()).isTrue();
+        assertThat(r.summary()).containsEntry("targets", 1);
     }
 }

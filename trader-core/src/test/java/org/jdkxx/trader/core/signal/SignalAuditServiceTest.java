@@ -2,6 +2,8 @@ package org.jdkxx.trader.core.signal;
 
 import org.jdkxx.trader.core.marketdata.audit.BarAuditService;
 import org.jdkxx.trader.domain.Market;
+import org.jdkxx.trader.domain.SecurityType;
+import org.jdkxx.trader.storage.marketdata.InstrumentRow;
 import org.jdkxx.trader.storage.marketdata.JobRunRepository;
 import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
 import org.jdkxx.trader.storage.signal.AiAnalysisRepository;
@@ -22,6 +24,8 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -57,9 +61,14 @@ class SignalAuditServiceTest {
     }
 
     private BarAuditService.Report audit(List<SignalEvaluationRow> rows, List<EntrySignalRow> daySignals) {
+        return audit(rows, daySignals, java.util.Map.of());
+    }
+
+    private BarAuditService.Report audit(List<SignalEvaluationRow> rows, List<EntrySignalRow> daySignals,
+                                         java.util.Map<Long, InstrumentRow> targetsOnD) {
         when(days.covers(any(), any())).thenReturn(true);
         when(days.isTradingDay(Market.US, D)).thenReturn(true);
-        when(evaluation.targets()).thenReturn(java.util.Map.of());
+        when(evaluation.targetsOn(D)).thenReturn(targetsOnD);
         when(evaluations.on(D, "sentinel-v1")).thenReturn(rows);
         when(signals.on(D, "sentinel-v1")).thenReturn(daySignals);
         when(analyses.onTradeDate(D)).thenReturn(List.of());
@@ -116,5 +125,43 @@ class SignalAuditServiceTest {
                 List.of(signalRow(1, "AAPL")));
 
         assertThat(check(r, "signalConsistency").samples()).containsExactly("AAPL");
+    }
+
+    private static java.util.Map<Long, InstrumentRow> targets(Object... idSymbol) {
+        java.util.Map<Long, InstrumentRow> m = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < idSymbol.length; i += 2) {
+            long id = ((Number) idSymbol[i]).longValue();
+            String sym = (String) idSymbol[i + 1];
+            m.put(id, new InstrumentRow(id, Market.US, sym, sym, null, SecurityType.STOCK, 1, null, false, "NYSE", id, "RESOLVED"));
+        }
+        return m;
+    }
+
+    /**
+     * 回归（2026-10-12 生产误报）：周六成分股同步新进 3 只、退出 2 只后，周一收盘前审上周五——
+     * 那天的评估是按当时的名单跑的，退出的那只有评估、新进的没有。分母必须按 d 当天有效的目标，不能用现在的名单。
+     */
+    @Test
+    void 覆盖按当天有效的目标核对_事后退出的多评了不算错() {
+        BarAuditService.Report r = audit(
+                List.of(evaluationRow(1, "AAPL", "EVALUATED", "NO_SIGNAL"), evaluationRow(2, "WBD", "SKIPPED_STALE_DATA", null)),
+                List.of(), targets(1, "AAPL", 2, "WBD"));
+        BarAuditService.Check c = check(r, "coverage");
+        assertThat(c.ok()).isTrue();
+        assertThat(c.count()).isZero();
+        verify(evaluation, never()).targets();
+    }
+
+    /** 真缺评估时点名缺的是哪几只（原先只给条数，要自己去比两张名单）。 */
+    @Test
+    void 当天的目标缺评估_关键项失败并点名() {
+        BarAuditService.Report r = audit(
+                List.of(evaluationRow(1, "AAPL", "EVALUATED", "NO_SIGNAL"), evaluationRow(9, "OLD", "EVALUATED", "NO_SIGNAL")),
+                List.of(), targets(1, "AAPL", 2, "MSFT", 3, "NVDA"));
+        BarAuditService.Check c = check(r, "coverage");
+        assertThat(c.ok()).as("评估条数 2 不少于… 不能拿条数比：OLD 不是当天的目标，MSFT、NVDA 真缺").isFalse();
+        assertThat(c.critical()).isTrue();
+        assertThat(c.samples()).containsExactly("MSFT", "NVDA");
+        assertThat(r.ok()).isFalse();
     }
 }

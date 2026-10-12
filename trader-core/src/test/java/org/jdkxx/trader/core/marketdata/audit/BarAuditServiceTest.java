@@ -38,7 +38,7 @@ class BarAuditServiceTest {
 
     /** 把分母构成一次 stub 好：expected 是应采的行，unusable 是被挡掉的行。 */
     private static void breakdown(UniverseScope scope, List<InstrumentRow> expected, List<InstrumentRow> unusable) {
-        when(scope.targetBreakdown()).thenReturn(new UniverseScope.TargetBreakdown(
+        when(scope.targetBreakdown(any())).thenReturn(new UniverseScope.TargetBreakdown(
                 expected.size() + unusable.size(), 0, 0, unusable, expected));
     }
 
@@ -167,7 +167,7 @@ class BarAuditServiceTest {
             unusable.add(new InstrumentRow(1000 + i, Market.US, "DOWN" + i, "DOWN" + i, null, SecurityType.STOCK,
                     1, null, false, null, 0L, "UNRESOLVED"));
         }
-        when(scope.targetBreakdown()).thenReturn(new UniverseScope.TargetBreakdown(
+        when(scope.targetBreakdown(any())).thenReturn(new UniverseScope.TargetBreakdown(
                 nominal, 0, 0, unusable, expectedRows(nominal - bad)));
         return scope;
     }
@@ -179,7 +179,7 @@ class BarAuditServiceTest {
                 new TradingDayRepository.Coverage(LocalDate.of(2006, 8, 21), LocalDate.of(2026, 10, 16), 5071, 2539, 2532));
         DailyBarRepository bars = mock(DailyBarRepository.class);
         // 应采的都有 K 线：这组用例要的是「completeness 全绿，但降级仍被点名」
-        Set<Long> withBar = scope.targetBreakdown().expected().stream()
+        Set<Long> withBar = scope.targetBreakdown(LocalDate.of(2026, 10, 6)).expected().stream()
                 .map(InstrumentRow::id).collect(java.util.stream.Collectors.toSet());
         when(bars.instrumentIdsWithBarOn(any())).thenReturn(withBar);
         when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(0, 0, 0, 0, 0, 0));
@@ -437,5 +437,57 @@ class BarAuditServiceTest {
         assertThat(check(r, "continuity").samples()).singleElement().asString().contains("AAPL").contains("2026-09-09");
         assertThat(r.checks()).filteredOn(BarAuditService.Check::critical).allSatisfy(
                 c -> assertThat(c.critical()).isTrue());
+    }
+
+    /**
+     * 回归（2026-10-12 生产误报）：周六 10-10 成分股同步新进 SKYD 等、退出 CTVA，周一收盘前审 10-09。
+     * 用真的 UniverseScope：分母取 10-09 当天有效的成分股（validOn），新进的本来就不是 10-09 的目标，不该算缺；
+     * 退出的 CTVA 那天还是成分股，缺 K 线照样要报。
+     */
+    @Test
+    void 完整性按审计日当天的名单_事后新进的不算缺_事后退出的仍要采() {
+        LocalDate d = LocalDate.of(2026, 10, 9);
+        org.jdkxx.trader.storage.marketdata.IndexConstituentRepository constituents = mock(org.jdkxx.trader.storage.marketdata.IndexConstituentRepository.class);
+        org.jdkxx.trader.storage.marketdata.PoolRepository pool = mock(org.jdkxx.trader.storage.marketdata.PoolRepository.class);
+        org.jdkxx.trader.storage.marketdata.InstrumentRepository instruments = mock(org.jdkxx.trader.storage.marketdata.InstrumentRepository.class);
+        org.jdkxx.trader.storage.marketdata.ConstituentRow aapl = member(1, null);
+        org.jdkxx.trader.storage.marketdata.ConstituentRow ctva = member(2, LocalDate.of(2026, 10, 10));
+        org.jdkxx.trader.storage.marketdata.ConstituentRow skyd = member(3, null);
+        when(constituents.validOn(d)).thenReturn(List.of(aapl, ctva));
+        when(constituents.currentAll()).thenReturn(List.of(aapl, skyd));
+        when(pool.findAll()).thenReturn(List.of());
+        when(instruments.findByIds(any())).thenAnswer(inv -> {
+            java.util.Collection<Long> ids = inv.getArgument(0);
+            return ids.stream().map(id -> row(id, id == 1 ? "AAPL" : id == 2 ? "CTVA" : "SKYD")).toList();
+        });
+        UniverseScope scope = new UniverseScope(constituents, pool, instruments);
+
+        TradingDayRepository days = mock(TradingDayRepository.class);
+        when(days.covers(eq(Market.US), any())).thenReturn(false);
+        when(days.coverage(Market.US)).thenReturn(
+                new TradingDayRepository.Coverage(LocalDate.of(2006, 8, 21), LocalDate.of(2026, 10, 16), 5071, 2539, 2532));
+        DailyBarRepository bars = mock(DailyBarRepository.class);
+        when(bars.instrumentIdsWithBarOn(d)).thenReturn(Set.of(1L));      // AAPL 有，CTVA 缺，SKYD 那天还不是成分股
+        when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(0, 0, 0, 0, 0, 0));
+        when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
+        when(bars.gaps(any(), any(), anyInt())).thenReturn(List.of());
+        when(bars.coverageByInstrument()).thenReturn(List.of());
+        when(bars.phantomBars(anyInt())).thenReturn(List.of());
+        BarSyncStateRepository states = mock(BarSyncStateRepository.class);
+        when(states.findAll()).thenReturn(List.of());
+        JobRunRepository jobs = mock(JobRunRepository.class);
+        when(jobs.latestOf(any())).thenReturn(Optional.empty());
+
+        BarAuditService.Report r = new BarAuditService(props(), scope, bars, days, states, jobs, null, Clock.systemUTC()).audit(d);
+
+        BarAuditService.Check c = r.checks().stream().filter(x -> x.name().equals("completeness")).findFirst().orElseThrow();
+        assertThat(c.samples()).containsExactly("CTVA");
+        assertThat(r.checks().stream().filter(x -> x.name().equals("rehab")).findFirst().orElseThrow().samples())
+                .as("复权因子新鲜度也只看 d 当天的目标").containsExactlyInAnyOrder("AAPL", "CTVA");
+    }
+
+    private static org.jdkxx.trader.storage.marketdata.ConstituentRow member(long id, LocalDate until) {
+        return new org.jdkxx.trader.storage.marketdata.ConstituentRow(IndexCode.SP500, id, "IT", "IT", "GICS",
+                LocalDate.of(2026, 9, 3), until, "test");
     }
 }

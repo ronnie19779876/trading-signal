@@ -73,9 +73,9 @@ public class FundamentalsAuditService {
         }
         summary.put("tradingDay", true);
 
-        // 1. 当天全量都有估值快照
+        // 1. 当天全量都有估值快照。成分股按 d 当天的名单（3.4.0；周末同步新进的标的在上一个交易日本来就没有快照）
         Map<Long, InstrumentRow> targets = new LinkedHashMap<>();
-        scope.universe().forEach(r -> targets.put(r.id(), r));
+        scope.universeOn(d).forEach(r -> targets.put(r.id(), r));
         scope.poolAndHoldings().forEach(r -> targets.put(r.id(), r));
         Set<Long> have = valuations.instrumentIdsOn(d);
         List<String> missing = targets.values().stream().filter(r -> !have.contains(r.id()))

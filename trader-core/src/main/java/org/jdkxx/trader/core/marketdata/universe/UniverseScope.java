@@ -39,6 +39,18 @@ public class UniverseScope {
         return usable(instruments.findByIds(ids));
     }
 
+    /**
+     * 某一天有效的成分股并集（审计按当天的名单核对用；{@link #universe()} 是现在的名单，周末同步改了成分股后两者不同）。
+     * 可用性（RESOLVED、未退市）按现在的状态判。
+     */
+    public List<InstrumentRow> universeOn(java.time.LocalDate d) {
+        Set<Long> ids = new LinkedHashSet<>();
+        for (ConstituentRow r : constituents.validOn(d)) {
+            ids.add(r.instrumentId());
+        }
+        return usable(instruments.findByIds(ids));
+    }
+
     public List<InstrumentRow> poolAndHoldings() {
         Set<Long> ids = pool.findAll().stream().map(PoolRow::instrumentId).collect(Collectors.toCollection(LinkedHashSet::new));
         return usable(instruments.findByIds(ids));
@@ -103,7 +115,22 @@ public class UniverseScope {
      * 审计把名义、各项减数、应采、实采<b>不管绿不绿都打出来</b>，缩水就不可能隐身。
      */
     public TargetBreakdown targetBreakdown() {
-        Set<Long> constituentIds = constituentIds();
+        return breakdown(constituentIds());
+    }
+
+    /**
+     * 某一天的采集目标构成：成分股取那天有效的（{@code validOn}），池与持仓没有历史、按现在的。
+     * 日线审计核对的是 d 当天的 K 线，分母必须是 d 当天的名单：周末同步新进的标的在上一个交易日本来就不是目标（2026-10-12 生产误报）。
+     */
+    public TargetBreakdown targetBreakdown(java.time.LocalDate d) {
+        Set<Long> ids = new LinkedHashSet<>();
+        for (ConstituentRow r : constituents.validOn(d)) {
+            ids.add(r.instrumentId());
+        }
+        return breakdown(ids);
+    }
+
+    private TargetBreakdown breakdown(Set<Long> constituentIds) {
         Set<Long> all = new LinkedHashSet<>(constituentIds);
         pool.findAll().forEach(p -> all.add(p.instrumentId()));
         List<InstrumentRow> rows = instruments.findByIds(all);

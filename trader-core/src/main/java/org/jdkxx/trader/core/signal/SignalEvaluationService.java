@@ -100,8 +100,21 @@ public class SignalEvaluationService {
      * 而保留原位，额度按字母发放——四巫日（2026-09-18）51 条候选，额度在 G 开头用完，持仓 IBKR 被预算跳过。
      */
     Map<Long, InstrumentRow> targets() {
+        return targets(scope.universe());
+    }
+
+    /**
+     * 某一天应评估的目标：那天有效的成分股 ∪ 池（池没有历史，按现在的）− 基准。审计核对覆盖用——
+     * 周末同步改了成分股后，现在的名单与上一个交易日评估时用的名单不同（2026-10-12 实测：10-10 新进 3 只、退出 2 只，
+     * 拿 10-09 的 518 条评估去比现在的 519 只，误报「少于目标」）。
+     */
+    Map<Long, InstrumentRow> targetsOn(LocalDate d) {
+        return targets(scope.universeOn(d));
+    }
+
+    private Map<Long, InstrumentRow> targets(List<InstrumentRow> universe) {
         Map<Long, InstrumentRow> byId = new HashMap<>();
-        scope.universe().forEach(r -> byId.put(r.id(), r));
+        universe.forEach(r -> byId.put(r.id(), r));
         scope.candidates().forEach(r -> byId.put(r.id(), r));
         scope.benchmarks().forEach(r -> byId.remove(r.id()));
         Map<Long, PoolRole> roles = scope.roles();

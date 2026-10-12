@@ -99,7 +99,9 @@ public class BarAuditService {
         //    detail 把分母的算式**不管绿不绿都打出来**（3.1.4 改）。分母悄悄变小是这个项目踩过三次的坑：
         //    成分股被误删（纯集合差）、标的被标 UNRESOLVED（批次级恢复会主动写）、当天停牌——
         //    三次都是分子分母一起少一、这条检查照样全绿。与其每次再加一条伴随检查，不如把算式摆在明面上。
-        UniverseScope.TargetBreakdown b = scope.targetBreakdown();
+        //    分母按 d 当天的名单（3.4.0）：周末同步改了成分股后，周一收盘前审上周五，新进的不该算缺（2026-10-12 生产误报 SKYD、TWLO、VYLR）。
+        //    下面的复权因子新鲜度、同步错误共用这个集合，同样只看 d 当天的目标。
+        UniverseScope.TargetBreakdown b = scope.targetBreakdown(d);
         Map<Long, InstrumentRow> targets = new LinkedHashMap<>();
         b.expected().forEach(r -> targets.put(r.id(), r));
         Set<Long> have = bars.instrumentIdsWithBarOn(d);
