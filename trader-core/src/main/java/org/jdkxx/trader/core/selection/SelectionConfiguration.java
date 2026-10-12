@@ -1,6 +1,8 @@
 package org.jdkxx.trader.core.selection;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jdkxx.trader.core.marketdata.MarketDataProperties;
+import org.jdkxx.trader.core.marketdata.bars.SettledCutoff;
 import org.jdkxx.trader.core.marketdata.jobs.JobService;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
 import org.jdkxx.trader.gateway.PriceHistoryGateway;
@@ -8,14 +10,21 @@ import org.jdkxx.trader.gateway.ReferenceDataGateway;
 import org.jdkxx.trader.gateway.SelectionDataGateway;
 import org.jdkxx.trader.storage.marketdata.DailyBarRepository;
 import org.jdkxx.trader.storage.marketdata.FinancialRepository;
+import org.jdkxx.trader.storage.marketdata.IndexConstituentRepository;
 import org.jdkxx.trader.storage.marketdata.InstrumentRepository;
+import org.jdkxx.trader.storage.marketdata.JobRunRepository;
 import org.jdkxx.trader.storage.marketdata.RehabFactorRepository;
+import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
 import org.jdkxx.trader.storage.selection.SelectionBackfillStateRepository;
 import org.jdkxx.trader.storage.selection.SelectionCoverageRepository;
 import org.jdkxx.trader.storage.selection.SelectionEarningsRepository;
+import org.jdkxx.trader.storage.selection.SelectionInputRepository;
 import org.jdkxx.trader.storage.selection.SelectionPriceBarRepository;
 import org.jdkxx.trader.storage.selection.SelectionPriceSeamRepository;
+import org.jdkxx.trader.storage.selection.SelectionScoreRepository;
+import org.jdkxx.trader.storage.selection.SelectionSecurityRepository;
 import org.jdkxx.trader.storage.selection.SelectionValuationRepository;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -26,7 +35,7 @@ import java.time.ZoneId;
 
 /**
  * 量化选股（第 6 期，ARCHITECTURE §25）的装配。独立功能：不依赖入场信号的任何 bean。
- * 整块只在存储启用时存在；6.1 只有手工回补与只读报告，没有定时作业。
+ * 整块只在存储启用时存在；定时任务只在开了跑批（schedule-enabled）且 trader.selection.enabled 的实例装配。
  */
 @Configuration
 @ConditionalOnProperty(name = "trader.storage.enabled", havingValue = "true")
@@ -46,9 +55,49 @@ public class SelectionConfiguration {
                                                              RehabFactorRepository rehabs, FinancialRepository financials,
                                                              SelectionPriceBarRepository priceBars, SelectionPriceSeamRepository seams,
                                                              SelectionValuationRepository valuations, SelectionEarningsRepository earnings,
-                                                             MarketDataProperties marketData) {
+                                                             SelectionSecurityRepository securities, MarketDataProperties marketData) {
         return new SelectionBackfillService(props, targets, states, prices, contracts, fundamentals, instruments, dailyBars, rehabs,
-                financials, priceBars, seams, valuations, earnings, Clock.systemUTC(), ZoneId.of(marketData.zone()));
+                financials, priceBars, seams, valuations, earnings, securities, Clock.systemUTC(), ZoneId.of(marketData.zone()));
+    }
+
+    @Bean
+    public SelectionSectors selectionSectors(IndexConstituentRepository constituents) {
+        return new SelectionSectors(constituents);
+    }
+
+    @Bean
+    public SelectionDataLoader selectionDataLoader(SelectionTargets targets, SelectionSectors sectors, SelectionInputRepository inputs,
+                                                   SelectionSecurityRepository securities, DailyBarRepository dailyBars,
+                                                   RehabFactorRepository rehabs, TradingDayRepository days) {
+        return new SelectionDataLoader(targets, sectors, inputs, securities, dailyBars, rehabs, days);
+    }
+
+    @Bean
+    public SelectionScoringService selectionScoringService(SelectionDataLoader loader, SelectionScoreRepository scores,
+                                                           TradingDayRepository days, SettledCutoff cutoff, ObjectMapper json) {
+        return new SelectionScoringService(loader, scores, days, cutoff::current, json);
+    }
+
+    @Bean
+    public SelectionDailyService selectionDailyService(SelectionTargets targets, SelectionValuationRepository valuations,
+                                                       SelectionEarningsRepository earnings, FinancialRepository financials,
+                                                       SelectionDataGateway fundamentals, SelectionScoringService scoring,
+                                                       SelectionBackfillService backfill) {
+        return new SelectionDailyService(targets, valuations, earnings, financials, fundamentals, scoring, backfill);
+    }
+
+    @Bean
+    public SelectionAuditService selectionAuditService(SelectionTargets targets, SelectionScoreRepository scores,
+                                                       SelectionValuationRepository valuations, SelectionPriceSeamRepository seams,
+                                                       SettledCutoff cutoff) {
+        return new SelectionAuditService(targets, scores, valuations, seams, cutoff::current, Clock.systemUTC());
+    }
+
+    @Bean
+    @ConditionalOnExpression("${trader.marketdata.schedule-enabled:false} and ${trader.selection.enabled:true}")
+    public SelectionScheduler selectionScheduler(SelectionFacade facade, SelectionScoreRepository scores, TradingDayRepository days,
+                                                 JobRunRepository jobRuns, MarketDataProperties marketData) {
+        return new SelectionScheduler(facade, scores, days, jobRuns, Clock.systemUTC(), ZoneId.of(marketData.zone()));
     }
 
     @Bean
@@ -63,7 +112,9 @@ public class SelectionConfiguration {
 
     @Bean
     public SelectionFacade selectionFacade(JobService jobs, SelectionTargets targets, SelectionBackfillService backfill,
-                                           SelectionInputsService inputs, SelectionPriceSeamRepository seams) {
-        return new SelectionFacade(jobs, targets, backfill, inputs, seams);
+                                           SelectionInputsService inputs, SelectionPriceSeamRepository seams,
+                                           SelectionScoringService scoring, SelectionDailyService daily, SelectionAuditService audit,
+                                           SelectionScoreRepository scores) {
+        return new SelectionFacade(jobs, targets, backfill, inputs, seams, scoring, daily, audit, scores);
     }
 }

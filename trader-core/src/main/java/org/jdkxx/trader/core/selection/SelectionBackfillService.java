@@ -26,6 +26,7 @@ import org.jdkxx.trader.storage.selection.SelectionBackfillStateRepository;
 import org.jdkxx.trader.storage.selection.SelectionEarningsRepository;
 import org.jdkxx.trader.storage.selection.SelectionPriceBarRepository;
 import org.jdkxx.trader.storage.selection.SelectionPriceSeamRepository;
+import org.jdkxx.trader.storage.selection.SelectionSecurityRepository;
 import org.jdkxx.trader.storage.selection.SelectionValuationRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -79,6 +80,7 @@ public class SelectionBackfillService {
     private final SelectionPriceSeamRepository seams;
     private final SelectionValuationRepository valuations;
     private final SelectionEarningsRepository earnings;
+    private final SelectionSecurityRepository securities;
     private final Clock clock;
     private final ZoneId zone;
 
@@ -87,7 +89,8 @@ public class SelectionBackfillService {
                                     InstrumentRepository instruments, DailyBarRepository dailyBars, RehabFactorRepository rehabs,
                                     FinancialRepository financials, SelectionPriceBarRepository priceBars,
                                     SelectionPriceSeamRepository seams, SelectionValuationRepository valuations,
-                                    SelectionEarningsRepository earnings, Clock clock, ZoneId zone) {
+                                    SelectionEarningsRepository earnings, SelectionSecurityRepository securities, Clock clock,
+                                    ZoneId zone) {
         this.props = props;
         this.targets = targets;
         this.states = states;
@@ -102,6 +105,7 @@ public class SelectionBackfillService {
         this.seams = seams;
         this.valuations = valuations;
         this.earnings = earnings;
+        this.securities = securities;
         this.clock = clock;
         this.zone = zone;
     }
@@ -145,6 +149,7 @@ public class SelectionBackfillService {
                     case VALUATION -> valuation(row);
                     case EARNINGS -> earnings(row);
                     case FINANCIALS -> financials(row);
+                    case TYPES -> types(row);
                 };
             } catch (Exception e) {
                 Throwable c = unwrap(e);
@@ -269,6 +274,29 @@ public class SelectionBackfillService {
             spans.put(m, points.isEmpty() ? "无" : points.size() + " 天 " + points.getFirst().tradeDate() + "~" + points.getLast().tradeDate());
         }
         return total == 0 ? Outcome.empty("三种估值都回空：" + spans) : Outcome.ok(spans.toString());
+    }
+
+    // ------------------------------------------------------------------ 证券类型（盈透）
+
+    /**
+     * 盈透合约明细的 stockType（2026-10-12 实测 494 只：COMMON 485、ADR 3、REIT 3、NY REG SHRS 1）。
+     * 只认美元计价的唯一候选；多个候选不猜。券商没给类型时照样落一行（类型为空），打分时按「判不出来」排除。
+     */
+    Outcome types(InstrumentRow row) throws Exception {
+        List<InstrumentInfo> found = contracts.lookup(row.instrument()).get(60, TimeUnit.SECONDS);
+        List<InstrumentInfo> usd = found.stream().filter(i -> i.currency() == null || "USD".equals(i.currency())).toList();
+        if (usd.isEmpty()) {
+            throw new IllegalStateException("盈透查无此标的（" + row.symbol() + "）");
+        }
+        if (usd.size() > 1) {
+            throw new IllegalStateException("盈透有 " + usd.size() + " 个候选，不猜：" + usd.stream()
+                    .map(i -> i.brokerRef() + "/" + i.securityType() + "/" + i.name()).toList());
+        }
+        InstrumentInfo info = usd.getFirst();
+        Long conId = info.brokerRef() == null ? null : Long.valueOf(info.brokerRef());
+        securities.save(row.id(), info.securityType(), conId);
+        return info.securityType() == null ? Outcome.empty("盈透没给证券类型（conId " + conId + "）")
+                : Outcome.ok(info.securityType() + "（conId " + conId + "）");
     }
 
     // ------------------------------------------------------------------ 公告日（富途）

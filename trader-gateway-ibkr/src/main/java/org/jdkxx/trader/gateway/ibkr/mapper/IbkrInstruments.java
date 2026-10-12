@@ -27,7 +27,8 @@ public final class IbkrInstruments {
                 cd.minTick() > 0 ? BigDecimal.valueOf(cd.minTick()).stripTrailingZeros() : null,
                 zone(cd.timeZoneId()),
                 cd.tradingHours(),
-                cd.liquidHours());
+                cd.liquidHours(),
+                cd.stockType() == null || cd.stockType().isBlank() ? null : cd.stockType());
     }
 
     static ZoneId zone(String id) {

@@ -1,0 +1,116 @@
+package org.jdkxx.trader.core.selection;
+
+import org.jdkxx.trader.core.marketdata.jobs.JobContext;
+import org.jdkxx.trader.domain.FinancialReport;
+import org.jdkxx.trader.domain.FinancialStatement;
+import org.jdkxx.trader.domain.selection.ValuationMetric;
+import org.jdkxx.trader.domain.selection.ValuationPoint;
+import org.jdkxx.trader.domain.selection.ValuationRange;
+import org.jdkxx.trader.gateway.NotConnectedException;
+import org.jdkxx.trader.gateway.SelectionDataGateway;
+import org.jdkxx.trader.storage.marketdata.FinancialRepository;
+import org.jdkxx.trader.storage.marketdata.InstrumentRow;
+import org.jdkxx.trader.storage.selection.SelectionEarningsRepository;
+import org.jdkxx.trader.storage.selection.SelectionValuationRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * 量化选股的每日与每周维护（§25.7）。
+ * <ul>
+ *   <li>每日：估值快照续上估值序列 → 近几天发了财报的标的补取最近 4 季季报与近 3 个月估值 → 打分；</li>
+ *   <li>每周：全部标的刷新公告日（拿到下一季预定日），补取还没有证券类型的标的。</li>
+ * </ul>
+ * 补取失败只记部分失败、照样打分（用的是库里已有的数据，审计会显示新鲜度）。
+ */
+public class SelectionDailyService {
+
+    private static final Logger log = LoggerFactory.getLogger(SelectionDailyService.class);
+    /** 公告后几天内补取：覆盖周末与偶发失败 */
+    static final int REFRESH_LOOKBACK_DAYS = 6;
+    static final int REFRESH_PERIODS = 4;
+    private static final List<FinancialStatement> STATEMENTS = List.of(FinancialStatement.INCOME,
+            FinancialStatement.BALANCE_SHEET, FinancialStatement.CASH_FLOW);
+
+    private final SelectionTargets targets;
+    private final SelectionValuationRepository valuations;
+    private final SelectionEarningsRepository earnings;
+    private final FinancialRepository financials;
+    private final SelectionDataGateway fundamentals;
+    private final SelectionScoringService scoring;
+    private final SelectionBackfillService backfill;
+
+    public SelectionDailyService(SelectionTargets targets, SelectionValuationRepository valuations, SelectionEarningsRepository earnings,
+                                 FinancialRepository financials, SelectionDataGateway fundamentals, SelectionScoringService scoring,
+                                 SelectionBackfillService backfill) {
+        this.targets = targets;
+        this.valuations = valuations;
+        this.earnings = earnings;
+        this.financials = financials;
+        this.fundamentals = fundamentals;
+        this.scoring = scoring;
+        this.backfill = backfill;
+    }
+
+    public String daily(LocalDate date, JobContext ctx) {
+        List<InstrumentRow> all = targets.all();
+        ctx.progress("估值快照续接");
+        int appended = valuations.appendFromSnapshot(date, all.stream().map(InstrumentRow::id).toList());
+
+        Set<Long> recent = earnings.instrumentsWithPubBetween(date.minusDays(REFRESH_LOOKBACK_DAYS), date);
+        List<InstrumentRow> refresh = all.stream().filter(r -> recent.contains(r.id())).toList();
+        int ok = 0;
+        int failed = 0;
+        for (int i = 0; i < refresh.size(); i++) {
+            InstrumentRow r = refresh.get(i);
+            ctx.progress("补取新公告 " + (i + 1) + "/" + refresh.size() + " " + r.symbol());
+            try {
+                for (FinancialStatement st : STATEMENTS) {
+                    List<FinancialReport> reports = fundamentals.quarterlyFinancials(r.instrument(), st, REFRESH_PERIODS)
+                            .get(90, TimeUnit.SECONDS);
+                    financials.upsertAll(r.id(), reports);
+                }
+                for (ValuationMetric m : ValuationMetric.values()) {
+                    List<ValuationPoint> points = fundamentals.valuationHistory(r.instrument(), m, ValuationRange.MONTH3)
+                            .get(90, TimeUnit.SECONDS);
+                    valuations.upsertHistory(r.id(), m, points);
+                }
+                ok++;
+            } catch (Exception e) {
+                Throwable c = unwrap(e);
+                failed++;
+                log.warn("量化选股补取新公告 {} 失败：{}", r.symbol(), c.toString());
+                if (c instanceof NotConnectedException) {
+                    ctx.partial("网关未连接，新公告补取停在 " + r.symbol());
+                    break;
+                }
+            }
+        }
+        if (failed > 0) {
+            ctx.partial("新公告补取失败 " + failed + " 只");
+        }
+        String scored = scoring.scoreDay(date, ctx);
+        return "估值续接 " + appended + " 只；新公告补取 " + ok + "/" + refresh.size() + "；" + scored;
+    }
+
+    public String weekly(JobContext ctx) {
+        String e = backfill.run(BackfillPart.EARNINGS, List.of(), true, ctx);
+        String t = backfill.run(BackfillPart.TYPES, List.of(), false, ctx);
+        return e + "；" + t;
+    }
+
+    private static Throwable unwrap(Throwable t) {
+        Throwable c = t;
+        while ((c instanceof ExecutionException || c instanceof CompletionException) && c.getCause() != null) {
+            c = c.getCause();
+        }
+        return c;
+    }
+}

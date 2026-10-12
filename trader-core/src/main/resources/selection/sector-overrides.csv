@@ -1,0 +1,16 @@
+# 量化选股板块覆盖表（ARCHITECTURE §25.3 第 2 条）：没有 GICS 板块（纳指独有、只有 ICB 分类）且不是 ADR 的标的在这里给 GICS 板块。
+# 来源：由纳指成分的 ICB 行业人工对应到 GICS 板块（2026-10-12）；标「待核对」的是对应关系拿不准的，等用户确认。
+# ADR / NY REG SHRS（ARM、ASML、PDD、TSM）不纳入，不需要板块。
+symbol,sector,note
+ALAB,Information Technology,ICB Technology/Semiconductors
+ALNY,Health Care,ICB Health Care/Biotechnology
+CCEP,Consumer Staples,ICB Consumer Staples/Soft Drinks
+CRWV,Information Technology,ICB Technology/Computer Services（待核对）
+FER,Industrials,ICB Industrials/Military Government Technical
+MELI,Consumer Discretionary,ICB Consumer Discretionary/Specialty Distribution
+MSTR,Information Technology,ICB Technology/Software
+NBIS,Information Technology,ICB Technology/Computer Services（待核对）
+RKLB,Industrials,ICB Industrials/Aerospace
+SHOP,Information Technology,ICB Technology/Software
+SPCX,Communication Services,ICB Telecommunications/Telecommunications Services（待核对）
+TRI,Industrials,ICB Technology/Software；GICS 归 Industrials（Professional Services）

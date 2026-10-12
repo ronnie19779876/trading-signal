@@ -123,8 +123,12 @@ trader:
     evaluation-cron: "0 10 18 * * MON-FRI"   # 美东 18:10：排在增量、估值、账户快照（含持仓同步 HOLDING）之后
     catchup-cron: "0 0 22 * * MON-FRI"       # 与 21:00 行情补偿错开：当天缺评估或有过期跳过但现已补齐的就重跑
   # 量化选股（第 6 期，ARCHITECTURE §25）：独立功能，与入场信号互不相干。评分参数跟着模型版本写死在代码里，这里只有输入回补范围。
-  # 6.1 只有手工回补（POST /api/selection/backfill），没有定时作业
+  # 定时任务只在 schedule-enabled 的实例装配；三个 cron 必须写在这里（ScheduledPlaceholdersTest）
   selection:
+    enabled: true
+    daily-cron: "0 30 18 * * MON-FRI"     # 美东 18:30：排在估值快照 17:40、信号评估 18:10 之后
+    catchup-cron: "0 30 22 * * MON-FRI"   # 当天没有评分就补跑（与 22:00 信号补偿错开）
+    weekly-cron: "0 0 9 * * SAT"          # 周六 09:00：刷新公告日、补取证券类型（排在 07:00 财报作业之后）
     price-from: 2016-01-01        # 盈透日线从哪天起补（12 个月动能从 2018 回测要 2017 起）
     seam-months: 4                # 取到富途日 K 起点之后几个月，保证有重叠段可核对
     financial-periods: 50         # 季报期数（富途单次上限 50，实测约回到 2014）

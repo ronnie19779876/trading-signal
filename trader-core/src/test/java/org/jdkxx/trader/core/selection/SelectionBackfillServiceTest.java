@@ -53,7 +53,8 @@ import static org.mockito.Mockito.when;
 
 class SelectionBackfillServiceTest {
 
-    private static final SelectionProperties PROPS = new SelectionProperties(LocalDate.of(2016, 1, 1), 4, 50,
+    private static final SelectionProperties PROPS = new SelectionProperties(true, "0 30 18 * * MON-FRI", "0 30 22 * * MON-FRI",
+            "0 0 9 * * SAT", LocalDate.of(2016, 1, 1), 4, 50,
             ValuationRange.YEAR10, 3, 0.001, 0.95);
 
     private final SelectionTargets targets = mock(SelectionTargets.class);
@@ -69,6 +70,8 @@ class SelectionBackfillServiceTest {
     private final SelectionPriceSeamRepository seams = mock(SelectionPriceSeamRepository.class);
     private final SelectionValuationRepository valuations = mock(SelectionValuationRepository.class);
     private final SelectionEarningsRepository earnings = mock(SelectionEarningsRepository.class);
+    private final org.jdkxx.trader.storage.selection.SelectionSecurityRepository securities =
+            mock(org.jdkxx.trader.storage.selection.SelectionSecurityRepository.class);
 
     private final List<String> partials = new ArrayList<>();
     private final JobContext ctx = new JobContext() {
@@ -93,7 +96,7 @@ class SelectionBackfillServiceTest {
     };
 
     private final SelectionBackfillService service = new SelectionBackfillService(PROPS, targets, states, prices, contracts,
-            fundamentals, instruments, dailyBars, rehabs, financials, priceBars, seams, valuations, earnings,
+            fundamentals, instruments, dailyBars, rehabs, financials, priceBars, seams, valuations, earnings, securities,
             Clock.fixed(Instant.parse("2026-10-10T16:00:00Z"), ZoneOffset.UTC), ZoneId.of("America/New_York"));
 
     private static InstrumentRow row(long id, String symbol) {
@@ -106,7 +109,7 @@ class SelectionBackfillServiceTest {
     }
 
     private static InstrumentInfo info(String conId, String currency) {
-        return new InstrumentInfo(Instrument.us("X"), Broker.IBKR, conId, "X CORP", "NYSE", currency, null, null, null, null);
+        return new InstrumentInfo(Instrument.us("X"), Broker.IBKR, conId, "X CORP", "NYSE", currency, null, null, null, null, "COMMON");
     }
 
     /** 回归：没取过的标的状态为 null，Set.of(...).contains(null) 会抛 NPE——整批作业在第一只就崩。 */

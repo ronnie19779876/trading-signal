@@ -69,6 +69,7 @@ audit "日线数据审计" "$BASE/api/bars/audit$SUFFIX"
 audit "基本面审计"   "$BASE/api/fundamentals/audit$SUFFIX"
 audit "账户审计"     "$BASE/api/account/audit$SUFFIX"
 audit "信号审计"     "$BASE/api/signals/audit$SUFFIX"
+audit "量化选股审计" "$BASE/api/selection/audit$SUFFIX"
 
 # 健康：作业跑批与网关。DEGRADED 也算问题——作业失败或被跳过就落在这里。
 # 降级时 actuator 返回 503，正文仍是完整 JSON，所以 503 照常解析。

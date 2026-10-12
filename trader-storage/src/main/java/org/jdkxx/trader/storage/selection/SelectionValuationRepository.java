@@ -53,6 +53,40 @@ public class SelectionValuationRepository {
         return args.size();
     }
 
+    /**
+     * 用当天估值快照续上估值序列（每日作业，§25.6）：PE、PB 直接取快照（与历史序列同口径），
+     * PS 快照没有，按上一行 PS × 当天 PE ÷ 上一行 PE 顺延——两次财报之间 PE 与 PS 的分母都不变，比值就是股价比值，且不受拆股影响；
+     * PE 变号或为零时改用 PB 的比值，都不行就留空。已有历史序列（HIST）的那天不覆盖。返回写入行数。
+     */
+    public int appendFromSnapshot(LocalDate date, java.util.Collection<Long> instrumentIds) {
+        if (instrumentIds.isEmpty()) {
+            return 0;
+        }
+        return jdbc.update("""
+                INSERT INTO selection_valuation (instrument_id, trade_date, pe_ttm, pb, ps, source)
+                SELECT s.instrument_id, s.trade_date, s.pe_ttm, s.pb,
+                       CASE WHEN p.ps IS NULL THEN NULL
+                            WHEN p.pe_ttm IS NOT NULL AND p.pe_ttm <> 0 AND s.pe_ttm IS NOT NULL AND sign(s.pe_ttm) = sign(p.pe_ttm)
+                                THEN round(p.ps * s.pe_ttm / p.pe_ttm, 4)
+                            WHEN p.pb IS NOT NULL AND p.pb <> 0 AND s.pb IS NOT NULL AND sign(s.pb) = sign(p.pb)
+                                THEN round(p.ps * s.pb / p.pb, 4)
+                       END,
+                       'SNAPSHOT'
+                FROM valuation_snapshot s
+                LEFT JOIN LATERAL (SELECT v.pe_ttm, v.pb, v.ps FROM selection_valuation v
+                                   WHERE v.instrument_id = s.instrument_id AND v.trade_date < s.trade_date
+                                   ORDER BY v.trade_date DESC LIMIT 1) p ON true
+                WHERE s.trade_date = ? AND s.instrument_id = ANY (?)
+                ON CONFLICT (instrument_id, trade_date) DO NOTHING""",
+                Date.valueOf(date), (Object) instrumentIds.toArray(Long[]::new));
+    }
+
+    /** 某天有估值的标的数（审计用）。 */
+    public long countOn(LocalDate date) {
+        Long n = jdbc.queryForObject("SELECT count(*) FROM selection_valuation WHERE trade_date = ?", Long.class, Date.valueOf(date));
+        return n == null ? 0 : n;
+    }
+
     public Coverage coverage() {
         return jdbc.queryForObject("""
                 SELECT count(*) AS n, count(DISTINCT instrument_id) AS k, min(trade_date) AS lo, max(trade_date) AS hi,

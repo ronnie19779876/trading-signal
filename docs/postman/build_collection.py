@@ -298,6 +298,27 @@ ENDPOINTS = [
     {
         "folder": "量化选股（第 6 期）",
         "items": [
+            {"name": "某天评分全表", "method": "GET", "path": "/api/selection/scores",
+             "query": [{"key": "rating", "value": "strong_buy"}],
+             "desc": "默认最近一个评分日；按合成分从高到低。rating / sector 可筛；评级强制分布 10/20/40/20/10。",
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));',
+                                        'pm.test("评级合法", () => body.forEach(r => { if (r.rating !== null) pm.expect(r.rating).to.be.oneOf(["STRONG_BUY","BUY","HOLD","SELL","STRONG_SELL"]); }));']},
+            {"name": "单只评分历史", "method": "GET", "path": "/api/selection/scores/{{symbol}}",
+             "desc": "默认最近一年；sbStreak 是截至当天连续 STRONG_BUY 的交易日数。",
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
+            {"name": "量化选股审计（收盘后必查）", "method": "GET", "path": "/api/selection/audit",
+             "desc": "关键项：当天有评分、可评级 ≥ 80%、当天有估值 ≥ 90%；附已知偏差。ok=true 才算过。",
+             "tests": T_200 + T_JSON + ['pm.test("有 checks", () => pm.expect(body.checks).to.be.an("array").that.is.not.empty);']},
+            {"name": "重算某一天（异步）", "method": "POST", "path": "/api/selection/score", "query": [{"key": "date", "value": "2026-09-02"}],
+             "desc": "只打分，覆盖当天已有结果。⚠ 会写库。",
+             "tests": T_200 + T_JSON + ['pm.test("返回 jobId", () => pm.expect(body.jobId).to.be.a("number"));']},
+            {"name": "历史重放（异步）", "method": "POST", "path": "/api/selection/replay",
+             "query": [{"key": "from", "value": "2026-08-01"}, {"key": "to", "value": "2026-08-31"}],
+             "desc": "逐个交易日打分落库，sbStreak 顺序接续。2018 起全量约 2200 个交易日。⚠ 会写库。",
+             "tests": T_200 + T_JSON + ['pm.test("返回 jobId", () => pm.expect(body.jobId).to.be.a("number"));']},
+            {"name": "每日作业（异步）", "method": "POST", "path": "/api/selection/daily", "query": [{"key": "date", "value": "2026-09-02"}],
+             "desc": "估值快照续接 → 新公告补取 → 打分。手工补跑用。⚠ 会写库、会占券商请求。",
+             "tests": T_200 + T_JSON + ['pm.test("返回 jobId", () => pm.expect(body.jobId).to.be.a("number"));']},
             {"name": "输入覆盖报告（6.1 验收）", "method": "GET", "path": "/api/selection/inputs",
              "desc": "四个部分的回补状态与没取过的只数、失败与空回明细、盈透日线覆盖、接缝通过数、估值历史 vs 快照同日核对、"
                      "公告日与季报的匹配、季报深度。只读。",
@@ -308,7 +329,7 @@ ENDPOINTS = [
              "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},
             {"name": "输入回补（异步）", "method": "POST", "path": "/api/selection/backfill",
              "query": [{"key": "part", "value": "earnings"}, {"key": "symbols", "value": "{{symbol}}"}, {"key": "force", "value": "false"}],
-             "desc": "part 取 prices / valuation / earnings / financials；symbols 缺省为全部范围（全量很慢：盈透约 100 分钟、富途三项合计约 3 小时）。"
+             "desc": "part 取 types / prices / valuation / earnings / financials；symbols 缺省为全部范围（全量很慢：盈透约 100 分钟、富途三项合计约 3 小时）。"
                      "续跑跳过已完成的，force=true 重取。⚠ 会写库、会占券商请求。",
              "tests": T_200 + T_JSON + ['pm.test("返回 jobId", () => pm.expect(body.jobId).to.be.a("number"));']},
             {"name": "范围外的代码 → 400", "method": "POST", "path": "/api/selection/backfill",

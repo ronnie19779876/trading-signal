@@ -9,5 +9,7 @@ public enum BackfillPart {
     /** 富途财报公告日 */
     EARNINGS,
     /** 富途季报（利润表、资产负债表、现金流量表） */
-    FINANCIALS
+    FINANCIALS,
+    /** 盈透证券类型（stockType：COMMON / ADR / REIT / NY REG SHRS），排除 ADR 与 REITs 用 */
+    TYPES
 }

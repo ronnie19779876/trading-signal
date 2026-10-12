@@ -8,7 +8,13 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 import java.time.LocalDate;
 
 /**
- * 量化选股（{@code trader.selection.*}，ARCHITECTURE §25）。评分参数跟着模型版本写死在代码里，这里只有输入回补的取数范围。
+ * 量化选股（{@code trader.selection.*}，ARCHITECTURE §25）。评分参数跟着模型版本写死在代码里，这里只有开关、时点与输入回补的取数范围。
+ * 三个 cron 必须同时写进 jar 内 application.yml（占位符解析不看这里的默认值，见 ScheduledPlaceholdersTest）。
+ *
+ * @param enabled          关掉后不装配定时任务（手工接口照常可用）
+ * @param dailyCron        每日评分：排在估值快照 17:40、信号评估 18:10 之后
+ * @param catchupCron      当天没有评分就补跑
+ * @param weeklyCron       每周刷新公告日与证券类型
  *
  * @param priceFrom        盈透日线从哪天起补（12 个月动能从 2018 回测要 2017 起，留一年余量）
  * @param seamMonths       盈透日线取到富途日 K 起点之后几个月，保证有重叠段可核对
@@ -20,6 +26,10 @@ import java.time.LocalDate;
  */
 @ConfigurationProperties(prefix = "trader.selection")
 public record SelectionProperties(
+        @DefaultValue("true") boolean enabled,
+        @DefaultValue("0 30 18 * * MON-FRI") String dailyCron,
+        @DefaultValue("0 30 22 * * MON-FRI") String catchupCron,
+        @DefaultValue("0 0 9 * * SAT") String weeklyCron,
         @DefaultValue("2016-01-01") LocalDate priceFrom,
         @DefaultValue("4") int seamMonths,
         @DefaultValue("50") int financialPeriods,

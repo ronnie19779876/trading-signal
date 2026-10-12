@@ -56,6 +56,13 @@ public class SelectionEarningsRepository {
         return args.size();
     }
 
+    /** 公告交易日落在 [from, to] 的标的（每日作业据此补取刚发的季报与估值）。 */
+    public java.util.Set<Long> instrumentsWithPubBetween(LocalDate from, LocalDate to) {
+        return new java.util.HashSet<>(jdbc.queryForList(
+                "SELECT DISTINCT instrument_id FROM selection_earnings_event WHERE pub_date BETWEEN ? AND ?",
+                Long.class, Date.valueOf(from), Date.valueOf(to)));
+    }
+
     public Matching matching(LocalDate from, int sampleLimit) {
         String base = """
                 FROM financial_report r

@@ -1,16 +1,21 @@
 package org.jdkxx.trader.app.web;
 
+import org.jdkxx.trader.core.marketdata.audit.BarAuditService;
 import org.jdkxx.trader.core.selection.BackfillPart;
 import org.jdkxx.trader.core.selection.SelectionFacade;
 import org.jdkxx.trader.core.selection.SelectionInputsService;
 import org.jdkxx.trader.storage.selection.SelectionPriceSeamRepository;
+import org.jdkxx.trader.storage.selection.SelectionScoreRepository;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -55,11 +60,57 @@ public class SelectionController {
         return facade.seams(failedOnly);
     }
 
+    /** 某天全表，按合成分从高到低；date 缺省取最近一个评分日。rating 取 strong_buy / buy / hold / sell / strong_sell。 */
+    @GetMapping("/scores")
+    public List<SelectionScoreRepository.ScoreView> scores(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(required = false) String sector, @RequestParam(required = false) String rating) {
+        return facade.day(date, sector, rating);
+    }
+
+    /** 单只历史；默认最近一年。 */
+    @GetMapping("/scores/{symbol}")
+    public List<SelectionScoreRepository.ScoreView> history(@PathVariable String symbol,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        LocalDate end = to == null ? LocalDate.now() : to;
+        LocalDate start = from == null ? end.minusYears(1) : from;
+        if (start.isAfter(end)) {
+            throw new IllegalArgumentException("from 不能晚于 to");
+        }
+        return facade.history(symbol, start, end);
+    }
+
+    /** 量化选股审计：默认审最近一个已收盘落定的交易日。 */
+    @GetMapping("/audit")
+    public BarAuditService.Report audit(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return facade.audit(date);
+    }
+
+    /** 重算某一天（异步，只打分）。 */
+    @PostMapping("/score")
+    public Map<String, Object> score(@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return Map.of("jobId", facade.score("MANUAL", date));
+    }
+
+    /** 历史重放（异步）：逐个交易日打分并落库，sb_streak 按日期顺序接续。 */
+    @PostMapping("/replay")
+    public Map<String, Object> replay(@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+                                      @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return Map.of("jobId", facade.replay("MANUAL", from, to));
+    }
+
+    /** 每日作业（异步）：估值续接 → 新公告补取 → 打分。手工补跑用。 */
+    @PostMapping("/daily")
+    public Map<String, Object> daily(@RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return Map.of("jobId", facade.daily("MANUAL", date));
+    }
+
     private static BackfillPart part(String raw) {
         try {
             return BackfillPart.valueOf(raw.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("part 应为 prices / valuation / earnings / financials，收到：" + raw);
+            throw new IllegalArgumentException("part 应为 prices / valuation / earnings / financials / types，收到：" + raw);
         }
     }
 }
