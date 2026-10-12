@@ -228,4 +228,30 @@ class SelectionSimServiceTest {
         assertThat(second.cancelReason()).contains("可用现金");
         verify(sim).event(eq(2L), eq("CANCELLED"), any());
     }
+
+    /** 判据取逐日权益表里最近一个收盘（不是概况的盯市估值）；SPY 取不到时「跑赢 SPY」为 null，未满 12 个月结论是观察中。 */
+    @Test
+    void 判据按逐日权益表最近一个收盘算() {
+        LocalDate start = D.plusDays(1);
+        when(sim.equity(start, D.plusDays(30))).thenReturn(List.of(
+                new SelectionSimRepository.EquityRow(start, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.valueOf(500_000), 1),
+                new SelectionSimRepository.EquityRow(D.plusDays(29), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.valueOf(510_000), 1)));
+        when(instruments.find(any())).thenReturn(Optional.empty());
+        when(sim.list(null)).thenReturn(List.of());
+
+        org.jdkxx.trader.domain.selection.sim.SimCriteria c = service(Instant.EPOCH).criteria(start, 500_000, D.plusDays(30));
+
+        assertThat(c.asOf()).isEqualTo(D.plusDays(29));
+        assertThat(c.days()).isEqualTo(28);
+        assertThat(c.accountReturn()).isCloseTo(0.02, org.assertj.core.api.Assertions.within(1e-12));
+        assertThat(c.annualized()).isCloseTo(Math.pow(1.02, 365.0 / 28) - 1, org.assertj.core.api.Assertions.within(1e-9));
+        assertThat(c.beatSpy()).isNull();
+        assertThat(c.verdict()).isEqualTo(org.jdkxx.trader.domain.selection.sim.SimCriteria.Verdict.OBSERVING);
+    }
+
+    @Test
+    void 还没有入场时判据为未开始() {
+        assertThat(service(Instant.EPOCH).criteria(null, 500_000, D).verdict())
+                .isEqualTo(org.jdkxx.trader.domain.selection.sim.SimCriteria.Verdict.NOT_STARTED);
+    }
 }

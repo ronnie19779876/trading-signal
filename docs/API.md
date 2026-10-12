@@ -256,7 +256,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `GET /api/selection/sim` | 概况：`rules`（规则原文）、`account`、`startDate`（第一笔入场日）、`cash`、`positionsValue`（各笔最近收盘）、`equity`、`realized`、`unrealized`、`totalReturn`、`spySinceStart`、`markedThrough`（持仓估值里最早的收盘日）、各状态笔数、`targetAlerts`（已触及止盈目标、还没请求平仓的笔数）、`candidates`（最新评分日前 10 名：`state` 为 AVAILABLE / ACTIVE / FULL） |
+| `GET /api/selection/sim` | 概况：`rules`（规则原文）、`account`、`startDate`（第一笔入场日）、`cash`、`positionsValue`（各笔最近收盘）、`equity`、`realized`、`unrealized`、`totalReturn`、`spySinceStart`、`markedThrough`（持仓估值里最早的收盘日）、各状态笔数、`targetAlerts`（已触及止盈目标、还没请求平仓的笔数）、`candidates`（最新评分日前 10 名：`state` 为 AVAILABLE / ACTIVE / FULL）；**3.4.1 起**有 `criteria`（「稳定盈利」判据，ARCHITECTURE §26.8，按逐日权益表最近一个收盘算：`start`、`asOf`、`days`、`accountReturn`、`annualized`（天数为 0 时 null）、`spyReturn`、`annualizedMet`（≥ 6%）、`beatSpy`（打平不算，SPY 缺失为 null）、`observationMet`、`observationEnds`、`verdict` = NOT_STARTED / OBSERVING / PASS / FAIL / UNDETERMINED） |
 | `GET /api/selection/sim/preview?symbol=` | 加入前预览（不写库）：`setup`（评分日收盘、ATR、公式止损、实际止损与来源 `leg` = ATR / ZONE / CAP、压力区底）、`plannedEntryDate`、按评分日收盘估的股数与名义。不在前 10 名 400，已在池或池满 409，评分日判定不了（K 线不足、缺口、口径换算失败）409 |
 | `POST /api/selection/sim/trades?symbol=` | 加入（状态 PENDING_ENTRY），校验同 preview。返回这一笔 |
 | `POST /api/selection/sim/trades/{id}/close?note=` | 持有中的：记平仓请求，点击之后的第一个开盘价成交，`closeKind` = TAKE_PROFIT（触及过止盈目标）或 MANUAL；入场开盘之前的：直接撤销（CANCELLED）；已过入场开盘、作业还没记成持有的：记平仓请求。重复请求、已平仓或已取消 409 |
@@ -265,7 +265,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | `GET /api/selection/sim/events?limit=` | 留痕（ADDED / FILLED / CANCELLED / TARGET_HIT / CLOSE_REQUESTED / CLOSED / WEEKLY_REPORT / WEEKLY_REGENERATED），新的在前 |
 | `GET /api/selection/sim/equity?from=&to=` | 逐日权益（收盘后的现金、持仓市值、权益、持仓笔数），默认最近一年 |
 | `GET /api/selection/sim/weekly?limit=` | 周报列表，新的在前，不带正文（`report` 为 null） |
-| `GET /api/selection/sim/weekly/{weekEnd}` | 某周周报（`weekEnd` = 该周最后一个交易日），`report` 是 JSON 对象：周初 / 周末权益、本周盈亏与收益、累计收益、本周已实现与周末浮动、SPY 本周与自开始以来、范围等权本周（`universeCount` 只数）、最大回撤、本周平仓逐笔（含影子）、累计已平仓汇总（`n`、胜负、平均收益、平均超额、手动平仓 − 影子的配对差与配对数）、周末持仓（**按周末那天的收盘估值**）、`generatedThrough`、固定说明。没有 404 |
+| `GET /api/selection/sim/weekly/{weekEnd}` | 某周周报（`weekEnd` = 该周最后一个交易日），`report` 是 JSON 对象：周初 / 周末权益、本周盈亏与收益、累计收益、本周已实现与周末浮动、SPY 本周与自开始以来、范围等权本周（`universeCount` 只数）、最大回撤、本周平仓逐笔（含影子）、累计已平仓汇总（`n`、胜负、平均收益、平均超额、手动平仓 − 影子的配对差与配对数）、周末持仓（**按周末那天的收盘估值**）、`generatedThrough`、固定说明；**3.4.1 起**带 `criteria`（截至周末，字段同概况；之前生成的周报没有）。没有 404 |
 | `POST /api/selection/sim/weekly?weekEnd=&force=` | 生成周报（异步 `SELECTION_SIM_WEEKLY`）：先重算到最近收盘落定日；缺省为最近一个已收盘落定的交易日所在周，那周还没结束 400；已有的不覆盖，`force=true` 覆盖并留痕。定时任务周六美东 10:00 |
 | `POST /api/selection/sim/update?through=` | 重算（异步 `SELECTION_SIM`）：未完结的逐笔（含影子还没平仓的）从加入时的价位整段重算到 `through`（缺省 = 最近一个已收盘落定的交易日），**只往前走**；待成交的轮到入场日按等权定股数（同一天按请求先后分现金，买不起 1 股的取消并说明）；再补逐日权益。每日作业（18:30）打分之后也会跑一次，22:30 补偿检查发现没算到当天会补跑 |
 

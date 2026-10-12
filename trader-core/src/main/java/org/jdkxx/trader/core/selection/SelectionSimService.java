@@ -7,6 +7,7 @@ import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.RehabFactor;
 import org.jdkxx.trader.domain.selection.SelectionModel;
+import org.jdkxx.trader.domain.selection.sim.SimCriteria;
 import org.jdkxx.trader.domain.selection.sim.SimLedger;
 import org.jdkxx.trader.domain.selection.sim.SimPath;
 import org.jdkxx.trader.domain.selection.sim.SimRules;
@@ -509,7 +510,7 @@ public class SelectionSimService {
     public record Overview(Map<String, Object> rules, SelectionSimRepository.Account account, LocalDate startDate, double cash,
                            double positionsValue, double equity, double realized, double unrealized, Double totalReturn,
                            Double spySinceStart, LocalDate markedThrough, int open, int pending, int closed, int cancelled,
-                           int targetAlerts, Candidates candidates) {
+                           int targetAlerts, Candidates candidates, SimCriteria criteria) {
     }
 
     public Overview overview() {
@@ -539,7 +540,24 @@ public class SelectionSimService {
                 round2(unrealized), start == null ? null : equity / c.initial() - 1, spy, marked,
                 count(all, "OPEN"), count(all, "PENDING_ENTRY"), count(all, "CLOSED"), count(all, "CANCELLED"),
                 (int) all.stream().filter(t -> "OPEN".equals(t.status()) && t.targetHitDate() != null && t.closeRequestedAt() == null).count(),
-                candidates());
+                candidates(), criteria(start, c.initial(), settledCutoff.get()));
+    }
+
+    /**
+     * 「稳定盈利」判据（§26.8），按逐日权益表最近一个收盘算：年化、对 SPY（第一笔入场日开盘 → 同一收盘日）、是否满 12 个月。
+     * 还没有权益行（刚入场、作业还没写）时只给天数，结论是观察中。
+     */
+    SimCriteria criteria(LocalDate start, double initial, LocalDate through) {
+        if (start == null) {
+            return SimCriteria.evaluate(null, null, initial, null, null);
+        }
+        List<SelectionSimRepository.EquityRow> rows = sim.equity(start, through);
+        if (rows.isEmpty()) {
+            return SimCriteria.evaluate(start, start, initial, null, null);
+        }
+        SelectionSimRepository.EquityRow last = rows.getLast();
+        Double spy = spy(last.tradeDate()).ret(start, last.tradeDate(), false);
+        return SimCriteria.evaluate(start, last.tradeDate(), initial, last.equity().doubleValue(), spy);
     }
 
     public List<SimTradeRow> trades(String status) {
@@ -569,7 +587,7 @@ public class SelectionSimService {
                                Double weekReturn, Double cumulativeReturn, double realizedWeek, double unrealizedEnd, int openAtEnd,
                                Double spyWeekReturn, Double spySinceStart, Double universeWeekReturn, int universeCount,
                                Double maxDrawdown, List<WeeklyTrade> closedThisWeek, Totals allClosed, List<WeeklyOpen> openPositions,
-                               LocalDate generatedThrough, List<String> caveats) {
+                               LocalDate generatedThrough, List<String> caveats, SimCriteria criteria) {
     }
 
     /**
@@ -693,7 +711,7 @@ public class SelectionSimService {
                 spyWeek, spySince, Double.isNaN(universe[0]) ? null : universe[0], (int) universe[1],
                 SimLedger.maxDrawdown(curve.stream().map(e -> e.equity().doubleValue()).toList()), closedWeek, totals, open,
                 filled.stream().map(SimTradeRow::updatedThrough).filter(java.util.Objects::nonNull).max(LocalDate::compareTo).orElse(end),
-                CAVEATS);
+                CAVEATS, SimCriteria.evaluate(accountStart, end, initial, equityEnd, spySince));
     }
 
     private static WeeklyTrade weeklyTrade(SimTradeRow t) {

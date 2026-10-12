@@ -144,6 +144,25 @@ export interface SimCandidate {
   tradeId: number | null
 }
 
+/** 「稳定盈利」判据（ARCHITECTURE §26.8）：年化 ≥ 6%、跑赢 SPY 同期、观察期满 12 个月，三条同时满足。比例为小数。 */
+export interface SimCriteria {
+  start: string | null
+  asOf: string | null
+  /** 第一笔入场日到期末经过的天数（入场当天为 0） */
+  days: number | null
+  accountReturn: number | null
+  /** 天数为 0 时无法年化，为 null */
+  annualized: number | null
+  spyReturn: number | null
+  annualizedMet: boolean | null
+  /** SPY 同期数据缺失时为 null */
+  beatSpy: boolean | null
+  observationMet: boolean
+  /** 满 12 个月的那一天 */
+  observationEnds: string | null
+  verdict: 'NOT_STARTED' | 'OBSERVING' | 'PASS' | 'FAIL' | 'UNDETERMINED'
+}
+
 export interface SimOverview {
   rules: Record<string, string | number>
   account: { rulesVersion: string; initialCapital: number; createdAt: string }
@@ -162,6 +181,8 @@ export interface SimOverview {
   cancelled: number
   targetAlerts: number
   candidates: { scoreDate: string | null; active: number; slots: number; top: SimCandidate[] }
+  /** 按逐日权益表最近一个收盘算 */
+  criteria: SimCriteria
 }
 
 export interface SimPreview {
@@ -256,6 +277,8 @@ export interface SimWeeklyReport {
   openPositions: SimWeeklyOpen[]
   generatedThrough: string
   caveats: string[]
+  /** 截至周末；3.4.1 之前生成的周报没有这一项 */
+  criteria?: SimCriteria
 }
 
 export interface SimWeekly {

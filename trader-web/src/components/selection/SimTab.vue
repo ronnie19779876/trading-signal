@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { simApi, type SimEvent, type SimOverview, type SimTrade, type SimWeekly } from '../../api/selection'
 import { errMsg, fmtEt, money, pct, signed, signedR, trend } from '../../lib/format'
 import SimEquityChart from './SimEquityChart.vue'
+import SimCriteriaPanel from './SimCriteriaPanel.vue'
 
 /**
  * 模拟交易（ARCHITECTURE §26）：验证选股准不准的纸面账户，不下单。规则版本 sim-v1：等权、止损封顶 10%、
@@ -142,6 +143,9 @@ const collapse = ref<string[]>([])
             <span :class="trend(overview.unrealized)">{{ signed(overview.unrealized) }}</span></b></div>
         <div class="kv"><label>累计收益（自 {{ overview.startDate ?? '—' }}）</label>
           <b class="num" :class="trend(overview.totalReturn)">{{ pct(overview.totalReturn) }}</b></div>
+        <div class="kv"><label>年化收益{{ overview.criteria.days !== null ? `（已运行 ${overview.criteria.days} 天）` : '' }}</label>
+          <b class="num" :class="trend(overview.criteria.annualized)">{{ pct(overview.criteria.annualized) }}</b>
+          <span v-if="overview.criteria.verdict === 'OBSERVING'" class="muted sub">未满 12 个月，仅供参考</span></div>
         <div class="kv"><label>SPY 同期</label><b class="num" :class="trend(overview.spySinceStart)">{{ pct(overview.spySinceStart) }}</b></div>
         <div class="kv"><label>进行中 / 上限</label><b class="num">{{ overview.open + overview.pending }} / {{ overview.candidates.slots }}</b></div>
         <div class="kv"><label>止盈提示</label><b class="num" :class="{ warn: overview.targetAlerts > 0 }">{{ overview.targetAlerts }}</b></div>
@@ -149,6 +153,7 @@ const collapse = ref<string[]>([])
       <p class="muted note">
         持仓按各笔最近一根收盘估值（最早的截至 {{ overview.markedThrough ?? '—' }}）。加入在「评分榜」最新评分日的前 {{ overview.candidates.top.length }} 名上点「模拟」。
       </p>
+      <SimCriteriaPanel :criteria="overview.criteria" />
       <el-collapse v-model="collapse">
         <el-collapse-item name="rules" title="规则（sim-v1，写死在代码里，改规则就换版本）">
           <table class="dtable">
@@ -271,6 +276,7 @@ const collapse = ref<string[]>([])
                     <div class="kv"><label>SPY / 范围等权（{{ r.universeCount }} 只）</label>
                       <b class="num">{{ pct(r.spyWeekReturn) }} / {{ pct(r.universeWeekReturn) }}</b></div>
                     <div class="kv"><label>累计（自 {{ r.accountStart }}）/ SPY 同期</label><b class="num">{{ pct(r.cumulativeReturn) }} / {{ pct(r.spySinceStart) }}</b></div>
+                    <div class="kv"><label>年化（截至周末）</label><b class="num">{{ pct(r.criteria?.annualized) }}</b></div>
                     <div class="kv"><label>最大回撤</label><b class="num">{{ pct(r.maxDrawdown) }}</b></div>
                     <div class="kv"><label>本周已实现 / 周末浮动</label><b class="num">{{ signed(r.realizedWeek) }} / {{ signed(r.unrealizedEnd) }}</b></div>
                     <div class="kv"><label>累计已平仓 胜/负（n）</label><b class="num">{{ r.allClosed.wins }} / {{ r.allClosed.losses }}（{{ r.allClosed.n }}）</b></div>
@@ -301,6 +307,7 @@ const collapse = ref<string[]>([])
                       </tr>
                     </tbody>
                   </table>
+                  <SimCriteriaPanel :criteria="r.criteria" />
                   <ul class="caveats"><li v-for="c in r.caveats" :key="c">{{ c }}</li></ul>
                   <p class="muted note">数据算到 {{ r.generatedThrough }} 时生成。</p>
                 </template>
