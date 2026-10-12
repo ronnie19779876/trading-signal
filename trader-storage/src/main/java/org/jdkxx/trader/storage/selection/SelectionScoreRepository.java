@@ -125,6 +125,12 @@ public class SelectionScoreRepository {
                 group("sector", "rating IS NOT NULL", modelVersion, d));
     }
 
+    /** 最近的评分日，从新到旧（前端日期选择与「上一个评分日」用）。 */
+    public List<LocalDate> days(String modelVersion, int limit) {
+        return jdbc.query("SELECT DISTINCT trade_date FROM selection_score WHERE model_version = ? ORDER BY trade_date DESC LIMIT ?",
+                (rs, n) -> rs.getDate(1).toLocalDate(), modelVersion, limit);
+    }
+
     /** 评分覆盖的日期范围与天数（重放进度用）。 */
     public record Span(LocalDate first, LocalDate last, long days) {
     }

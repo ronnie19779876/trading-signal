@@ -20,6 +20,7 @@ const router = createRouter({
     { path: '/account', name: 'account', component: () => import('../pages/AccountPage.vue'), meta: { title: '账户' } },
     { path: '/fundamentals', name: 'fundamentals', component: () => import('../pages/FundamentalsPage.vue'), meta: { title: '基本面' } },
     { path: '/signals', name: 'signals', component: () => import('../pages/SignalsPage.vue'), meta: { title: '入场信号' } },
+    { path: '/selection', name: 'selection', component: () => import('../pages/SelectionPage.vue'), meta: { title: '量化选股' } },
     { path: '/trades', name: 'trades', component: () => import('../pages/PlaceholderPage.vue'), meta: { title: '交易' } },
     { path: '/system', name: 'system', component: () => import('../pages/SystemInfoPage.vue'), meta: { title: '系统' } },
     // 行情数据底座不在菜单里了，归属待逐页调整时再定；暂时从系统页进入

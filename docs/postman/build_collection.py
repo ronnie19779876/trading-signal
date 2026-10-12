@@ -303,6 +303,10 @@ ENDPOINTS = [
              "desc": "默认最近一个评分日；按合成分从高到低。rating / sector 可筛；评级强制分布 10/20/40/20/10。",
              "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));',
                                         'pm.test("评级合法", () => body.forEach(r => { if (r.rating !== null) pm.expect(r.rating).to.be.oneOf(["STRONG_BUY","BUY","HOLD","SELL","STRONG_SELL"]); }));']},
+            {"name": "最近评分日", "method": "GET", "path": "/api/selection/days", "query": [{"key": "limit", "value": "60"}],
+             "desc": "从新到旧。前端日期选择与「与上一个评分日对比」用。",
+             "tests": T_200 + T_JSON + ['pm.test("是日期数组且从新到旧", () => { pm.expect(body).to.be.an("array"); '
+                                        'pm.expect(body).to.eql(body.slice().sort().reverse()); });']},
             {"name": "单只评分历史", "method": "GET", "path": "/api/selection/scores/{{symbol}}",
              "desc": "默认最近一年；sbStreak 是截至当天连续 STRONG_BUY 的交易日数。",
              "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));']},

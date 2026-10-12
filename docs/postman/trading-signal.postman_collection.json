@@ -2352,6 +2352,54 @@
           "response": []
         },
         {
+          "name": "最近评分日",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/selection/days?limit=60",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "selection",
+                "days"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "60"
+                }
+              ]
+            },
+            "description": "从新到旧。前端日期选择与「与上一个评分日对比」用。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"是日期数组且从新到旧\", () => { pm.expect(body).to.be.an(\"array\"); pm.expect(body).to.eql(body.slice().sort().reverse()); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
           "name": "单只评分历史",
           "request": {
             "method": "GET",

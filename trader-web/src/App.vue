@@ -12,6 +12,7 @@ const links = [
   { to: '/account', label: '账户' },
   { to: '/fundamentals', label: '基本面' },
   { to: '/signals', label: '入场信号' },
+  { to: '/selection', label: '量化选股' },
   { to: '/trades', label: '交易' },
   { to: '/system', label: '系统' },
 ]

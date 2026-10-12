@@ -68,6 +68,12 @@ public class SelectionController {
         return facade.day(date, sector, rating);
     }
 
+    /** 最近的评分日（从新到旧），默认 60 个。 */
+    @GetMapping("/days")
+    public List<LocalDate> days(@RequestParam(defaultValue = "60") int limit) {
+        return facade.days(limit);
+    }
+
     /** 单只历史；默认最近一年。 */
     @GetMapping("/scores/{symbol}")
     public List<SelectionScoreRepository.ScoreView> history(@PathVariable String symbol,

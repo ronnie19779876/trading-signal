@@ -72,6 +72,11 @@ public class SelectionFacade {
         return scores.history(SelectionModel.VERSION, row.id(), from, to);
     }
 
+    /** 最近的评分日，从新到旧；limit 夹在 1~5000。 */
+    public List<LocalDate> days(int limit) {
+        return scores.days(SelectionModel.VERSION, Math.clamp(limit, 1, 5000));
+    }
+
     public BarAuditService.Report audit(LocalDate date) {
         return audit.audit(date);
     }
