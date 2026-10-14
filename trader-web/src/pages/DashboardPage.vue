@@ -7,8 +7,10 @@ import HoldingsPanel, { type HoldingRow } from '../components/dash/HoldingsPanel
 import EvaluationDrawer from '../components/signals/EvaluationDrawer.vue'
 import { useMarketClock } from '../composables/useMarketClock'
 import { useLiveAccount } from '../composables/useLiveAccount'
+import { useRecoveringLoad, type Stages } from '../composables/useRecoveringLoad'
+import RecoveryAlert from '../components/RecoveryAlert.vue'
 import { auditCheckLabel } from '../lib/audit'
-import { daysAgoEt, errMsg, isoEt } from '../lib/format'
+import { daysAgoEt, isoEt } from '../lib/format'
 import { accountApi, type AccountSnapshot, type AuditReport, type SnapshotView } from '../api/account'
 import { signalsApi, type EvaluationRow } from '../api/signals'
 import { getBars, getPool, type DailyBar, type InstrumentView } from '../api/marketdata'
@@ -22,7 +24,7 @@ import { getQuotes, type Quote } from '../api/quotes'
  *
  * 刷新分三档：实时账户盘中 1 秒、其余 5 秒（见 useLiveAccount）；日级数据（快照、评估、日 K）5 分钟一轮；
  * 报价在开市时段 5 秒一轮、休市 60 秒。
- * 页面切到后台即暂停。
+ * 页面切到后台即暂停。日级数据各块独立、失败自动重试（3.4.3，见 useRecoveringLoad）。
  */
 const NAV_DAYS = 180
 
@@ -36,8 +38,6 @@ const barsBySymbol = ref<Map<string, DailyBar[]>>(new Map())
 const quotes = ref<Map<string, Quote>>(new Map())
 const signalAudit = ref<AuditReport | null>(null)
 const accountAudit = ref<AuditReport | null>(null)
-const loaded = ref(false)
-const error = ref<string | null>(null)
 
 const drawer = ref(false)
 const pickedSymbol = ref<string | null>(null)
@@ -47,31 +47,31 @@ const { session } = useMarketClock()
 /** 盈透的类别股带空格（BRK B），富途与库里是点（BRK.B）。 */
 const norm = (s: string) => s.replace(' ', '.')
 
-async function loadDaily() {
-  error.value = null
-  try {
-    const [latest, snaps, poolRows, sa, aa] = await Promise.all([
-      accountApi.latest().catch((e) => {
+/**
+ * 日级数据分两段：先并发取快照、净值序列、池、两份审计；再按审计日取评估、按池取日 K。
+ * 每块成功才覆盖自己的数据，失败的保留上一次的（原先一个超时整批作废，净值与池一起显示成空，2026-10-13）。
+ */
+const daily = useRecoveringLoad((): Stages => [
+  {
+    最新快照: async () => {
+      view.value = await accountApi.latest().catch((e) => {
         if ((e as { response?: { status?: number } }).response?.status === 404) return null // 还没拍过快照
         throw e
-      }),
-      accountApi.snapshots(daysAgoEt(NAV_DAYS), isoEt()),
-      getPool(),
-      signalsApi.audit(),
-      accountApi.audit(),
-    ])
-    view.value = latest
-    series.value = snaps
-    pool.value = poolRows
-    signalAudit.value = sa
-    accountAudit.value = aa
-    await Promise.all([loadEvaluations(sa.date), loadBars()])
-  } catch (e) {
-    error.value = errMsg(e)
-  } finally {
-    loaded.value = true
-  }
-}
+      })
+    },
+    净值序列: async () => { series.value = await accountApi.snapshots(daysAgoEt(NAV_DAYS), isoEt()) },
+    池: async () => { pool.value = await getPool() },
+    信号审计: async () => { signalAudit.value = await signalsApi.audit() },
+    账户审计: async () => { accountAudit.value = await accountApi.audit() },
+  },
+  {
+    评估: async () => { if (signalAudit.value) await loadEvaluations(signalAudit.value.date) },
+    日K: loadBars,
+  },
+], 5 * 60_000)
+const loaded = daily.loaded
+/** 某块从来没取到过、且这一轮失败了：面板显示「加载中」而不是「没有数据」 */
+const pending = (name: string) => !daily.loaded.value || daily.failedNames.value.has(name)
 
 /**
  * 审计日有评估就用审计日（哪怕全是"数据过期"，那也是要看到的事实）。
@@ -197,7 +197,6 @@ const problems = computed(() =>
 )
 
 // ---- 刷新节奏：页面切到后台即暂停 ----
-let dailyTimer = 0
 let quoteTimer = 0
 /**
  * 报价轮询是「自递归 setTimeout」，必须有个「还在运行吗」的守卫。
@@ -218,22 +217,22 @@ function scheduleQuotes() {
   }, active ? 5_000 : 60_000)
 }
 function start() {
+  if (running) return
   running = true
-  void loadDaily()
+  daily.start()
   startLive()
   void loadQuotes().then(scheduleQuotes)
-  dailyTimer = window.setInterval(loadDaily, 5 * 60_000)
 }
 function stop() {
   running = false
-  window.clearInterval(dailyTimer)
   window.clearTimeout(quoteTimer)
+  daily.stop()
   stopLive()
-  dailyTimer = quoteTimer = 0
+  quoteTimer = 0
 }
 function onVisibility() {
   if (document.hidden) stop()
-  else if (!dailyTimer) start()
+  else start()
 }
 onMounted(() => {
   start()
@@ -252,7 +251,7 @@ function openCandidate(symbol: string) {
 
 <template>
   <div class="dash">
-    <el-alert v-if="error" :title="'取数失败：' + error" type="error" show-icon :closable="false" />
+    <RecoveryAlert :error="daily.errorText.value" :retry-in="daily.retryIn.value" :busy="daily.busy.value" @retry="daily.retryNow" />
 
     <div v-if="problems.length" class="banner">
       <b>需要处理</b>
@@ -261,10 +260,10 @@ function openCandidate(symbol: string) {
       </span>
     </div>
 
-    <MoneyTiles :view="view" :live="live" :session="session" :loaded="loaded" />
-    <EquityPanel :series="series" :days="NAV_DAYS" :live-nav="liveNav" />
+    <MoneyTiles :view="view" :live="live" :session="session" :loaded="!pending('最新快照')" />
+    <EquityPanel :series="series" :days="NAV_DAYS" :live-nav="liveNav" :pending="pending('净值序列')" />
     <div class="two-col">
-      <CandidatePanel :rows="candidates" :eval-date="evalDate" :loaded="loaded" @open="openCandidate" />
+      <CandidatePanel :rows="candidates" :eval-date="evalDate" :loaded="!pending('池')" @open="openCandidate" />
       <HoldingsPanel :rows="holdings" :source="liveHoldings ? 'LIVE' : 'SNAPSHOT'" :as-of="view?.snapshot.asOfDate ?? null"
                      :eval-date="evalDate" :loaded="loaded"
                      @open="openCandidate" />

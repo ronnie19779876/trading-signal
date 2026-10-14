@@ -18,6 +18,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class PoolRoleCoverageTest {
 
+    /**
+     * 3.4.3 起 {@code /api/pool} 委托给 {@code MarketDataFacade.pool()}：直接取池里的全部成员、不按角色过滤，
+     * 结构上就不会漏角色（原先按 PoolRole.values() 逐个调 universe()，每次对整张日 K 表 GROUP BY，太慢）。
+     * 「每种角色都返回」由 {@code InstrumentViewCoverageTest} 遍历 PoolRole.values() 守住；这里只守接口别绕开它自己逐个角色拼。
+     */
     @Test
     void 池接口不按角色写死() throws Exception {
         String src = Files.readString(Path.of("src/main/java/org/jdkxx/trader/app/web/MarketDataController.java"));
@@ -26,8 +31,9 @@ class PoolRoleCoverageTest {
         String body = src.substring(start, src.indexOf('}', src.indexOf('{', start)) + 1);
 
         assertThat(body)
-                .as("池接口要遍历 PoolRole.values()，别逐个角色写死——加新角色时必漏")
-                .contains("PoolRole.values()");
+                .as("池接口要委托给 facade.pool()（取全部成员、不按角色过滤），别逐个角色写死——加新角色时必漏")
+                .contains("facade.pool()")
+                .doesNotContain("PoolRole.POOL").doesNotContain("PoolRole.HOLDING").doesNotContain("PoolRole.BENCHMARK");
     }
 
     /**

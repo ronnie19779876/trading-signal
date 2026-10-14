@@ -3,8 +3,10 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '../components/PageHeader.vue'
 import { useLiveAccount } from '../composables/useLiveAccount'
+import { useRecoveringLoad, type Stages } from '../composables/useRecoveringLoad'
+import RecoveryAlert from '../components/RecoveryAlert.vue'
 import PositionDrawer, { type PositionRow } from '../components/positions/PositionDrawer.vue'
-import { errMsg, money, num, signed, timeEt, trend } from '../lib/format'
+import { money, num, signed, timeEt, trend } from '../lib/format'
 import { sectorCn } from '../lib/sector'
 import { accountApi, type SnapshotView } from '../api/account'
 import { getPool, type InstrumentView } from '../api/marketdata'
@@ -23,8 +25,6 @@ const router = useRouter()
 const { live, start: startLive, stop: stopLive } = useLiveAccount()
 const view = ref<SnapshotView | null>(null)
 const pool = ref<InstrumentView[]>([])
-const loaded = ref(false)
-const error = ref<string | null>(null)
 
 /** 盈透的类别股带空格（BRK B），富途与库里是点（BRK.B）。 */
 const norm = (s: string) => s.replace(' ', '.')
@@ -98,40 +98,34 @@ function signedNum(v: number | null): string {
 }
 
 // ---- 取数 ----
-async function loadDaily() {
-  error.value = null
-  try {
-    const [p, latest] = await Promise.all([
-      getPool(),
-      accountApi.latest().catch((e) => {
-        if ((e as { response?: { status?: number } }).response?.status === 404) return null // 还没拍过快照
-        throw e
-      }),
-    ])
-    pool.value = p
-    view.value = latest
-  } catch (e) {
-    error.value = errMsg(e)
-  } finally {
-    loaded.value = true
-  }
-}
+// 两块各自独立、失败自动重试；成功才覆盖，失败的保留上一次的数据（3.4.3，见 useRecoveringLoad）
+const daily = useRecoveringLoad((): Stages => [{
+  池: async () => { pool.value = await getPool() },
+  最新快照: async () => {
+    view.value = await accountApi.latest().catch((e) => {
+      if ((e as { response?: { status?: number } }).response?.status === 404) return null // 还没拍过快照
+      throw e
+    })
+  },
+}], 5 * 60_000)
+const loaded = daily.loaded
 
 
-let dailyTimer = 0
+let running = false
 function start() {
-  void loadDaily()
+  if (running) return
+  running = true
+  daily.start()
   startLive()
-  dailyTimer = window.setInterval(loadDaily, 5 * 60_000)
 }
 function stop() {
-  window.clearInterval(dailyTimer)
+  running = false
+  daily.stop()
   stopLive()
-  dailyTimer = 0
 }
 function onVisibility() {
   if (document.hidden) stop()
-  else if (!dailyTimer) start()
+  else start()
 }
 onMounted(() => {
   start()
@@ -146,7 +140,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="page">
     <PageHeader title="持仓" hint="盈透持仓，全部为盈透原值（与盈透 App 一致）；点一行看日 K、成本线与基本面" />
-    <el-alert v-if="error" :title="'取数失败：' + error" type="error" show-icon :closable="false" />
+    <RecoveryAlert :error="daily.errorText.value" :retry-in="daily.retryIn.value" :busy="daily.busy.value" @retry="daily.retryNow" />
 
     <section class="panel">
       <div class="summary">

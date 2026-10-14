@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
 import { useLiveAccount } from '../composables/useLiveAccount'
+import { useRecoveringLoad, type Stages } from '../composables/useRecoveringLoad'
+import RecoveryAlert from '../components/RecoveryAlert.vue'
 import EquityPanel from '../components/dash/EquityPanel.vue'
 import { daysAgoEt, errMsg, fmtEt, isoEt, money, signed, timeEt, trend } from '../lib/format'
 import {
@@ -27,9 +29,7 @@ const view = ref<SnapshotView | null>(null)
 const series = ref<AccountSnapshot[]>([])
 const audit = ref<AuditReport | null>(null)
 const plan = ref<HoldingSyncResult | null>(null)
-const loaded = ref(false)
 const syncing = ref(false)
-const error = ref<string | null>(null)
 
 // ---- 名称与状态 ----
 const STATUS: Record<ReconStatus, { text: string; type: 'success' | 'warning' | 'danger' }> = {
@@ -132,26 +132,18 @@ const opened = ref<string[]>([])
 const maintenance = ref<string[]>([])
 
 // ---- 取数 ----
-async function loadDaily() {
-  error.value = null
-  try {
-    const [s, a, latest] = await Promise.all([
-      accountApi.snapshots('2000-01-01', isoEt()),
-      accountApi.audit(),
-      accountApi.latest().catch((e) => {
-        if ((e as { response?: { status?: number } }).response?.status === 404) return null // 还没拍过快照
-        throw e
-      }),
-    ])
-    series.value = s
-    audit.value = a
-    view.value = latest
-  } catch (e) {
-    error.value = errMsg(e)
-  } finally {
-    loaded.value = true
-  }
-}
+// 三块各自独立、失败自动重试；成功才覆盖，失败的保留上一次的数据（3.4.3，见 useRecoveringLoad）
+const daily = useRecoveringLoad((): Stages => [{
+  快照序列: async () => { series.value = await accountApi.snapshots('2000-01-01', isoEt()) },
+  账户审计: async () => { audit.value = await accountApi.audit() },
+  最新快照: async () => {
+    view.value = await accountApi.latest().catch((e) => {
+      if ((e as { response?: { status?: number } }).response?.status === 404) return null // 还没拍过快照
+      throw e
+    })
+  },
+}], 5 * 60_000)
+const loaded = daily.loaded
 
 
 async function takeSnapshot() {
@@ -199,20 +191,21 @@ async function applySync() {
 }
 
 // ---- 刷新节奏：实时见 useLiveAccount（盘中 1 秒），快照与审计 5 分钟；页面切到后台即暂停 ----
-let dailyTimer = 0
+let running = false
 function start() {
-  void loadDaily()
+  if (running) return
+  running = true
+  daily.start()
   startLive()
-  dailyTimer = window.setInterval(loadDaily, 5 * 60_000)
 }
 function stop() {
-  window.clearInterval(dailyTimer)
+  running = false
+  daily.stop()
   stopLive()
-  dailyTimer = 0
 }
 function onVisibility() {
   if (document.hidden) stop()
-  else if (!dailyTimer) start()
+  else start()
 }
 onMounted(() => {
   start()
@@ -228,10 +221,10 @@ onBeforeUnmount(() => {
   <div class="page">
     <PageHeader title="账户" hint="全部为盈透原值；每个交易日美东 18:00 拍一份快照并对账。持仓明细看持仓页">
       <template #actions>
-        <el-button size="small" @click="loadDaily">刷新</el-button>
+        <el-button size="small" @click="daily.retryNow">刷新</el-button>
       </template>
     </PageHeader>
-    <el-alert v-if="error" :title="'取数失败：' + error" type="error" show-icon :closable="false" />
+    <RecoveryAlert :error="daily.errorText.value" :retry-in="daily.retryIn.value" :busy="daily.busy.value" @retry="daily.retryNow" />
 
     <!-- 资金 -->
     <section class="panel">

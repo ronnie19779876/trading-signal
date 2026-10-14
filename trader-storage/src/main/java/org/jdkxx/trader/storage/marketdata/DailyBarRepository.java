@@ -389,9 +389,20 @@ public class DailyBarRepository {
                 instrumentId).stream().filter(java.util.Objects::nonNull).findFirst();
     }
 
+    private static final org.springframework.jdbc.core.RowMapper<InstrumentCoverage> COVERAGE = (rs, i) -> new InstrumentCoverage(
+            rs.getLong("instrument_id"), rs.getLong("rows"), rs.getDate("mn").toLocalDate(), rs.getDate("mx").toLocalDate());
+
     public List<InstrumentCoverage> coverageByInstrument() {
         return jdbc.query("SELECT instrument_id, count(*) AS rows, min(trade_date) AS mn, max(trade_date) AS mx FROM daily_bar GROUP BY instrument_id",
-                (rs, i) -> new InstrumentCoverage(rs.getLong("instrument_id"), rs.getLong("rows"),
-                        rs.getDate("mn").toLocalDate(), rs.getDate("mx").toLocalDate()));
+                COVERAGE);
+    }
+
+    /** 只统计指定标的（池那十几只用它，不扫整张表）；没有 K 线的标的不返回行。 */
+    public List<InstrumentCoverage> coverageByInstrument(Collection<Long> instrumentIds) {
+        if (instrumentIds.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.query("SELECT instrument_id, count(*) AS rows, min(trade_date) AS mn, max(trade_date) AS mx FROM daily_bar "
+                + "WHERE instrument_id = ANY (?) GROUP BY instrument_id", COVERAGE, (Object) instrumentIds.toArray(Long[]::new));
     }
 }

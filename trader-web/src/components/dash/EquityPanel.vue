@@ -19,8 +19,10 @@ const props = withDefaults(
     days: number | null
     liveNav: number | null
     height?: number
+    /** 净值序列还没取到（首次加载中，或取数失败、正在自动重试）：空的时候显示「加载中」而不是「还没有快照」 */
+    pending?: boolean
   }>(),
-  { height: 200 },
+  { height: 200, pending: false },
 )
 
 type Mode = 'nav' | 'change'
@@ -157,6 +159,7 @@ const lastChange = computed(() => changes.value.at(-1) ?? null)
         <template v-else-if="lastChange">最近一日（{{ lastChange.date }}）<b class="num" :class="trend(lastChange.value)">{{ signed(lastChange.value) }}</b></template>
       </template>
       <template v-else-if="rows.length === 1">只有 {{ rows[0].asOfDate }} 一份快照，攒够两天才画得出走势。</template>
+      <template v-else-if="pending">加载中…（取数失败时会自动重试）</template>
       <template v-else>还没有账户快照。</template>
     </p>
   </section>

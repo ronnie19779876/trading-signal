@@ -132,9 +132,7 @@ public class MarketDataController {
     /** 池成员：全部角色。别按角色写死枚举一遍，加新角色时会漏（BENCHMARK 就漏过一次）。 */
     @GetMapping("/api/pool")
     public List<MarketDataFacade.InstrumentView> pool() {
-        return java.util.Arrays.stream(PoolRole.values())
-                .flatMap(r -> facade.universe(null, r).stream())
-                .toList();
+        return facade.pool();
     }
 
     @PostMapping("/api/pool/{symbol}")

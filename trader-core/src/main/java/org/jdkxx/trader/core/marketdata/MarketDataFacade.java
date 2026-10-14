@@ -208,6 +208,27 @@ public class MarketDataFacade {
         return out;
     }
 
+    /**
+     * 池里的标的（持仓、池、基准），先按 {@link PoolRole} 的声明顺序、同一角色内按市场与代码——与原先「三种角色各调一次 universe()」的结果逐项相同。
+     * 只查池成员、只统计它们的 K 线覆盖：原先每次调用对整张日 K 表做三遍 GROUP BY（生产 0.6 秒、开发库 20~30 秒，2026-10-14）。
+     */
+    public List<InstrumentView> pool() {
+        Map<Long, PoolRole> roles = scope.roles();
+        if (roles.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, List<ConstituentRow>> byInstrument = constituents.currentAll().stream()
+                .collect(Collectors.groupingBy(ConstituentRow::instrumentId));
+        Map<Long, BarSyncState> st = states.findAll().stream().collect(Collectors.toMap(BarSyncState::instrumentId, s -> s));
+        Map<Long, DailyBarRepository.InstrumentCoverage> cov = bars.coverageByInstrument(roles.keySet()).stream()
+                .collect(Collectors.toMap(DailyBarRepository.InstrumentCoverage::instrumentId, c -> c));
+        return instruments.findByIds(roles.keySet()).stream()
+                .sorted(java.util.Comparator.comparing((InstrumentRow r) -> roles.get(r.id()))
+                        .thenComparing(InstrumentRow::market).thenComparing(InstrumentRow::symbol))
+                .map(r -> view(r, byInstrument.getOrDefault(r.id(), List.of()), roles.get(r.id()), st.get(r.id()), cov.get(r.id())))
+                .toList();
+    }
+
     public InstrumentView instrument(String symbol) {
         InstrumentRow r = directory.require(symbol);
         List<ConstituentRow> cons = constituents.currentAll().stream().filter(c -> c.instrumentId() == r.id()).toList();

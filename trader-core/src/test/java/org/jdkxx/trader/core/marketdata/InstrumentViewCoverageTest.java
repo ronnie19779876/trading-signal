@@ -97,4 +97,39 @@ class InstrumentViewCoverageTest {
         assertThat(v.earliest()).isNull();
         assertThat(v.latest()).isNull();
     }
+
+    /**
+     * /api/pool（3.4.3）：只取池成员、只统计它们的 K 线覆盖——原先三种角色各调一次 universe()，每次对整张日 K 表 GROUP BY。
+     * **每种角色都要返回**（遍历 PoolRole.values() 造数据，加新角色自动覆盖；当初 BENCHMARK 就漏过一次），
+     * 顺序与原先「按角色声明顺序拼起来、角色内按代码」相同。
+     */
+    @Test
+    void 池列表覆盖全部角色_只统计池成员_按角色再按代码排序() {
+        Map<Long, PoolRole> roles = new java.util.HashMap<>();
+        List<InstrumentRow> rows = new java.util.ArrayList<>();
+        long id = 100;
+        for (PoolRole role : PoolRole.values()) {
+            for (String sym : List.of("Z" + role.name(), "A" + role.name())) {      // 角色内故意倒序给，看排序
+                rows.add(new InstrumentRow(id, Market.US, sym, sym, null, SecurityType.STOCK, 1, null, false, "NYSE", id, "RESOLVED"));
+                roles.put(id++, role);
+            }
+        }
+        when(scope.roles()).thenReturn(roles);
+        when(constituents.currentAll()).thenReturn(List.of());
+        when(states.findAll()).thenReturn(List.of());
+        when(instruments.findByIds(roles.keySet())).thenReturn(rows);
+        when(bars.coverageByInstrument(roles.keySet())).thenReturn(List.of(
+                new DailyBarRepository.InstrumentCoverage(100L, 100, LocalDate.of(2020, 1, 2), LocalDate.of(2026, 10, 13))));
+
+        List<MarketDataFacade.InstrumentView> pool = facade.pool();
+
+        List<String> expected = java.util.Arrays.stream(PoolRole.values())
+                .flatMap(r -> java.util.stream.Stream.of("A" + r.name(), "Z" + r.name())).toList();
+        assertThat(pool).extracting(MarketDataFacade.InstrumentView::symbol).containsExactlyElementsOf(expected);
+        assertThat(pool).extracting(MarketDataFacade.InstrumentView::role).containsAll(
+                java.util.Arrays.stream(PoolRole.values()).map(PoolRole::name).toList());
+        assertThat(pool.stream().filter(v -> v.barCount() == 100).count()).isEqualTo(1);
+        org.mockito.Mockito.verify(bars, org.mockito.Mockito.never()).coverageByInstrument();
+        org.mockito.Mockito.verify(instruments, org.mockito.Mockito.never()).findAll();
+    }
 }
