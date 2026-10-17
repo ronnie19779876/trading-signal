@@ -19,4 +19,13 @@ public interface PriceHistoryGateway {
      * @param to    截止日（含）
      */
     CompletableFuture<List<SplitAdjustedBar>> splitAdjustedDailyBars(long conId, LocalDate from, LocalDate to);
+
+    /**
+     * 这只合约最早一根 TRADES 日线的日期（美东交易日），与 {@link #splitAdjustedDailyBars} 同一取法（主交易所、常规时段）。
+     * 取历史之前先问：窗口整段落在最早日之前时，盈透有时一直不回复、只能等超时（2026-10-17 实测 SKYD），
+     * 而不是回 162「没有数据」。券商说没有数据时以 {@code RequestRejectedException}（162）失败。
+     *
+     * @param conId 盈透合约 id
+     */
+    CompletableFuture<LocalDate> earliestDailyBar(long conId);
 }

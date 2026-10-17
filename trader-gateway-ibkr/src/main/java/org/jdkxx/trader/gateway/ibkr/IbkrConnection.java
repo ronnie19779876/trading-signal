@@ -306,6 +306,19 @@ final class IbkrConnection implements Transport {
     }
 
     /**
+     * 最早数据时间（reqHeadTimestamp，TRADES、只看常规时段、formatDate=1 即 UTC 的 yyyyMMdd-HH:mm:ss）。
+     * 盈透把它算作一个打开着的历史请求，所以不管成败一结束就取消（官方文档：always cancel）。
+     */
+    CompletableFuture<String> headTimestamp(Contract contract, Duration timeout) {
+        int id = registry.nextId();
+        CompletableFuture<String> f = registry.open(id, "最早数据时间 conId=" + contract.conid(),
+                new PendingRequest.Single<>(String.class), null, timeout);
+        f.whenComplete((ts, ex) -> cancelQuietly("最早数据时间", c -> c.cancelHeadTimestamp(id)));
+        sendWithId(id, c -> c.reqHeadTimestamp(id, contract, "TRADES", 1, 1));
+        return f;
+    }
+
+    /**
      * 持仓（reqPositionsMulti）。它是订阅式请求：End 之后券商仍会推送变动，
      * 所以 future 一结束（收齐、失败、超时都算）就取消。取消跟着 future 在 dispatch 线程上发，不占泵线程。
      */

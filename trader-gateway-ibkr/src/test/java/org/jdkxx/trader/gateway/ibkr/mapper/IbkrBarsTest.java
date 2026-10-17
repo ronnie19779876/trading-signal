@@ -42,4 +42,14 @@ class IbkrBarsTest {
         assertThat(IbkrBars.day("20160104 00:00:00")).isEqualTo(LocalDate.of(2016, 1, 4));
         assertThat(IbkrBars.day("2016")).isNull();
     }
+
+    /** 实测 SKYD 两次回 08:00 与 13:30（UTC），都是美东 2025-08-07；美东傍晚之后的 UTC 时刻已是次日，要折回美东。 */
+    @Test
+    void 最早数据时间按UTC折成美东日期_解析不了给null() {
+        assertThat(IbkrBars.headDay("20250807-13:30:00")).isEqualTo(LocalDate.of(2025, 8, 7));
+        assertThat(IbkrBars.headDay("20250807-08:00:00")).isEqualTo(LocalDate.of(2025, 8, 7));
+        assertThat(IbkrBars.headDay("20250808-01:00:00")).isEqualTo(LocalDate.of(2025, 8, 7));
+        assertThat(IbkrBars.headDay("bad")).isNull();
+        assertThat(IbkrBars.headDay(null)).isNull();
+    }
 }

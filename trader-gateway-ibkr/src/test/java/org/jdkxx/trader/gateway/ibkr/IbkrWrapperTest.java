@@ -102,6 +102,17 @@ class IbkrWrapperTest {
         assertThat(f.join()).extracting(com.ib.client.Bar::time).containsExactly("20160104", "20160105");
     }
 
+    /** 最早数据时间没有 End 回调：一次回调就要收尾，否则请求一直挂到超时（富途那边漏注册 SPI 的同类表现）。 */
+    @Test
+    void 最早数据时间一次回调即完成() {
+        int id = registry.nextId();
+        CompletableFuture<String> f = registry.open(id, "t", new PendingRequest.Single<>(String.class), null);
+        wrapper.headTimestamp(id, "20250807-13:30:00");
+
+        assertThat(f).isCompletedWithValue("20250807-13:30:00");
+        assertThat(registry.isPending(id)).isFalse();
+    }
+
     @Test
     void 持仓与账户汇总回调交给注册表_结束后的迟到推送被忽略() {
         int id = registry.nextId();

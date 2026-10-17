@@ -192,21 +192,39 @@ public class SelectionBackfillService {
         long conId = conId(row);
         LocalDate today = LocalDate.now(clock.withZone(zone));
         LocalDate to = min(futuFrom.plusMonths(props.seamMonths()), today.minusDays(1));
+        // 先问最早一根在哪：窗口整段落在最早日之前时，盈透有时回 162、有时一直不回复只能等超时
+        // （2026-10-17 实测 SKYD 最早 2025-08-07：截止 2023-02-17 / 2024-01-01 的窗口 6 次全部挂起，截止 2025-08-06 的却 0.5 秒回 162；
+        // CRH、SW 同类窗口都回 162）。最早日不早于富途起点就不必取；早于富途起点则从最早日起取，不请求盈透没有的那段。
+        LocalDate earliest;
+        try {
+            earliest = prices.earliestDailyBar(conId).get(60, TimeUnit.SECONDS);
+        } catch (ExecutionException e) {
+            if (unwrap(e) instanceof RequestRejectedException r && r.code() == NO_DATA) {
+                clearPrices(row.id());
+                return Outcome.empty("盈透 conId " + conId + " 没有日线（最早数据时间 162）");
+            }
+            throw e;
+        }
+        if (!earliest.isBefore(futuFrom)) {
+            clearPrices(row.id());
+            return Outcome.skipped("盈透最早 " + earliest + "（最早数据时间），不早于富途起点 " + futuFrom + "，富途已覆盖，不需要盈透");
+        }
+        LocalDate from = earliest.isAfter(props.priceFrom()) ? earliest : props.priceFrom();
         List<SplitAdjustedBar> bars;
         try {
-            bars = prices.splitAdjustedDailyBars(conId, props.priceFrom(), to).get(180, TimeUnit.SECONDS);
+            bars = prices.splitAdjustedDailyBars(conId, from, to).get(180, TimeUnit.SECONDS);
         } catch (ExecutionException e) {
             // 162「HMDS query returned no data」是券商明确说没有，不是失败：记 EMPTY，续跑不再重试
             // （2026-10-11 实测 ODFL 2024-05 前、CRH 2023-09 前、SW 上市前都是这样）
             if (unwrap(e) instanceof RequestRejectedException r && r.code() == NO_DATA) {
                 clearPrices(row.id());
-                return Outcome.empty("盈透 conId " + conId + " 在 " + props.priceFrom() + "~" + to + " 没有日线（162）");
+                return Outcome.empty("盈透 conId " + conId + " 在 " + from + "~" + to + " 没有日线（162）");
             }
             throw e;
         }
         if (bars.isEmpty()) {
             clearPrices(row.id());
-            return Outcome.empty("盈透 conId " + conId + " 在 " + props.priceFrom() + "~" + to + " 没有日线");
+            return Outcome.empty("盈透 conId " + conId + " 在 " + from + "~" + to + " 没有日线");
         }
         LocalDate ibFrom = bars.getFirst().tradeDate();
         LocalDate ibTo = bars.getLast().tradeDate();

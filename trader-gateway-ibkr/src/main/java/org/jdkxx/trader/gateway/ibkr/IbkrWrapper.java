@@ -113,6 +113,13 @@ final class IbkrWrapper extends DefaultEWrapper {
         registry.complete(reqId);
     }
 
+    /** 最早数据时间（量化选股，§25.6）：一次回调就是全部结果。 */
+    @Override
+    public void headTimestamp(int reqId, String headTimestamp) {
+        registry.item(reqId, headTimestamp);
+        registry.complete(reqId);
+    }
+
     // 持仓与账户汇总既有一次性查询（注册表）也有常驻订阅（实时账户）：两边按 reqId 各认各的，不认识的忽略。
 
     @Override

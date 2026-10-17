@@ -6,6 +6,9 @@ import org.jdkxx.trader.domain.selection.SplitAdjustedBar;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,6 +20,8 @@ import java.util.List;
 public final class IbkrBars {
 
     private static final DateTimeFormatter DAY = DateTimeFormatter.BASIC_ISO_DATE;
+    private static final DateTimeFormatter HEAD = DateTimeFormatter.ofPattern("yyyyMMdd-HH:mm:ss");
+    private static final ZoneId EXCHANGE = ZoneId.of("America/New_York");
 
     private IbkrBars() {
     }
@@ -39,6 +44,22 @@ public final class IbkrBars {
         }
         try {
             return LocalDate.parse(time.substring(0, 8), DAY);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * 最早数据时间（reqHeadTimestamp，formatDate=1）→ 美东交易日。时间串是 UTC 的 {@code yyyyMMdd-HH:mm:ss}；
+     * 同一只两次查询的时刻可能不同（2026-10-17 实测 SKYD 先回 08:00、后回 13:30，日期都是 2025-08-07），只认日期。
+     * 解析不了返回 null，不编造。
+     */
+    public static LocalDate headDay(String headTimestamp) {
+        if (headTimestamp == null) {
+            return null;
+        }
+        try {
+            return LocalDateTime.parse(headTimestamp.strip(), HEAD).atOffset(ZoneOffset.UTC).atZoneSameInstant(EXCHANGE).toLocalDate();
         } catch (RuntimeException e) {
             return null;
         }

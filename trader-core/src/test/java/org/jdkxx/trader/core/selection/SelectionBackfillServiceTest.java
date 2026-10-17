@@ -24,6 +24,7 @@ import org.jdkxx.trader.storage.selection.SelectionEarningsRepository;
 import org.jdkxx.trader.storage.selection.SelectionPriceBarRepository;
 import org.jdkxx.trader.storage.selection.SelectionPriceSeamRepository;
 import org.jdkxx.trader.storage.selection.SelectionValuationRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -98,6 +99,12 @@ class SelectionBackfillServiceTest {
     private final SelectionBackfillService service = new SelectionBackfillService(PROPS, targets, states, prices, contracts,
             fundamentals, instruments, dailyBars, rehabs, financials, priceBars, seams, valuations, earnings, securities,
             Clock.fixed(Instant.parse("2026-10-10T16:00:00Z"), ZoneOffset.UTC), ZoneId.of("America/New_York"));
+
+    /** 默认盈透最早一根很早（不影响取数窗口）；要测最早日的用例自己覆盖。 */
+    @BeforeEach
+    void earliestIsOld() {
+        when(prices.earliestDailyBar(anyLong())).thenReturn(CompletableFuture.completedFuture(LocalDate.of(2000, 1, 3)));
+    }
 
     private static InstrumentRow row(long id, String symbol) {
         return new InstrumentRow(id, Market.US, symbol, symbol, null, SecurityType.STOCK, 1, null, false, "NYSE", null, "RESOLVED");
@@ -250,6 +257,66 @@ class SelectionBackfillServiceTest {
         verify(priceBars).replaceAll(eq(1L), eq(List.of()), any());
         verify(seams).delete(1L);
         verify(seams, never()).save(anyLong(), anyLong(), any(), any(), any(), anyInt(), anyInt(), anyInt(), any(), anyBoolean(), anyString());
+    }
+
+    /**
+     * 回归（3.4.3 生产 SKYD）：盈透最早 2025-08-07、富途自 2022-10-17，截止 2023-02-17 的历史请求盈透一直不回复，
+     * 每周补缺都超时记失败。先问最早日：不早于富途起点就跳过，不发历史请求。
+     */
+    @Test
+    void 盈透最早日不早于富途起点就跳过_不发历史请求() throws Exception {
+        when(targets.only(any())).thenReturn(List.of(row(1, "SKYD")));
+        youngListing(1, "SKYD", LocalDate.of(2022, 10, 17));
+        when(prices.earliestDailyBar(101L)).thenReturn(CompletableFuture.completedFuture(LocalDate.of(2025, 8, 7)));
+
+        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+
+        verify(states).save(eq(1L), eq("PRICES"), eq("SKIPPED"), org.mockito.ArgumentMatchers.contains("盈透最早 2025-08-07"));
+        verify(prices, never()).splitAdjustedDailyBars(anyLong(), any(), any());
+        verify(priceBars).replaceAll(eq(1L), eq(List.of()), any());
+        verify(seams).delete(1L);
+        assertThat(partials).isEmpty();
+    }
+
+    @Test
+    void 盈透最早日晚于补起点_从最早日起取() throws Exception {
+        when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
+        youngListing(1, "AAA", LocalDate.of(2022, 9, 8));
+        when(prices.earliestDailyBar(101L)).thenReturn(CompletableFuture.completedFuture(LocalDate.of(2018, 3, 1)));
+        when(prices.splitAdjustedDailyBars(eq(101L), any(), any())).thenReturn(CompletableFuture.completedFuture(List.of()));
+
+        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+
+        verify(prices).splitAdjustedDailyBars(101L, LocalDate.of(2018, 3, 1), LocalDate.of(2023, 1, 8));
+        verify(states).save(eq(1L), eq("PRICES"), eq("EMPTY"), org.mockito.ArgumentMatchers.contains("2018-03-01~2023-01-08"));
+    }
+
+    @Test
+    void 最早数据时间回162记EMPTY_不发历史请求() throws Exception {
+        when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
+        youngListing(1, "AAA", LocalDate.of(2022, 9, 8));
+        when(prices.earliestDailyBar(101L)).thenReturn(CompletableFuture.failedFuture(
+                new org.jdkxx.trader.gateway.RequestRejectedException(Broker.IBKR, 162, "HMDS query returned no data")));
+
+        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+
+        verify(states).save(eq(1L), eq("PRICES"), eq("EMPTY"), org.mockito.ArgumentMatchers.contains("最早数据时间 162"));
+        verify(prices, never()).splitAdjustedDailyBars(anyLong(), any(), any());
+        assertThat(partials).isEmpty();
+    }
+
+    @Test
+    void 最早数据时间超时记失败_下次重试() throws Exception {
+        when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
+        youngListing(1, "AAA", LocalDate.of(2022, 9, 8));
+        when(prices.earliestDailyBar(101L)).thenReturn(CompletableFuture.failedFuture(
+                new org.jdkxx.trader.gateway.RequestTimeoutException(Broker.IBKR, "最早数据时间 conId=101")));
+
+        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+
+        verify(states).save(eq(1L), eq("PRICES"), eq("FAILED"), org.mockito.ArgumentMatchers.contains("超时"));
+        verify(prices, never()).splitAdjustedDailyBars(anyLong(), any(), any());
+        assertThat(partials).anyMatch(p -> p.contains("1 只失败"));
     }
 
     /**

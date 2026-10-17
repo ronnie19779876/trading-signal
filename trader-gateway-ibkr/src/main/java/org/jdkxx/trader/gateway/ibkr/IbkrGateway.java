@@ -1,5 +1,6 @@
 package org.jdkxx.trader.gateway.ibkr;
 
+import com.ib.client.Contract;
 import org.jdkxx.trader.common.ratelimit.RateLimitExceededException;
 import org.jdkxx.trader.common.ratelimit.RateLimitSpec;
 import org.jdkxx.trader.common.ratelimit.RateLimiter;
@@ -74,6 +75,8 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
             RateLimitSpec.parse("50/10m"), Duration.ofSeconds(1), Duration.ofMinutes(11));
     /** 一次多年日线比普通请求慢，超时单独给。 */
     static final Duration HISTORICAL_TIMEOUT = Duration.ofSeconds(120);
+    /** 最早数据时间实测 0.4~0.7 秒（SKYD、CRH、SW），给 30 秒足够。 */
+    static final Duration HEAD_TIMESTAMP_TIMEOUT = Duration.ofSeconds(30);
     private static final DateTimeFormatter TWS_DAY = DateTimeFormatter.BASIC_ISO_DATE;
 
     /** 实时账户订阅：只在 dispatch 线程上读写。 */
@@ -254,15 +257,44 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
         long days = ChronoUnit.DAYS.between(from, to) + 1;
         String duration = days <= 365 ? days + " D" : ((days + 364) / 365) + " Y";
         String end = to.format(TWS_DAY) + " 23:59:59 US/Eastern";
-        // 按主交易所取，不用 SMART：SMART 只给转板之后的历史（2026-10-11 实测 PEP 2017-12-20 由纽交所转纳斯达克，
-        // SMART 只有 132 根、NASDAQ 给 2015 起 755 根且跨过转板日；WDAY、COO 同样）。KO、AAPL 两种取法逐根相同。
+        return historicalContract(conId)
+                .thenCompose(contract -> connection.historicalDailyBars(contract, end, duration, HISTORICAL_TIMEOUT))
+                .thenApply(bars -> IbkrBars.toSplitAdjusted(bars, from, to));
+    }
+
+    /** 盈透把最早数据时间算进历史数据节奏（10 分钟 60 次），与历史日线共用限流。 */
+    @Override
+    public CompletableFuture<LocalDate> earliestDailyBar(long conId) {
+        if (!isConnected()) {
+            return CompletableFuture.failedFuture(new NotConnectedException(Broker.IBKR, status().detail()));
+        }
+        try {
+            historicalPacing.acquire();
+        } catch (RateLimitExceededException e) {
+            return CompletableFuture.failedFuture(e);
+        }
+        return historicalContract(conId)
+                .thenCompose(contract -> connection.headTimestamp(contract, HEAD_TIMESTAMP_TIMEOUT))
+                .thenApply(ts -> {
+                    LocalDate day = IbkrBars.headDay(ts);
+                    if (day == null) {
+                        throw new IllegalStateException("盈透最早数据时间解析不了：" + ts);
+                    }
+                    return day;
+                });
+    }
+
+    /**
+     * 取历史用的合约：按主交易所，不用 SMART。SMART 只给转板之后的历史（2026-10-11 实测 PEP 2017-12-20 由纽交所转纳斯达克，
+     * SMART 只有 132 根、NASDAQ 给 2015 起 755 根且跨过转板日；WDAY、COO 同样）。KO、AAPL 两种取法逐根相同。
+     */
+    private CompletableFuture<Contract> historicalContract(long conId) {
         return connection.contractDetails(IbkrContracts.byConId(conId))
-                .thenCompose(details -> {
+                .thenApply(details -> {
                     String primary = details.isEmpty() || details.getFirst().contract() == null ? null
                             : details.getFirst().contract().primaryExch();
-                    return connection.historicalDailyBars(IbkrContracts.historical(conId, primary), end, duration, HISTORICAL_TIMEOUT);
-                })
-                .thenApply(bars -> IbkrBars.toSplitAdjusted(bars, from, to));
+                    return IbkrContracts.historical(conId, primary);
+                });
     }
 
     @Override
