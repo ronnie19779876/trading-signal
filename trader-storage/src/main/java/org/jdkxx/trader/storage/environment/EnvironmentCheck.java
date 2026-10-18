@@ -15,6 +15,10 @@ import java.util.Optional;
  * <p><b>判定必须在迁移之前</b>：2.0.2 前先迁移后校验，开发实例误连生产库时，还没发布的迁移会先在生产库上执行，
  * 守卫才拒绝启动——拦住了启动，却没拦住表结构被改。
  *
+ * <p><b>只读热备一律拒绝</b>（3.4.5，ARCHITECTURE §27）：VPS 与上海两套环境用物理流复制互为主备，备库那边的库与主库逐字节相同、
+ * 标记也是 PROD，单看标记分不出来。在备库上启动的实例写什么都失败，作业全挂却不报环境错；更要紧的是两边不能同时运行——
+ * 要在这边运行，先按切换流程把它提升成主库。
+ *
  * <p>自动盖章只发生在<b>全新的空库</b>上：判据是"库里没有 Flyway 迁移记录表"，而不是"标记为空"。
  * 否则第一个连上的实例可以认领任何库，一个装着数据的库会被悄悄改名。标记表由迁移建出，所以盖章在迁移之后。
  */
@@ -41,6 +45,9 @@ public final class EnvironmentCheck {
 
         String currentDatabase();
 
+        /** 连接的是否只读热备（{@code pg_is_in_recovery()}）。 */
+        boolean inRecovery();
+
         void stamp(AppEnvironment environment, String note);
     }
 
@@ -49,6 +56,14 @@ public final class EnvironmentCheck {
 
     /** 迁移<b>之前</b>调用：标记不一致、或有表结构却没有标记时抛异常，迁移一步都不做。 */
     public static Decision verify(MarkerStore store, AppEnvironment declared) {
+        if (store.inRecovery()) {
+            throw new IllegalStateException(("""
+                    连接的库「%s」是只读热备，拒绝启动（未执行任何迁移）。
+
+                      两套环境互为主备、不能同时运行：备库这边的数据是主库的复制品，任何写入都会失败。
+                      要在这台机器上运行，先按 docs/OPERATIONS.md「主备切换」停掉另一边的实例，再把本机提升为主库。""")
+                    .formatted(store.currentDatabase()));
+        }
         Optional<String> actual = store.marker();
 
         if (actual.isEmpty()) {

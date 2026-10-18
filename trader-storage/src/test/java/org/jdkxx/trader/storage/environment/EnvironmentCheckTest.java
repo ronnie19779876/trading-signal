@@ -16,6 +16,7 @@ class EnvironmentCheckTest {
         String marker;
         final boolean history;
         String stampedNote;
+        boolean recovery;
         final List<String> calls;
 
         FakeStore(String marker, boolean history) {
@@ -41,6 +42,11 @@ class EnvironmentCheckTest {
         @Override
         public String currentDatabase() {
             return "db_trader_dev";
+        }
+
+        @Override
+        public boolean inRecovery() {
+            return recovery;
         }
 
         @Override
@@ -84,5 +90,16 @@ class EnvironmentCheckTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("环境不匹配")
                 .hasMessageContaining("db_trader_dev");
+    }
+
+    /** 主备互换后备库的标记同样是 PROD：标记一致也要拒绝，否则两边可能同时运行。 */
+    @Test
+    void 连到只读热备时即使标记一致也拒绝启动() {
+        FakeStore standby = new FakeStore("PROD", true);
+        standby.recovery = true;
+
+        assertThatThrownBy(() -> EnvironmentCheck.verify(standby, AppEnvironment.PROD))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("只读热备");
     }
 }

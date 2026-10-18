@@ -1,0 +1,6 @@
+[Unit]
+Description=PG 备库看门狗（复制不在走就重启隧道）
+
+[Service]
+Type=oneshot
+ExecStart=%h/pg-replica/bin/watchdog.sh

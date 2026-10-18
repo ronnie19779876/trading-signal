@@ -29,6 +29,7 @@ cd trader-web && npm run build            # 产物进 trader-app/src/main/resour
 ./scripts/package.sh                      # dist/trading-signal-<版本>-<时间戳>.tar.gz
 ./scripts/check-secrets.sh                # 敏感信息扫描
 ./scripts/check-daily.sh [baseUrl]        # 收盘后巡检五段：日线、基本面、账户、信号审计 + 运行健康
+./scripts/replica/status.sh               # 主备状态（VPS ↔ 上海，只读）；切换 switchover.sh <目标>，见 OPERATIONS §4e
 # 集成测试（对真实网关只读；参数从环境变量读，见 OPERATIONS §2）
 ./mvnw -pl trader-app -am verify -Dtrader.integration=true -Dtest='IbkrGatewayIT,FutuGatewayIT,ReconnectIT' -Dsurefire.failIfNoSpecifiedTests=false
 ```
@@ -138,6 +139,8 @@ storage → common ；ai → common
 | 富途财报接口**没有公告日**；`getFinancialsEarningsPriceHistory` 有，但只给最近 20 条、含未来预定日期，**而且中间会缺期**（2026-10-11 实测 KO 缺 2022/Q3~2023/Q1、BRK.B 缺多期）；它给的是「生效交易日」，周六发的财报记成下周一 | 公告日按期别匹配，没匹配上的（2021 年前或中间缺的）按法定期限规则兜底、落在非交易日顺延；核对「是否晚于规则」必须按交易日比（ARCHITECTURE §25.5） |
 | 盈透历史日线按 **SMART** 取时**只从最近一次转板开始**（2026-10-11 实测 PEP 2017-12-20 纽交所转纳斯达克：SMART 132 根，NASDAQ 给 2015 起 755 根且跨过转板日；WDAY、UAL、XEL、PFG、COO 同样）；另有**把被收购方历史挂到收购方名下**的情况（OKE 新 conId 的 2016~2022 是 Magellan 的价格，换交易所也一样） | 取历史按 conId 查主交易所再请求（`IbkrContracts.historical`），KO、AAPL 两种取法逐根相同；盈透段必须与富途重叠段比日收益（`PriceSeam`），不通过的不用。162「HMDS query returned no data」记 EMPTY 不记失败 |
 | 盈透历史日线的窗口**整段落在合约最早数据之前**时，**不一定回 162「没有数据」，可能一直不回复**（2026-10-17 实测 SKYD 最早 2025-08-07：截止 2023-02-17 / 2024-01-01 的窗口 6 次全部挂起；截止 2025-08-06 的却 0.5 秒回 162；CRH、SW 同类窗口都回 162）。3.4.3 生产每周补缺因此 SKYD 超时记失败、作业 PARTIAL | 取历史前先 `reqHeadTimestamp`（3.4.4，`earliestDailyBar`）：最早日不早于富途起点就 SKIPPED，否则起点钳到最早日。**最早数据时间可能报得比实际早**（ODFL 报 1991、日线 2024-05 才有），只拿它跳过与收窄，不拿它判「有数据」 |
+| **`pg_rewind` 会把源端数据目录里的配置文件一起拷过来**（2026-10-19 主备演练：配置放在数据目录里的临时集群，倒回后端口变成对方的、起不来）。Ubuntu 的 postgresql.conf / pg_hba.conf 在 `/etc` 不受影响，但 `postgresql.auto.conf`（ALTER SYSTEM）在数据目录里 | 节点各自不同的设置（`application_name` 等）只放 `/etc/postgresql/18/main/conf.d/`；ALTER SYSTEM 只放两边相同的。全量同步别用 `pg_basebackup -R`（会把 primary_conninfo 写进 auto.conf） |
+| 主备互换后**备库的环境标记同样是 PROD**，原来的环境守卫只比标记、拦不住在备库上启动；应用起得来、所有写入失败、作业全挂，却不报环境错 | 3.4.5 起 `EnvironmentCheck.verify` 先查 `pg_is_in_recovery()`，在备库上直接拒绝启动 |
 | 富途**财报接口与公告日接口的期别标签对不上**：财年在 1~2 月结束的零售商（DG、ULTA、TGT、HD 等）按 `period_text` 匹配，公告日比期末晚 380~406 天；FERG 改财年后公告日早于期末（2026-10-12 全量实测） | 公告日按日期就近匹配（期末后 75 天内第一个），别按期别文本；凡是跨两个富途接口对「同一期」，先核对日期 |
 | 富途把部分 **REITs 记成普通股**（DOC、WELL、VMRK；另有 25 只 REITs 记成 Trust→ETF），按 sec_type 排除 REITs 会漏 | 判证券类型以盈透合约明细 `stockType` 为准（COMMON / ADR / REIT / NY REG SHRS，2026-10-12 实测）；ASML 是 NY REG SHRS 不是 ADR |
 | **12-12-12-16 周财年**（COST、KR、PEP、AZO、DPZ）季度长 84 天与 112~119 天交替；按「相邻季度 80~100 天」判连续会把它们的同比整段算丢 | 只用期末间隔识别缺季：70~125 天算连续（缺一季约 180 天） |

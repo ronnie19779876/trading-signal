@@ -1,0 +1,12 @@
+[Unit]
+Description=PG 复制隧道：本机 127.0.0.1:15432 → 对端 127.0.0.1:5432（本机是备库时启用）
+After=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/pg-replica/peer.env
+ExecStart=/usr/bin/ssh -N -i %h/.ssh/id_pg_replica -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -L 127.0.0.1:15432:127.0.0.1:5432 -p ${PEER_PORT} ${PEER_USER}@${PEER_HOST}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

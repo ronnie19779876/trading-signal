@@ -54,4 +54,15 @@ class EnvironmentGuardTest {
 
         assertThat(calls).containsExactly("migrate");
     }
+
+    @Test
+    void 只读热备上一条迁移都不执行() {
+        EnvironmentCheckTest.FakeStore standby = new EnvironmentCheckTest.FakeStore("PROD", true, calls);
+        standby.recovery = true;
+
+        assertThatThrownBy(() -> new EnvironmentGuard("PROD").guard(standby, migration))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("只读热备");
+        assertThat(calls).isEmpty();
+    }
 }

@@ -1412,3 +1412,67 @@ realized 不可用（null）  → 判断不了   → 只比浮盈（宁可少一
 
 展示（3.4.1，用户 2026-10-13 认可）：概况常显年化（标运行天数，未满 12 个月注「仅供参考」）；三条判据与结论**默认收起、点开才看**（用户要求，标题不露结果）；周报截至周末同样给出。计算在纯函数 `SimCriteria`。
 
+
+## 27. 数据库主备互换：VPS ↔ 上海（3.4.5）
+
+### 27.1 目标与边界
+
+用户 2026-10-19 提出、当天认可：两台服务器（Dallas VPS、上海自有服务器）的数据库保持同步，**系统可以在两边之间任意切换**；
+前提是**两边不会同时运行**。所以这不是双写，而是**主备互换**：哪边运行系统哪边就是主库，另一边是只读热备，切换时对调角色。
+
+不在本章范围：两家网关的切换（盈透同一用户名只能一个会话；富途同账号多台 OpenD 会互踢行情）与本机隧道改指，切换脚本只打印提醒。
+
+### 27.2 选型
+
+| 做法 | 结论 |
+| --- | --- |
+| **物理流复制 + 角色互换** | 采用。整个集群逐字节一致：Flyway 迁移（表结构）、序列、开发库都自动跟上；备库只读，天然挡住「两边同时写」；PG 原生，不装插件 |
+| 双向逻辑复制（PG16+ `origin = none`） | 不复制 DDL（每次发版两边各迁移一遍再刷新订阅）、不同步序列（切换后 bigserial 撞号）、冲突要自己处理——为「不会同时运行」付这些代价不值 |
+| 切换时 pg_dump / 恢复 | 切换要导出 3.3 GB、跨境传完再恢复；主库突然坏掉时另一边只有旧数据。只当保底 |
+
+### 27.3 实测依据（2026-10-19）
+
+- 两边 Ubuntu 24.04.5、PostgreSQL 18.6（同一 PGDG 构建）、UTF8、TimeZone Asia/Shanghai、**data_checksums = on**（PG 18 默认开，所以 `pg_rewind` 可用，不必开 `wal_log_hints`）；
+  热备要求不小于主库的五个参数（max_connections 100 等）两边相同。VPS 集群只有 `db_trader` 1.6 GB、`db_trader_dev` 1.7 GB。
+- 上海原集群里还有兄弟项目的库；用户确认兄弟项目不再使用，**上海整个集群变成 VPS 的镜像**。替换前五个库都已 `pg_dump -Fc` 存档在上海本机。
+- 链路：VPS → 上海 TCP 握手约 0.4 秒、ICMP 不通；经隧道 `COPY` 实测 3.6～5.5 MB/s。10-11 以来 7.75 天产生 7.9 GB WAL（含迁移恢复与选股回补，平常远少于此）。
+- **演练**（上海 devops 用户下两个临时集群，跑完删除）：
+  - 计划切换往返两次全过：旧主正常关闭后，新主收到的位置越过旧主 `pg_controldata` 的关闭检查点；提升后旧主放 `standby.signal` 直接以备库启动，**不需要 pg_rewind**；
+    备库写入报 read-only；切换后 bigserial 连续不撞；旧主身上残留的槽在备库状态下可以删。
+  - 宕机：主库 immediate 杀掉、备库强制提升、旧主被误启又写了一条 → `pg_rewind --source-server` → 以备库启动：分叉那条消失、新主数据到齐。
+  - **坑：pg_rewind 会把源端数据目录里的配置文件拷过来**（第一次演练配置放在数据目录里，倒回后端口变成对方的、起不来）。
+    Ubuntu 的 postgresql.conf / pg_hba.conf 在 `/etc` 不受影响，但 `postgresql.auto.conf`（ALTER SYSTEM）在数据目录里——**节点各自不同的设置只放 `/etc/postgresql/18/main/conf.d/`，ALTER SYSTEM 只放两边相同的**。
+
+### 27.4 拓扑与配置（两边对称）
+
+- 复制异步（链路不稳，同步复制会让生产的每次提交跟着链路卡）。复制槽 `replica`，`max_slot_wal_keep_size = 20GB`（链路断几天也撑不满 VPS 磁盘；超过则槽作废、重做全量同步），`wal_compression = zstd`。
+- 两边 `conf.d/replica.conf` 固定写 `primary_conninfo = 'host=127.0.0.1 port=15432 user=replicator application_name=<本机> passfile=/var/lib/postgresql/.pgpass'`、`primary_slot_name = 'replica'`——
+  当主库时被忽略，当备库时生效。全量同步不用 `pg_basebackup -R`（否则 primary_conninfo 写进 auto.conf，盖过 conf.d）。
+- **隧道**：备库那边起用户级 systemd 服务 `pg-replica-tunnel`，`ssh -N -L 127.0.0.1:15432:127.0.0.1:5432` 到主库那边；切换时方向跟着换。
+  专用密钥 `~/.ssh/id_pg_replica`，在对方 `authorized_keys` 里加 `restrict,port-forwarding,permitopen="127.0.0.1:5432",command="/bin/false"`——实测这把钥匙执行命令只返回失败、转发到 8093 被 sshd 拒绝。
+  两边都没有 autossh，不装新包：普通 ssh + `Restart=always`，再加**看门狗**（用户定时器每 2 分钟）：备库的 WAL 接收不在 streaming 或 5 分钟没收到主库消息就重启隧道——
+  SSH 隧道有「进程活着、转发不通」的坏法（2026-09 上海链路实测），systemd 看不出来，只有看复制本身才知道。
+- 对端主机密钥：`install-node.sh` 让节点 `ssh-keyscan` 对端，与本机（运维机）已信任的 ED25519 指纹比对，一致才写 known_hosts。
+- `replicator`（REPLICATION LOGIN）与 `GRANT pg_monitor TO trader` 建在主库，随复制到对面；`trader` 有了 pg_monitor 才能读 `pg_stat_replication` / `pg_stat_wal_receiver`。
+
+### 27.5 防止两边同时运行
+
+1. 备库只读，任何写入失败。
+2. **环境守卫拒绝在备库上启动**（3.4.5，`EnvironmentCheck.verify` 先查 `pg_is_in_recovery()`）：备库的标记同样是 PROD，单看标记分不出来；不拦的话应用起得来、作业全挂、却不报环境错。
+3. 切换只走脚本：先停旧侧应用、正常关闭旧侧数据库、核对关闭检查点已到对面，才提升目标。
+4. 宕机强制提升（`promote.sh`）要输入确认短语；原主库回来后它的 PG 会以主库身份起来（数据停在宕机那一刻），`status.sh` 报「两个主库」，用 `reseed.sh` 重建成备库。应用不由 systemd 托管，重启机器不会自己起来。
+
+### 27.6 脚本（`scripts/replica/`，在运维机上跑，经 SSH 操作两台；主机信息只在本机 `~/.config/trading-signal/replica.env`）
+
+| 脚本 | 作用 |
+| --- | --- |
+| `status.sh` | 只读：两边角色、应用在哪边跑、复制状态与落后、复制槽压着多少 WAL、版本是否一致；退出码 0 / 1 / 2 |
+| `switchover.sh <目标>` | 计划内切换，见 27.4 的顺序；每步核对，越不过就停在原地并给出回滚命令；sudo 处要人输口令 |
+| `promote.sh <目标>` | 主库宕机时强制提升备库 |
+| `reseed.sh <节点>` | 从现主库全量重建备库（原数据目录改名保留） |
+| `install-node.sh <节点>` | 幂等安装节点侧部件：看门狗、备份脚本、systemd 用户单元、peer.env、对端主机密钥、备份 crontab；按角色开 / 关隧道 |
+| `node/backup.sh` | 每日 12:00（北京）在主库那边导出 db_trader、db_trader_dev（-Fc，`pg_restore -l` 能列出才算成功），各留 7 份；备库那边记一行跳过。**复制不是备份** |
+
+### 27.7 用户拍板（2026-10-19）
+
+方案 A；上海旧库删掉（替换前已存档，原数据目录改名保留到往返演练通过后再删）；兄弟项目不再使用，上海整集群镜像 VPS；开发库一起同步；每日备份一起加。

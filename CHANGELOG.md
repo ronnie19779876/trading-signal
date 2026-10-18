@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## 3.4.5（未发布）
+
+- 新增：**数据库主备互换（VPS ↔ 上海）**（ARCHITECTURE §27、OPERATIONS §4e，用户 2026-10-19 认可）。PG 18 物理流复制，运行系统的那边是主库、另一边只读热备，切换时对调角色；两边不同时运行。
+  - 复制走 SSH 隧道（专用密钥、对方 `authorized_keys` 限定只能转发到 5432——实测执行命令失败、转发 8093 被拒），用户级 systemd 服务维持，不装 autossh；
+    看门狗每 2 分钟看 WAL 接收状态，不在 streaming 或 5 分钟没消息就重启隧道（隧道「进程活着、转发不通」systemd 看不出来）。
+  - 脚本 `scripts/replica/`：`status.sh`（只读）、`switchover.sh`（计划内切换，每步核对、越不过就停在原地并给回滚命令）、`promote.sh`（主库宕机强制提升）、
+    `reseed.sh`（全量重建备库）、`install-node.sh`（节点侧部件幂等安装，对端主机指纹先与运维机已信任的比对）。主机信息只在运维机 `~/.config/trading-signal/replica.env`。
+  - 每日备份 `node/backup.sh`（北京 12:00，只在主库那边导出 db_trader、db_trader_dev，`pg_restore -l` 校验，各留 7 份）。此前 VPS 上没有任何定期备份。
+  - 流程先在上海用两个临时集群演练：计划切换往返两次（不需要 pg_rewind）、宕机强制提升 + pg_rewind 倒回，均通过；演练发现 pg_rewind 会把源端数据目录里的配置拷过来，
+    所以节点各自的设置只放 `/etc/postgresql/18/main/conf.d/`。
+- 新增：**环境守卫拒绝在只读热备上启动**（`EnvironmentCheck.verify` 先查 `pg_is_in_recovery()`，一条迁移都不执行）。备库的环境标记同样是 PROD，单看标记分不出来；
+  测试 2 条（标记一致也拒绝、备库上不迁移），去掉检查即变红。
+
 ## 3.4.4（2026-10-18 发布）
 
 - 修正：**量化选股周补缺里 SKYD 的盈透历史日线每次超时、记失败，作业 PARTIAL**（2026-10-17 美东 09:00 生产，用户 10-17 认可方案）。

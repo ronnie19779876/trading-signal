@@ -339,6 +339,55 @@ systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `Wor
 
 2026-10-11 实测：生产库压缩 dump 约 38 MB、开发库约 55 MB，21 张表恢复后逐行一致。旧服务器在验证通过前保留不动，作回滚依据。
 
+## 4e. 主备切换与备份（VPS ↔ 上海，3.4.5）
+
+设计见 ARCHITECTURE §27。物理流复制：运行系统的那边是主库，另一边只读热备；**两边不能同时运行**（备库上应用起不来，环境守卫拒绝）。
+脚本在运维机（本机）上跑，主机信息放 `~/.config/trading-signal/replica.env`（600，不进仓库）：
+
+```
+vps_ssh=admin@<VPS 地址>
+vps_port=22
+shanghai_ssh=devops@<上海地址>
+shanghai_port=2022
+```
+
+**一次性准备**（要 sudo 或改安全配置，由人执行；2026-10-19 已做完）：
+
+1. 两边各生成隧道专用密钥 `ssh-keygen -t ed25519 -N '' -C 'pg-replica <本机>' -f ~/.ssh/id_pg_replica`，公钥加进**对方**的 `~/.ssh/authorized_keys`，行首带
+   `restrict,port-forwarding,permitopen="127.0.0.1:5432",command="/bin/false"`（只能转发到对方 5432，不能登录、不能执行命令）。
+2. 两边 `sudo loginctl enable-linger $USER`（隧道与看门狗是用户级 systemd 服务，要在没人登录时常驻）。
+3. 两边 postgres 用户的 `~/.pgpass` 加 `127.0.0.1:15432:replication:replicator:<口令>`（两边同一个口令，命令前加空格免进历史）。
+4. 两边 `/etc/postgresql/18/main/conf.d/replica.conf`（application_name 写本机名 vps / shanghai）与 `pg_hba.conf` 一行 `host replication replicator 127.0.0.1/32 scram-sha-256`：
+
+   ```
+   primary_conninfo = 'host=127.0.0.1 port=15432 user=replicator application_name=vps passfile=/var/lib/postgresql/.pgpass'
+   primary_slot_name = 'replica'
+   ```
+
+5. 在主库上（`sudo -u postgres psql`）：`CREATE ROLE replicator WITH REPLICATION LOGIN;`、`\password replicator`、`GRANT pg_monitor TO trader;`、
+   `SELECT pg_create_physical_replication_slot('replica', true);`、`ALTER SYSTEM SET wal_compression = 'zstd';`、`ALTER SYSTEM SET max_slot_wal_keep_size = '20GB';`、`SELECT pg_reload_conf();`（都不用重启）。
+6. 两边 `./scripts/replica/install-node.sh vps`、`./scripts/replica/install-node.sh shanghai`（核对主机指纹、装看门狗与备份、按角色开关隧道）。
+7. 备库那边首次全量同步：`./scripts/replica/reseed.sh <备库>`（或照 §27 的命令手工做）。
+
+**日常**：`./scripts/replica/status.sh` 看两边角色、复制是否 streaming、落后多少、复制槽压着多少 WAL。看门狗日志 `journalctl --user -u pg-replica-watchdog`；隧道 `systemctl --user status pg-replica-tunnel`。
+**每次发版两边都要部署**（同一版本目录），切换脚本会拒绝版本不同的切换；备库那边只放好目录、不启动。
+
+**计划内切换**（人在终端前，sudo 处输口令）：
+
+```bash
+./scripts/replica/switchover.sh shanghai
+```
+
+脚本依次：检查 → 停旧侧应用 → 旧侧 CHECKPOINT → 等目标追平 → 旧侧正常关闭数据库 → 核对关闭检查点已到目标（越不过就停，旧侧可原样回滚，脚本会打印命令）
+→ 提升目标 → 旧侧改备库 → 目标启动应用。之后**人工**：旧侧退出 IB Gateway、停 OpenD，目标登录 IB Gateway、启 OpenD；本机隧道改指目标。
+避开美东交易日 17:30～22:30 的跑批与周六 06:30～10:00 的周作业。
+
+**主库宕机**（主库那台连不上、短时间回不来）：`./scripts/replica/promote.sh <备库>` → 在它上面启动应用 → 网关与本机隧道照上面做。
+会丢掉宕机前还没传过去的写入（链路正常时几秒）。原主库回来后**不要启动它的应用**，`./scripts/replica/reseed.sh <原主库>` 重建成备库。
+
+**备份**：两边 crontab 每天 12:00（北京）跑 `~/pg-replica/bin/backup.sh`，只在主库那边导出 db_trader、db_trader_dev 到 `~/db-backup/daily/`，各留 7 份，日志 `backup.log`。
+恢复单库：`pg_restore -h localhost -U trader -d <库> --clean --if-exists --no-owner <文件>`（只能在主库上做，会随复制到备库）。
+
 ## 4a. 行情数据底座（第 2 期·步骤 1）
 
 首次建库后的顺序：`POST /api/universe/sync`（约 1 分钟）→ `POST /api/bars/refresh/universe?count=1000`（约 7 分钟，零额度）→ `POST /api/bars/rehab/refresh?all=true`（约 5 分钟，零额度）→ 把候选加入池 `POST /api/pool/{symbol}`（每只占 1 个历史额度，自动排深度回补）。

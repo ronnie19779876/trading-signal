@@ -43,6 +43,11 @@ public class JdbcMarkerStore implements EnvironmentCheck.MarkerStore {
     }
 
     @Override
+    public boolean inRecovery() {
+        return Boolean.TRUE.equals(jdbc.queryForObject("SELECT pg_is_in_recovery()", Boolean.class));
+    }
+
+    @Override
     public void stamp(AppEnvironment environment, String note) {
         jdbc.update("INSERT INTO app_environment (id, name, note) VALUES (1, ?, ?)", environment.name(), note);
     }
