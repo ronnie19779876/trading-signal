@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## 3.4.6（未发布）
+## 3.4.6（2026-10-22 发布）
 
 - 修正：**加仓当天页面顶部账户盈亏整天为空，持仓表成本与浮盈与盈透 App 不符**（2026-10-20 加仓 GOOG 后生产实测，ARCHITECTURE §20.8，用户 10-22 认可方案）。
   - 原因：盈透 API 的 `reqPositionsMulti` / `reqPositions` 均价与 `reqPnLSingle` 浮盈在加仓后仍按加仓前的成本（GOOG 346.806，App 339.525），
