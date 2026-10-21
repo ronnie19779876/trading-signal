@@ -29,7 +29,7 @@ class IbkrPortfolioFeedTest {
     private static final int GOOG = 208813720;
 
     private final IbkrLiveAccountTest.FakeWire wire = new IbkrLiveAccountTest.FakeWire();
-    private final IbkrPortfolioFeed feed = new IbkrPortfolioFeed(wire, ACCT);
+    private final IbkrPortfolioFeed feed = new IbkrPortfolioFeed(wire, () -> ACCT);
     private int changes;
 
     {
@@ -103,8 +103,55 @@ class IbkrPortfolioFeedTest {
 
     @Test
     void 没配账户时不订阅() {
-        IbkrPortfolioFeed noAccount = new IbkrPortfolioFeed(wire, null);
+        IbkrPortfolioFeed noAccount = new IbkrPortfolioFeed(wire, () -> null);
         assertThat(noAccount.subscribe(false)).isFalse();
+        verify(wire.client, never()).reqAccountUpdates(anyBoolean(), anyString());
+    }
+
+    /**
+     * 回归（3.4.6 上线即发现）：生产没配 TRADER_IBKR_ACCOUNT（账户一直从受管列表里选），3.4.6 只认配置 → 推送根本没订上。
+     * 3.4.7：配置没有就用网关下发的唯一受管账户（由 IbkrGateway 提供），再定不下时由实时账户传入它的账户补订。
+     */
+    @Test
+    void 账户定不下时不订_实时账户传入账户后订上() {
+        IbkrPortfolioFeed unresolved = new IbkrPortfolioFeed(wire, () -> null);
+        assertThat(unresolved.subscribe(false)).isFalse();
+        verify(wire.client, never()).reqAccountUpdates(anyBoolean(), anyString());
+
+        assertThat(unresolved.subscribe(false, ACCT)).isTrue();
+        assertThat(wire.pending(IbkrPortfolioFeed.ACCOUNT_RETRY)).as("订上后撤掉待重试").isZero();
+        verify(wire.client).reqAccountUpdates(true, ACCT);
+        channel().item(row(GOOG, "GOOG", 162, 339.52469445, -1607.80));
+        channel().end();
+        assertThat(unresolved.rows()).as("推送按订阅时的账户过滤").containsOnlyKeys(Integer.toString(GOOG));
+    }
+
+    /**
+     * 受管账户晚到（真实网关实测：连上当刻列表为空）：定不下时 5 秒后自己再试，不依赖有人打开实时账户页面——
+     * 生产没人看页面时，18:00 快照取持仓前推送也得订上。
+     */
+    @Test
+    void 受管账户晚到时自动重试订上() {
+        java.util.concurrent.atomic.AtomicReference<String> managed = new java.util.concurrent.atomic.AtomicReference<>();
+        IbkrPortfolioFeed lazy = new IbkrPortfolioFeed(wire, managed::get);
+        assertThat(lazy.subscribe(false)).isFalse();
+        assertThat(wire.pending(IbkrPortfolioFeed.ACCOUNT_RETRY)).isEqualTo(1);
+
+        managed.set(ACCT);
+        wire.fire(IbkrPortfolioFeed.ACCOUNT_RETRY);
+
+        verify(wire.client).reqAccountUpdates(true, ACCT);
+        assertThat(wire.pending(IbkrPortfolioFeed.ACCOUNT_RETRY)).isZero();
+    }
+
+    @Test
+    void 一直定不下账户时重试有上限() {
+        IbkrPortfolioFeed never = new IbkrPortfolioFeed(wire, () -> null);
+        never.subscribe(false);
+        for (int i = 0; i < IbkrPortfolioFeed.ACCOUNT_RETRIES; i++) {
+            wire.fire(IbkrPortfolioFeed.ACCOUNT_RETRY);
+        }
+        assertThat(wire.pending(IbkrPortfolioFeed.ACCOUNT_RETRY)).isZero();
         verify(wire.client, never()).reqAccountUpdates(anyBoolean(), anyString());
     }
 

@@ -39,9 +39,21 @@ final class IbkrPortfolioFeed {
 
     /** 一批里逐只推送，攒一下再生效（与账户汇总同一做法）。 */
     static final long DEBOUNCE_MS = 300;
+    /**
+     * 账户定不下时隔多久再试、最多几次（3.4.7）：刚连上时受管账户列表常常还没到（真实网关实测连上当刻为空），
+     * 而生产没人开页面就不会有实时账户来补订——18:00 快照取持仓时推送得已经订上。
+     */
+    static final Duration ACCOUNT_RETRY = Duration.ofSeconds(5);
+    static final int ACCOUNT_RETRIES = 12;
 
     private final IbkrLiveAccount.Wire wire;
-    private final String accountId;
+    /**
+     * 订哪个账户：配置的 {@code trader.ibkr.account}，没配就取网关下发的受管账户（只有一个时）。
+     * 3.4.6 只认配置，而生产的 {@code TRADER_IBKR_ACCOUNT} 本来就是空的（账户一直从受管列表里选），上线后没订上（3.4.7 修）。
+     */
+    private final java.util.function.Supplier<String> account;
+    /** 本次订阅用的账户（推送按它过滤） */
+    private String accountId;
 
     /** 订上时所在的会话；null = 当前没有订阅 */
     private Object bound;
@@ -53,11 +65,13 @@ final class IbkrPortfolioFeed {
     /** 均价不一致的 WARN 每组数只记一次 */
     private final Set<String> costDiffLogged = new HashSet<>();
     private boolean noAccountLogged;
+    private int accountRetries;
+    private Runnable accountRetry;
     private String lastError;
 
-    IbkrPortfolioFeed(IbkrLiveAccount.Wire wire, String accountId) {
+    IbkrPortfolioFeed(IbkrLiveAccount.Wire wire, java.util.function.Supplier<String> account) {
         this.wire = wire;
-        this.accountId = accountId;
+        this.account = account;
     }
 
     /** 每批生效后回调（实时账户据此重发持仓与逐只盈亏）。 */
@@ -82,12 +96,35 @@ final class IbkrPortfolioFeed {
      * @param afterRecovery 连接刚恢复（断线重连或 1101）：1101 时会话不变而券商已丢弃订阅，必须重订（同账户汇总）。
      */
     boolean subscribe(boolean afterRecovery) {
-        if (accountId == null || accountId.isBlank()) {
-            if (!noAccountLogged) {
-                log.warn("账户更新推送没有配置账户（trader.ibkr.account），不订阅；持仓均价与浮盈沿用原来的来源");
+        return subscribe(afterRecovery, null);
+    }
+
+    /**
+     * @param fallbackAccount 账户还定不下来时用的账户（实时账户订阅时传它自己的账户），可空
+     */
+    boolean subscribe(boolean afterRecovery, String fallbackAccount) {
+        String acct = account.get();
+        if (acct == null || acct.isBlank()) {
+            acct = fallbackAccount;
+        }
+        if (acct == null || acct.isBlank()) {
+            if (wire.sessionToken() != null && accountRetry == null && accountRetries < ACCOUNT_RETRIES) {
+                accountRetries++;
+                accountRetry = wire.later(ACCOUNT_RETRY, () -> {
+                    accountRetry = null;
+                    subscribe(afterRecovery, fallbackAccount);
+                });
+            } else if (accountRetries >= ACCOUNT_RETRIES && !noAccountLogged) {
+                log.warn("账户更新推送定不下账户（没配 trader.ibkr.account，受管账户不止一个或一直没收到），不订阅；"
+                        + "实时账户订阅时会用它的账户再试。持仓均价与浮盈暂用原来的来源");
                 noAccountLogged = true;
             }
             return false;
+        }
+        accountRetries = 0;
+        if (accountRetry != null) {
+            accountRetry.run();
+            accountRetry = null;
         }
         Object current = wire.sessionToken();
         if (current == null) {
@@ -102,8 +139,11 @@ final class IbkrPortfolioFeed {
         }
         clear();
         bound = current;
+        accountId = acct.trim();
+        noAccountLogged = false;
+        String subscribeAccount = accountId;
         wire.open(IbkrSubscriptions.PORTFOLIO, handler());
-        if (!wire.subscribe("账户更新推送", c -> c.reqAccountUpdates(true, accountId))) {
+        if (!wire.subscribe("账户更新推送", c -> c.reqAccountUpdates(true, subscribeAccount))) {
             wire.close(IbkrSubscriptions.PORTFOLIO);
             bound = null;
             return false;
@@ -113,6 +153,11 @@ final class IbkrPortfolioFeed {
 
     /** 断开 / 关停时退订。 */
     void stop() {
+        if (accountRetry != null) {
+            accountRetry.run();
+            accountRetry = null;
+        }
+        accountRetries = 0;
         if (subscribed()) {
             cancelOnBroker();
         } else {
@@ -183,7 +228,7 @@ final class IbkrPortfolioFeed {
             @Override
             public void item(Object item) {
                 IbkrAccounts.PortfolioRow r = (IbkrAccounts.PortfolioRow) item;
-                if (r.contract() == null || !accountId.equals(r.account())) {
+                if (r.contract() == null || accountId == null || !accountId.equals(r.account())) {
                     return;
                 }
                 String conId = Integer.toString(r.contract().conid());

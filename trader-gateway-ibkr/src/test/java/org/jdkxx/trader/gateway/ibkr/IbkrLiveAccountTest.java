@@ -425,7 +425,7 @@ class IbkrLiveAccountTest {
 
     /** 接上账户更新推送：首批到齐后重发持仓，数量一致的那只均价换成推送的值，其余原样。 */
     private IbkrPortfolioFeed portfolio(IbkrAccounts.PortfolioRow... rows) {
-        IbkrPortfolioFeed feed = new IbkrPortfolioFeed(wire, ACCT);
+        IbkrPortfolioFeed feed = new IbkrPortfolioFeed(wire, () -> ACCT);
         feed.onChange(live::onPortfolioChanged);
         live.portfolio(feed);
         feed.subscribe(false);

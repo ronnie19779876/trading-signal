@@ -345,13 +345,22 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
         return List.copyOf(out);
     }
 
+    /** 账户更新推送订哪个账户：配置的优先；没配时网关只下发了一个受管账户就用它，否则定不下（返回 null）。 */
+    private String portfolioAccount() {
+        if (props.account() != null && !props.account().isBlank()) {
+            return props.account().trim();
+        }
+        List<String> managed = facts.managedAccounts();
+        return managed.size() == 1 ? managed.get(0) : null;
+    }
+
     /** 账户更新推送，懒建；未启用时为 null。只在 dispatch 线程上调用。 */
     private IbkrPortfolioFeed portfolioFeed() {
         if (!portfolioFeedEnabled) {
             return null;
         }
         if (portfolioFeed == null) {
-            IbkrPortfolioFeed pf = new IbkrPortfolioFeed(new LiveWire(), props.account());
+            IbkrPortfolioFeed pf = new IbkrPortfolioFeed(new LiveWire(), this::portfolioAccount);
             pf.onChange(() -> {
                 if (live != null) {
                     live.onPortfolioChanged();
@@ -403,6 +412,10 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
         dispatch.execute(() -> {
             summaryFeed().listener(accountId, listener);   // 资金由常驻订阅供给，已有数据会立刻补一条
             summaryFeed().subscribe();
+            IbkrPortfolioFeed pf = portfolioFeed();
+            if (pf != null && isConnected() && !pf.subscribed()) {
+                pf.subscribe(false, accountId);   // 连上时定不下账户（没配、受管列表还没到）：用实时账户的账户补订
+            }
             if (live != null && live.accountId.equals(accountId)) {
                 live.listener(listener);
                 live.portfolio(portfolioFeed());
