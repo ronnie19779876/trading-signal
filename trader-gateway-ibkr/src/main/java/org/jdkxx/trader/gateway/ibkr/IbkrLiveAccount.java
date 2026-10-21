@@ -3,6 +3,7 @@ package org.jdkxx.trader.gateway.ibkr;
 import com.ib.client.Contract;
 import com.ib.client.EClientSocket;
 import org.jdkxx.trader.domain.Position;
+import org.jdkxx.trader.domain.PositionPnl;
 import org.jdkxx.trader.gateway.GatewayException;
 import org.jdkxx.trader.gateway.LiveAccountListener;
 import org.jdkxx.trader.gateway.RequestRejectedException;
@@ -40,8 +41,9 @@ import java.util.function.Consumer;
  * <b>账户汇总不在这里</b>：它改成了连接周期内只订一次的常驻订阅（{@link IbkrAccountSummaryFeed}，3.0.9），
  * 实时账户与每日快照共用那一条。原因见该类的注释——盈透的名额不随取消释放，订了又退迟早撞 322。
  *
- * <p><b>账户盈亏的核对要扣掉已实现</b>（3.0.10）：账户当日含已平仓标的的当日已实现部分，而逐只之和只覆盖当前持有的。
- * 2026-09-23 卖出一只持仓后，当日盈亏整天判不通过、界面一直空着——在此之前没有一天发生过平仓，所以从 3.0.3 起一直没暴露。
+ * <p>账户盈亏的核对口径演变：3.0.10 扣已实现（被 10-09 证伪）→ 3.1.5 平仓日只比浮盈 → 3.4.6 没有平仓时只比当日，见 {@link #verifyPnl()}。
+ * <p><b>持仓均价与逐只浮盈</b>（3.4.6）：有账户更新推送（{@link IbkrPortfolioFeed}，只在生产实例）且数量一致时取它的值，
+ * 与盈透 App 同源；当日、市值仍取 reqPnLSingle，现价仍取行情。
  */
 final class IbkrLiveAccount {
 
@@ -77,6 +79,8 @@ final class IbkrLiveAccount {
     final String accountId;
     private LiveAccountListener listener;
     private final Wire wire;
+    /** 账户更新推送（3.4.6，只在生产实例有）：持仓均价与浮盈优先取它；null 或没有对应行时用原来的来源。 */
+    private IbkrPortfolioFeed portfolio;
 
     /** 订上时所在的会话（{@link Wire#sessionToken()}）；null = 当前没有订阅 */
     private Object bound;
@@ -109,6 +113,52 @@ final class IbkrLiveAccount {
 
     void listener(LiveAccountListener listener) {
         this.listener = listener;
+    }
+
+    void portfolio(IbkrPortfolioFeed portfolio) {
+        this.portfolio = portfolio;
+    }
+
+    /**
+     * 账户更新推送有新一批生效：持仓（均价）与逐只盈亏（浮盈）按新值重发一次。
+     * 推送约 3 分钟一批，加仓后页面上的成本最多晚这么久更新。
+     */
+    void onPortfolioChanged() {
+        if (bound == null || !positionsReady) {
+            return;
+        }
+        emitPositions();
+        for (Map.Entry<String, IbkrAccounts.PnlSingleRow> e : singleRows.entrySet()) {
+            listener.onPositionPnl(positionPnl(e.getKey(), e.getValue()));
+        }
+    }
+
+    private Map<String, IbkrAccounts.PortfolioRow> portfolioRows() {
+        return portfolio == null ? Map.of() : portfolio.rows();
+    }
+
+    /** 均价换成账户更新推送的值（数量一致时），否则原样。 */
+    private List<Position> withPortfolioCost(List<Position> list) {
+        Map<String, IbkrAccounts.PortfolioRow> rows = portfolioRows();
+        if (rows.isEmpty()) {
+            return list;
+        }
+        List<Position> out = new ArrayList<>(list.size());
+        for (Position p : list) {
+            java.math.BigDecimal cost = IbkrPortfolioFeed.cost(rows, p.brokerRef(), p.quantity(), p.averageCost(),
+                    p.symbol(), portfolio.costDiffLogged());
+            out.add(cost == null ? p : new Position(p.broker(), p.accountId(), p.brokerRef(), p.symbol(), p.localSymbol(),
+                    p.securityType(), p.exchange(), p.primaryExchange(), p.currency(), p.quantity(), cost));
+        }
+        return List.copyOf(out);
+    }
+
+    /** 逐只盈亏：浮盈换成账户更新推送的值（数量一致时）；当日与市值仍是 reqPnLSingle 的原值。 */
+    private PositionPnl positionPnl(String conId, IbkrAccounts.PnlSingleRow row) {
+        PositionPnl raw = IbkrAccounts.positionPnl(conId, row, wire.now());
+        java.math.BigDecimal unrealized = IbkrPortfolioFeed.unrealized(portfolioRows(), conId, raw.quantity());
+        return unrealized == null ? raw : new PositionPnl(raw.broker(), raw.brokerRef(), raw.receivedAt(), raw.quantity(),
+                raw.daily(), unrealized, raw.realized(), raw.marketValue());
     }
 
     boolean subscribed() {
@@ -286,7 +336,7 @@ final class IbkrLiveAccount {
 
     private void emitPositions() {
         try {
-            List<Position> list = IbkrAccounts.positions(accountId, new ArrayList<>(positions.values()));
+            List<Position> list = withPortfolioCost(IbkrAccounts.positions(accountId, new ArrayList<>(positions.values())));
             listener.onPositions(list);
         } catch (RuntimeException e) {
             log.warn("实时持仓映射失败：{}", e.toString());
@@ -372,7 +422,7 @@ final class IbkrLiveAccount {
             public void item(Object item) {
                 IbkrAccounts.PnlSingleRow row = (IbkrAccounts.PnlSingleRow) item;
                 singleRows.put(conId, row);
-                listener.onPositionPnl(IbkrAccounts.positionPnl(conId, row, wire.now()));
+                listener.onPositionPnl(positionPnl(conId, row));
                 if (!pnlValid && pnlPending != null) {
                     verifyPnl();   // 账户盈亏先到、逐只后到：到齐了再核
                 }
@@ -410,8 +460,14 @@ final class IbkrLiveAccount {
     }
 
     /**
-     * 核对挂起的账户盈亏：逐只盈亏要覆盖全部持仓，<b>浮盈之和</b>对得上才采用（容差 {@value #PNL_TOLERANCE}）；
-     * 当日之和只在<b>当天没有平仓</b>时一并核对。逐只之和只用来判断这条推送完整与否，发出去的仍是账户盈亏的原值。
+     * 核对挂起的账户盈亏：逐只盈亏要覆盖全部持仓；<b>当天没有平仓时比当日之和，有平仓时比浮盈之和</b>
+     * （容差 {@value #PNL_TOLERANCE}，3.4.6 起）。逐只之和只用来判断这条推送完整与否，发出去的仍是账户盈亏的原值。
+     *
+     * <h2>为什么没有平仓时不再比浮盈（2026-10-20 ~ 10-22 实测）</h2>
+     * 当天加仓 GOOG 100 股后，{@code reqPnLSingle} 的浮盈仍按加仓前的均价 346.806 算（App 与账户更新推送是 339.525），
+     * 账户口径与逐只之和的浮盈恒差 1,179.65（= 100 × 11.80），账户盈亏因此整天置空；网关次日每日重启后仍然如此。
+     * 而当日两边精确相等（差 0.0），首条推送不完整时当日照样对不上（10-22 实测差 48.74），把关能力不减。
+     * 这里核对用的仍是 {@code reqPnLSingle} 的原值（两边都是流式推送，能精确比）；页面显示的逐只浮盈另取账户更新推送。
      *
      * <h2>为什么当日在平仓日不能比（2026-10-09 实测，推翻了 3.0.10 的做法）</h2>
      * 当天卖掉 BRK.B 80 股之后的真实推送：
@@ -455,8 +511,11 @@ final class IbkrLiveAccount {
         Double realized = realizedAmount == null ? null : realizedAmount.doubleValue();
         boolean closedToday = realized == null || realized != 0;
 
-        // 浮盈是判断推送完整与否的干净判据：两边口径都只含在持，平仓日也精确对得上（2026-10-09 实测差 0.0）。
-        boolean unrealOk = Math.abs(row.unrealized() - unreal) <= PNL_TOLERANCE;
+        // 没有平仓：只比当日（3.4.6）。加仓日 reqPnLSingle 的浮盈按加仓前的成本算、和账户口径差一个固定量
+        // （2026-10-20 GOOG 恒差 1,179.65，网关次日重启也没改对），而当日两边精确相等（差 0.0）；
+        // 首条推送不完整时当日照样对不上（10-22 实测差 48.74），把关能力不减。
+        // 平仓日：当日不可比（见上），只能比浮盈——同一天又有加仓且成本滞后时会判不通过，照实记日志。
+        boolean unrealOk = !closedToday || Math.abs(row.unrealized() - unreal) <= PNL_TOLERANCE;
         boolean dailyOk = closedToday || Math.abs(row.daily() - daily) <= PNL_TOLERANCE;
 
         if (unrealOk && dailyOk) {

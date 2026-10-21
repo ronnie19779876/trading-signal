@@ -2,6 +2,7 @@ package org.jdkxx.trader.core.selection;
 
 import org.jdkxx.trader.core.marketdata.audit.BarAuditService;
 import org.jdkxx.trader.domain.selection.SelectionModel;
+import org.jdkxx.trader.storage.selection.SelectionEarningsRepository;
 import org.jdkxx.trader.storage.selection.SelectionPriceSeamRepository;
 import org.jdkxx.trader.storage.selection.SelectionScoreRepository;
 import org.jdkxx.trader.storage.selection.SelectionValuationRepository;
@@ -37,18 +38,45 @@ public class SelectionAuditService {
     private final SelectionValuationRepository valuations;
     private final SelectionPriceSeamRepository seams;
     private final SelectionSimService sim;
+    private final SelectionEarningsRepository earnings;
     private final Supplier<LocalDate> settledCutoff;
     private final Clock clock;
 
     public SelectionAuditService(SelectionTargets targets, SelectionScoreRepository scores, SelectionValuationRepository valuations,
-                                 SelectionPriceSeamRepository seams, SelectionSimService sim, Supplier<LocalDate> settledCutoff, Clock clock) {
+                                 SelectionPriceSeamRepository seams, SelectionSimService sim, SelectionEarningsRepository earnings,
+                                 Supplier<LocalDate> settledCutoff, Clock clock) {
         this.targets = targets;
+        this.earnings = earnings;
         this.scores = scores;
         this.valuations = valuations;
         this.seams = seams;
         this.sim = sim;
         this.settledCutoff = settledCutoff;
         this.clock = clock;
+    }
+
+    /** 回看多久的公告来找「超期仍不齐」：一个季度再多一点，免得把上上季的旧账也翻出来。 */
+    static final int OVERDUE_WINDOW_DAYS = 135;
+
+    /**
+     * 报表到齐（3.4.6，非关键）：公告后 {@value SelectionDailyService#COMPLETE_LOOKBACK_DAYS} 天内还缺的由每日作业续取，
+     * 这里只报个数；超过这个天数仍缺的（富途一直没给，已不再续取）逐只列出缺哪几类。
+     * 缺的季度在评分里会让 ROE / 自由现金流率等指标缺失（2026-10-21 ABT、LVS 因此未评级）。
+     */
+    BarAuditService.Check financialsComplete(LocalDate d, java.util.Set<Long> scope) {
+        int window = SelectionDailyService.COMPLETE_LOOKBACK_DAYS;
+        long catchingUp = earnings.incompleteFinancials(d.minusDays(window), d).stream()
+                .filter(f -> scope.contains(f.instrumentId())).count();
+        List<SelectionEarningsRepository.IncompleteFinancials> overdue = earnings
+                .incompleteFinancials(d.minusDays(OVERDUE_WINDOW_DAYS), d.minusDays(window + 1L)).stream()
+                .filter(f -> scope.contains(f.instrumentId())).toList();
+        List<String> samples = overdue.stream()
+                .map(f -> f.symbol() + " " + f.pubDate() + " 公告，缺 " + String.join("、", f.missing()))
+                .toList();
+        String detail = (catchingUp > 0 ? "公告后 " + window + " 天内报表未到齐、每日续取中 " + catchingUp + " 只；" : "公告后 " + window + " 天内的报表都已到齐；")
+                + (overdue.isEmpty() ? "没有超期仍缺的"
+                : "超过 " + window + " 天仍缺 " + overdue.size() + " 只（富途一直没给，已不再续取，评分用库里已有的季度）");
+        return new BarAuditService.Check("financialsComplete", overdue.isEmpty(), false, detail, overdue.size(), samples);
     }
 
     /** 默认审计日 = 最近一个已收盘落定的交易日（模拟交易重算的缺省截止日也用它）。 */
@@ -81,6 +109,8 @@ public class SelectionAuditService {
         checks.add(new BarAuditService.Check("priceSeams", true, false,
                 "盈透接缝 " + seam.ok() + "/" + seam.checked() + " 通过（不通过的在需要盈透段的日子动能记缺）",
                 seam.checked() - seam.ok(), List.of()));
+        checks.add(financialsComplete(d, targets.all().stream().map(org.jdkxx.trader.storage.marketdata.InstrumentRow::id)
+                .collect(java.util.stream.Collectors.toSet())));
         checks.addAll(sim.auditChecks(d));
         checks.add(new BarAuditService.Check("knownBiases", true, false, "已知偏差（回测报告必须原样带出）", BIASES.size(), BIASES));
 

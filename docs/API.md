@@ -147,10 +147,11 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 - `status`：`LIVE` 数据在推送；`WARMING` 刚订阅；`DISCONNECTED` 网关断了，保留断线前最后收到的数据；`UNAVAILABLE` 取不到（网关未启用 / 未连接 / 选不出账户），`detail` 说明原因。
 - `accountMask`、`currency`、`startedAt`（本次订阅开始时间）、`lastError`（订阅被券商拒绝时的说明，例如账户汇总超出每客户端 2 个的上限 322）。
 - `money`：盈透账户汇总——`netLiquidation`（净值）、`totalCash`、`availableFunds`、`buyingPower`、`excessLiquidity`、`grossPositionValue`、`stockMarketValue`、`accruedDividend`、`accruedInterest`（应计利息，3.1.3 起）、`updatedAt`。**约 3 分钟才推一次**（实测），可能比盈透 App 晚几分钟。
-- `pnl`：盈透账户盈亏 `daily`（当日）、`unrealized`（浮动）、`realized`（当日已实现）、`updatedAt`；按变化秒级推送，盘前盘后盈透用扩展时段价重算。**还没收到有效推送时整个为 null**（首条推送不对、被丢弃；10 秒没有有效值网关会重订，最多 3 次）。
+- `pnl`：盈透账户盈亏 `daily`（当日）、`unrealized`（浮动）、`realized`（当日已实现）、`updatedAt`；按变化秒级推送，盘前盘后盈透用扩展时段价重算。**还没收到有效推送时整个为 null**（首条推送不对、被丢弃；10 秒没有有效值网关会重订，最多 3 次）。核对口径（3.4.6）：当天没有平仓时与逐只当日之和比，有平仓时与逐只浮盈之和比。
 - `positions[]`：`symbol`（类别股已换成点，如 `BRK.B`）、`conId`、`securityType`、`quantity`、`averageCost`；`last` / `lastAt` / `lastDelayed` 为盈透行情最新价（与 App「最新价」同源，行情未到时为 null，`lastDelayed=true` 表示降级成延迟行情）；`priorClose` 为行情前收（与 App「PRIOR CLOSE」同值）；
   与 App 同口径的派生项（3.0.4）：`change` = last − priorClose、`changePct`、`costBasis` = averageCost × quantity（App 的 Cost Basis）、`portfolioPct` = marketValue ÷ money.netLiquidation × 100（App 的 % of Portfolio），缺输入时为 null，均两位小数；
-  `marketValue`、`dailyPnl`、`unrealizedPnl`、`updatedAt` 来自盈透逐只盈亏。盈透的市值按它自己的估值价算，**不一定等于 last × quantity**（实测 GOOG 估值 344.41、最新价 346.08）。
+  `marketValue`、`dailyPnl`、`updatedAt` 来自盈透逐只盈亏；**`averageCost`（及 `costBasis`）与 `unrealizedPnl` 在生产实例取盈透账户更新推送**（3.4.6，与 App 同源，约 3 分钟一批；
+  加仓当天持仓接口与逐只盈亏会按加仓前的成本给，见 ARCHITECTURE §20.8），数量与持仓不一致或推送没到时退回持仓接口 / 逐只盈亏的原值；开发实例始终用后者。盈透的市值按它自己的估值价算，**不一定等于 last × quantity**（实测 GOOG 估值 344.41、最新价 346.08）。
   `cashEquivalent`；`positionsUpdatedAt` 为持仓列表最近一次变化。金额保留两位小数（格式化，不是计算）。
 
 持仓同步规则：持有而池里没有的加为 HOLDING（库里也没有的先向富途解析建档）；池里是 POOL 的升为 HOLDING、清仓后回 POOL；
@@ -240,7 +241,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | `GET /api/selection/scores?date=&sector=&rating=` | 某天全表（默认最近一个评分日），按合成分从高到低、未评级的排后面。每行：板块、`exclusion`（SECURITY_TYPE / NO_SECTOR / SECTOR_TOO_SMALL / PRICE_BELOW_MIN / NO_PRICE / INSUFFICIENT_HISTORY）与说明、四个因子分、合成分、合成分百分位、`rating`（STRONG_BUY / BUY / HOLD / SELL / STRONG_SELL，强制分布 10/20/40/20/10）、`sbStreak`（连续 STRONG_BUY 的交易日数）、`metrics`（JSON：`{指标: [原值, 板块内百分位]}`）、`fingerprint`（输入指纹） |
 | `GET /api/selection/days?limit=` | 最近的评分日，从新到旧（默认 60 个，上限 5000）；前端日期选择与「与上一个评分日对比」用 |
 | `GET /api/selection/scores/{symbol}?from=&to=` | 单只历史，默认最近一年；不在范围内的代码 404 |
-| `GET /api/selection/audit?date=` | 量化选股审计（统一审计结构，`check-daily.sh` 第六段）：关键项 `scored`（当天有评分）、`ratedShare`（可评级 ≥ 范围 80%）、`valuationFresh`（当天有估值 ≥ 90%）；附评级分布、排除原因、各板块评级只数、接缝通过数、已知偏差 |
+| `GET /api/selection/audit?date=` | 量化选股审计（统一审计结构，`check-daily.sh` 第六段）：关键项 `scored`（当天有评分）、`ratedShare`（可评级 ≥ 范围 80%）、`valuationFresh`（当天有估值 ≥ 90%）；附评级分布、排除原因、各板块评级只数、接缝通过数、已知偏差 3.4.6 起另有非关键项 `financialsComplete`（季报到齐：公告后 45 天内未齐的续取个数；超过 45 天仍缺的逐只列出缺哪几类报表）。 |
 | `POST /api/selection/score?date=` | 重算某一天（异步作业 `SELECTION_SCORE`，只打分）。不是交易日或还没收盘落定的日子 400 |
 | `POST /api/selection/replay?from=&to=` | 历史重放（异步 `SELECTION_REPLAY`）：逐个交易日打分落库，`sbStreak` 按日期顺序接续，只到已收盘落定的那天 |
 | `POST /api/selection/daily?date=` | 每日作业（异步 `SELECTION_DAILY`）：估值快照续接 → 近 6 天发了财报的补取最近 4 季季报与近 3 个月估值 → 打分 → 模拟交易重算；定时任务美东 18:30，22:30 评分缺失或模拟交易没算到当天时补跑 |

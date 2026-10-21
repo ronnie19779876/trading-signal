@@ -82,10 +82,22 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
     /** 实时账户订阅：只在 dispatch 线程上读写。 */
     private IbkrLiveAccount live;
     private volatile boolean liveIntent;
+    /**
+     * 账户更新推送（3.4.6）：持仓均价与浮盈与盈透 App 同源。<b>只在生产实例启用</b>——同一账户同一时间只能有一个
+     * API 客户端订它，开发实例订了会把生产挤掉。创建与订退在 dispatch 线程上；字段 volatile 供快照取持仓时读。
+     */
+    private final boolean portfolioFeedEnabled;
+    private volatile IbkrPortfolioFeed portfolioFeed;
 
     public IbkrGateway(IbkrProperties props) {
+        this(props, false);
+    }
+
+    /** @param portfolioFeedEnabled 是否订阅账户更新推送（只给生产实例：{@code trader.environment=PROD}） */
+    public IbkrGateway(IbkrProperties props, boolean portfolioFeedEnabled) {
         props.validate();
         this.props = props;
+        this.portfolioFeedEnabled = portfolioFeedEnabled && props.enabled();
         if (!props.enabled()) {
             scheduler = null;
             dispatch = null;
@@ -113,6 +125,10 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
                     // 账户汇总常驻：一个连接周期只订一次。但 1101（数据丢失）时会话不变、券商已丢弃订阅，
                     // 必须显式重订——reconnected 为 true 的两种情形都要传进去，见 subscribe(boolean)
                     summaryFeed().subscribe(reconnected);
+                    IbkrPortfolioFeed pf = portfolioFeed();
+                    if (pf != null) {
+                        pf.subscribe(reconnected);
+                    }
                     if (live != null) {
                         live.subscribe();
                     }
@@ -124,6 +140,9 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
                 dispatch.execute(() -> {
                     if (summaryFeed != null) {
                         summaryFeed.stop();     // 等待中的快照请求立刻失败，不干等 90 秒
+                    }
+                    if (portfolioFeed != null) {
+                        portfolioFeed.stop();
                     }
                 });
             }
@@ -303,7 +322,44 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
         if (!isConnected()) {
             return CompletableFuture.failedFuture(new NotConnectedException(Broker.IBKR, status().detail()));
         }
-        return connection.positions(accountId).thenApply(rows -> IbkrAccounts.positions(accountId, rows));
+        return connection.positions(accountId).thenApply(rows -> withPortfolioCost(IbkrAccounts.positions(accountId, rows)));
+    }
+
+    /**
+     * 每日快照取持仓时，均价同样优先取账户更新推送（数量一致时）：2026-10-20 加仓当天的快照按旧均价存了成本。
+     * 推送没订上（开发实例）或还没到齐时原样返回。
+     */
+    private List<Position> withPortfolioCost(List<Position> list) {
+        IbkrPortfolioFeed pf = portfolioFeed;
+        java.util.Map<String, IbkrAccounts.PortfolioRow> rows = pf == null ? java.util.Map.of() : pf.rows();
+        if (rows.isEmpty()) {
+            return list;
+        }
+        List<Position> out = new java.util.ArrayList<>(list.size());
+        for (Position p : list) {
+            java.math.BigDecimal cost = IbkrPortfolioFeed.cost(rows, p.brokerRef(), p.quantity(), p.averageCost(),
+                    p.symbol(), pf.costDiffLogged());
+            out.add(cost == null ? p : new Position(p.broker(), p.accountId(), p.brokerRef(), p.symbol(), p.localSymbol(),
+                    p.securityType(), p.exchange(), p.primaryExchange(), p.currency(), p.quantity(), cost));
+        }
+        return List.copyOf(out);
+    }
+
+    /** 账户更新推送，懒建；未启用时为 null。只在 dispatch 线程上调用。 */
+    private IbkrPortfolioFeed portfolioFeed() {
+        if (!portfolioFeedEnabled) {
+            return null;
+        }
+        if (portfolioFeed == null) {
+            IbkrPortfolioFeed pf = new IbkrPortfolioFeed(new LiveWire(), props.account());
+            pf.onChange(() -> {
+                if (live != null) {
+                    live.onPortfolioChanged();
+                }
+            });
+            portfolioFeed = pf;
+        }
+        return portfolioFeed;
     }
 
     /**
@@ -349,6 +405,7 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
             summaryFeed().subscribe();
             if (live != null && live.accountId.equals(accountId)) {
                 live.listener(listener);
+                live.portfolio(portfolioFeed());
                 if (!live.subscribed() && isConnected()) {
                     live.subscribe();
                 }
@@ -358,6 +415,7 @@ public class IbkrGateway implements BrokerGateway, ReferenceDataGateway, Account
                 live.stop();
             }
             live = new IbkrLiveAccount(accountId, listener, new LiveWire());
+            live.portfolio(portfolioFeed());
             if (isConnected()) {
                 live.subscribe();
             }

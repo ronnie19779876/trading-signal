@@ -47,4 +47,43 @@ class SelectionDailyServiceTest {
         o.verify(backfill).run(eq(BackfillPart.FINANCIALS), eq(List.of()), eq(false), any());
         o.verify(backfill).run(eq(BackfillPart.PRICES), eq(List.of()), eq(false), any());
     }
+
+    /**
+     * 3.4.6：公告超过 6 天、但该季报表还没到齐的（2026-10-22 生产 JPM 公告 8 天仍缺资产负债表与现金流）继续补取；
+     * 到齐的、超过 45 天的不再取（后者由审计列出）。
+     */
+    @Test
+    void 报表未到齐的公告后45天内继续补取() throws Exception {
+        java.time.LocalDate d = java.time.LocalDate.of(2026, 10, 21);
+        SelectionTargets targets = mock(SelectionTargets.class);
+        org.jdkxx.trader.storage.marketdata.InstrumentRow abt = row(1, "ABT"), jpm = row(2, "JPM"), ko = row(3, "KO");
+        when(targets.all()).thenReturn(List.of(abt, jpm, ko));
+        SelectionEarningsRepository earnings = mock(SelectionEarningsRepository.class);
+        when(earnings.instrumentsWithPubBetween(d.minusDays(SelectionDailyService.REFRESH_LOOKBACK_DAYS), d)).thenReturn(java.util.Set.of(1L));
+        when(earnings.incompleteFinancials(d.minusDays(SelectionDailyService.COMPLETE_LOOKBACK_DAYS), d)).thenReturn(List.of(
+                new SelectionEarningsRepository.IncompleteFinancials(1, "ABT", d, List.of("BALANCE_SHEET", "CASH_FLOW")),
+                new SelectionEarningsRepository.IncompleteFinancials(2, "JPM", d.minusDays(8), List.of("CASH_FLOW"))));
+        SelectionDataGateway gw = mock(SelectionDataGateway.class);
+        when(gw.quarterlyFinancials(any(), any(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(List.of()));
+        when(gw.valuationHistory(any(), any(), any())).thenReturn(java.util.concurrent.CompletableFuture.completedFuture(List.of()));
+        SelectionScoringService scoring = mock(SelectionScoringService.class);
+        when(scoring.scoreDay(any(), any())).thenReturn("评分");
+        SelectionSimService sim = mock(SelectionSimService.class);
+        when(sim.update(any(), any())).thenReturn("模拟");
+        SelectionDailyService service = new SelectionDailyService(targets, mock(SelectionValuationRepository.class), earnings,
+                mock(FinancialRepository.class), gw, scoring, mock(SelectionBackfillService.class), sim);
+
+        String summary = service.daily(d, ctx);
+
+        org.mockito.Mockito.verify(gw, org.mockito.Mockito.times(3)).quarterlyFinancials(eq(abt.instrument()), any(), org.mockito.ArgumentMatchers.anyInt());
+        org.mockito.Mockito.verify(gw, org.mockito.Mockito.times(3)).quarterlyFinancials(eq(jpm.instrument()), any(), org.mockito.ArgumentMatchers.anyInt());
+        org.mockito.Mockito.verify(gw, org.mockito.Mockito.never()).quarterlyFinancials(eq(ko.instrument()), any(), org.mockito.ArgumentMatchers.anyInt());
+        org.assertj.core.api.Assertions.assertThat(summary).contains("新公告补取 2/2（其中报表未到齐续取 1 只）");
+    }
+
+    private static org.jdkxx.trader.storage.marketdata.InstrumentRow row(long id, String symbol) {
+        return new org.jdkxx.trader.storage.marketdata.InstrumentRow(id, org.jdkxx.trader.domain.Market.US, symbol, symbol, null,
+                org.jdkxx.trader.domain.SecurityType.STOCK, 1, null, false, "NYSE", null, "RESOLVED");
+    }
 }

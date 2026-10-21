@@ -71,6 +71,10 @@ final class IbkrWrapper extends DefaultEWrapper {
 
     @Override
     public void error(int id, long errorTime, int errorCode, String errorMsg, String advancedOrderRejectJson) {
+        if (errorCode == 2100 || errorCode == 2101) {
+            // 账户更新推送被退订（2100）/ 被别的客户端占着（2101）：不带 reqId，转给那条通道，照常也当系统消息记
+            subscriptions.error(IbkrSubscriptions.PORTFOLIO, new RequestRejectedException(Broker.IBKR, errorCode, errorMsg));
+        }
         if (IbkrRequestRegistry.isRequestId(id) && registry.isPending(id)) {
             registry.fail(id, new RequestRejectedException(Broker.IBKR, errorCode, errorMsg));
             return;
@@ -147,6 +151,19 @@ final class IbkrWrapper extends DefaultEWrapper {
     public void accountSummaryEnd(int reqId) {
         registry.complete(reqId);
         subscriptions.end(reqId);
+    }
+
+    /** 账户更新推送（3.4.6）：每只持仓一行，首批到齐后 accountDownloadEnd；之后有变化或约 3 分钟推一次。 */
+    @Override
+    public void updatePortfolio(Contract contract, Decimal position, double marketPrice, double marketValue,
+                                double averageCost, double unrealizedPNL, double realizedPNL, String accountName) {
+        subscriptions.item(IbkrSubscriptions.PORTFOLIO, new IbkrAccounts.PortfolioRow(accountName, contract, position,
+                averageCost, unrealizedPNL, marketPrice, marketValue));
+    }
+
+    @Override
+    public void accountDownloadEnd(String accountName) {
+        subscriptions.end(IbkrSubscriptions.PORTFOLIO);
     }
 
     @Override

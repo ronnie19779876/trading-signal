@@ -162,4 +162,29 @@ class IbkrWrapperTest {
         assertThat(got).containsExactly("PnlRow", "PnlSingleRow", "MarketDataTypeRow", "TickRow", "error=322");
         assertThat(events).doesNotContain("sys=322");
     }
+
+    /** 账户更新推送没有 reqId：updatePortfolio / accountDownloadEnd 走固定通道；2100 / 2101 转给它，照常也当系统消息。 */
+    @Test
+    void 账户更新推送走固定通道_2100转给它() {
+        List<Object> items = new ArrayList<>();
+        List<String> ends = new ArrayList<>();
+        List<Integer> errors = new ArrayList<>();
+        subscriptions.open(IbkrSubscriptions.PORTFOLIO, new IbkrSubscriptions.Handler() {
+            @Override public void item(Object item) { items.add(item); }
+            @Override public void end() { ends.add("end"); }
+            @Override public void error(org.jdkxx.trader.gateway.RequestRejectedException e) { errors.add(e.code()); }
+        });
+        Contract c = new Contract();
+        c.conid(208813720);
+
+        wrapper.updatePortfolio(c, Decimal.get(162), 329.6, 53395.2, 339.52469445, -1607.8, 0, "ACCT-A");
+        wrapper.accountDownloadEnd("ACCT-A");
+        wrapper.error(-1, 0L, 2100, "API client has been unsubscribed from account data.", null);
+
+        assertThat(items).hasSize(1);
+        assertThat(((org.jdkxx.trader.gateway.ibkr.mapper.IbkrAccounts.PortfolioRow) items.get(0)).averageCost()).isEqualTo(339.52469445);
+        assertThat(ends).containsExactly("end");
+        assertThat(errors).containsExactly(2100);
+        assertThat(events).contains("sys=2100");
+    }
 }

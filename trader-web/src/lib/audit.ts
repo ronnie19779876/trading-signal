@@ -18,6 +18,6 @@ export const AUDIT_CHECK_LABEL: Record<string, string> = {
   // 量化选股
   scored: '当天评分', ratedShare: '可评级占比', valuationFresh: '估值新鲜度', ratingDistribution: '评级分布',
   exclusions: '排除原因', ratedBySector: '各板块评级', priceSeams: '盈透接缝', knownBiases: '已知偏差',
-  simUpdated: '模拟交易算到当天', simTargetHits: '模拟交易止盈提示',
+  simUpdated: '模拟交易算到当天', simTargetHits: '模拟交易止盈提示', financialsComplete: '季报到齐',
 }
 export const auditCheckLabel = (name: string) => AUDIT_CHECK_LABEL[name] ?? name

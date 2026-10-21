@@ -99,8 +99,9 @@ public class SelectionConfiguration {
     @Bean
     public SelectionAuditService selectionAuditService(SelectionTargets targets, SelectionScoreRepository scores,
                                                        SelectionValuationRepository valuations, SelectionPriceSeamRepository seams,
-                                                       SelectionSimService sim, SettledCutoff cutoff) {
-        return new SelectionAuditService(targets, scores, valuations, seams, sim, cutoff::current, Clock.systemUTC());
+                                                       SelectionSimService sim, SelectionEarningsRepository earnings,
+                                                       SettledCutoff cutoff) {
+        return new SelectionAuditService(targets, scores, valuations, seams, sim, earnings, cutoff::current, Clock.systemUTC());
     }
 
     @Bean

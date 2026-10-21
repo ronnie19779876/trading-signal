@@ -62,6 +62,47 @@ public class SelectionEarningsRepository {
                 Long.class, Date.valueOf(from), Date.valueOf(to)));
     }
 
+    /** 一次公告对应的那一季还缺哪几类报表（INCOME / BALANCE_SHEET / CASH_FLOW）。 */
+    public record IncompleteFinancials(long instrumentId, String symbol, LocalDate pubDate, List<String> missing) {
+    }
+
+    /**
+     * 公告交易日落在 [from, to]、而该季三类报表（利润表、资产负债表、现金流量表）<b>还没到齐</b>的（3.4.6）。
+     * 「这一季的报表」与 {@link #matching} 同一就近规则：期末在公告日之前、且公告在期末后 75 天内（季报行 {@code /Q[1-4]}）。
+     *
+     * <p>起因（2026-10-22 生产 + 开发实例实测）：富途新一季<b>利润表先到、另外两类晚到</b>
+     * （JPM、BAC、GS 公告一周后才有新一季资产负债表，现金流还没有；AZO 公告 29 天仍缺现金流），
+     * 而每日作业原先只在公告后 6 天内重取，晚到的报表就再也取不到了。
+     */
+    public List<IncompleteFinancials> incompleteFinancials(LocalDate from, LocalDate to) {
+        // 普通字符串拼接、显式前导空格：文本块会剥掉行首空白（3.4.0 的 instrument_idWHERE 就是这么来的）
+        String sql = "SELECT e.instrument_id, i.symbol, e.pub_date, st.statement"
+                + " FROM selection_earnings_event e"
+                + " JOIN instrument i ON i.id = e.instrument_id"
+                + " CROSS JOIN (VALUES ('INCOME'), ('BALANCE_SHEET'), ('CASH_FLOW')) AS st(statement)"
+                + " WHERE e.pub_date BETWEEN ? AND ?"
+                + "   AND NOT EXISTS (SELECT 1 FROM financial_report r"
+                + "                   WHERE r.instrument_id = e.instrument_id AND r.statement = st.statement"
+                + "                     AND r.period_text ~ '/Q[1-4]$'"
+                + "                     AND e.pub_date > r.period_end + 1 AND e.pub_date <= r.period_end + 1 + 75)"
+                + " ORDER BY i.symbol, e.pub_date, st.statement";
+        java.util.Map<String, IncompleteFinancials> out = new java.util.LinkedHashMap<>();
+        jdbc.query(sql, rs -> {
+            long id = rs.getLong(1);
+            LocalDate pub = rs.getDate(3).toLocalDate();
+            out.computeIfAbsent(id + "|" + pub, k -> {
+                try {
+                    return new IncompleteFinancials(id, rs.getString(2), pub, new ArrayList<>());
+                } catch (java.sql.SQLException e) {
+                    throw new IllegalStateException(e);
+                }
+            }).missing().add(rs.getString(4));
+        }, Date.valueOf(from), Date.valueOf(to));
+        return out.values().stream()
+                .map(x -> new IncompleteFinancials(x.instrumentId(), x.symbol(), x.pubDate(), List.copyOf(x.missing())))
+                .toList();
+    }
+
     public Matching matching(LocalDate from, int sampleLimit) {
         String base = """
                 WITH base AS (

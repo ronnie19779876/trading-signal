@@ -24,6 +24,12 @@ final class IbkrSubscriptions {
         }
     }
 
+    /**
+     * 账户更新推送（reqAccountUpdates）没有 reqId：盈透规定一个客户端同时只能订一个账户，回调也不带 id。
+     * 用一个不会与真实 reqId 相撞的负数当通道号（{@link IbkrRequestRegistry#isRequestId} 对负数为假）。
+     */
+    static final int PORTFOLIO = -2;
+
     private final ConcurrentHashMap<Integer, Handler> handlers = new ConcurrentHashMap<>();
     private final Executor dispatch;
 

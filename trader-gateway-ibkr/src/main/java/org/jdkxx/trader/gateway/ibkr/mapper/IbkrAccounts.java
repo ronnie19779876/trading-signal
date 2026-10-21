@@ -55,6 +55,15 @@ public final class IbkrAccounts {
     }
 
     /** pnl 回调的原样数据（账户级，实时账户订阅用）。 */
+    /**
+     * 账户更新推送的一行持仓（reqAccountUpdates → updatePortfolio，3.4.6）。与盈透 App 同源：
+     * 2026-10-20 当天加仓 GOOG 后，reqPositionsMulti / reqPositions 的均价与 reqPnLSingle 的浮盈仍按加仓前的成本，
+     * 只有它（与账户级 reqPnL）给的是对的，见 ARCHITECTURE §20.8。
+     */
+    public record PortfolioRow(String account, Contract contract, Decimal position, double averageCost,
+                               double unrealized, double marketPrice, double marketValue) {
+    }
+
     public record PnlRow(double daily, double unrealized, double realized) {
     }
 
