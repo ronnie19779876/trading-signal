@@ -14,16 +14,16 @@ case "$(q "select pg_is_in_recovery()")" in
   t)
     row="$(q "select status, coalesce(extract(epoch from now() - last_msg_receipt_time)::int, 99999) from pg_stat_wal_receiver")"
     st="${row%%|*}"; age="${row##*|}"
-    if ! systemctl --user is-active -q "$TUNNEL"; then
+    if ! systemctl --user is-active -q "${TUNNEL}"; then
       echo "备库：隧道没在运行，启动"
-      systemctl --user start "$TUNNEL"
-    elif [[ -z "$row" || "$st" != streaming || "${age:-99999}" -gt 300 ]]; then
+      systemctl --user start "${TUNNEL}"
+    elif [[ -z "${row}" || "${st}" != streaming || "${age:-99999}" -gt 300 ]]; then
       echo "备库：WAL 接收异常（${row:-没有 walreceiver}），重启隧道"
-      systemctl --user restart "$TUNNEL"
+      systemctl --user restart "${TUNNEL}"
     fi
     ;;
   f)
-    if systemctl --user is-active -q "$TUNNEL"; then
+    if systemctl --user is-active -q "${TUNNEL}"; then
       echo "主库：隧道开着（主库不该连别人），请检查是否切换没收尾"
     fi
     ;;

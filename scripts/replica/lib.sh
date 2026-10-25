@@ -6,23 +6,23 @@
 #   shanghai_ssh=devops@<地址>     shanghai_port=2022
 # 两台服务器之间的隧道也用这两行：备库那边连主库那边，用的就是对方的 *_ssh / *_port。
 
-REPLICA_ENV="${REPLICA_ENV:-$HOME/.config/trading-signal/replica.env}"
+REPLICA_ENV="${REPLICA_ENV:-${HOME}/.config/trading-signal/replica.env}"
 NODES=(vps shanghai)
 PG_DATA=/var/lib/postgresql/18/main
 PG_UNIT=postgresql@18-main
 TUNNEL_UNIT=pg-replica-tunnel.service
 
 load_env() {
-  if [[ ! -f "$REPLICA_ENV" ]]; then
-    echo "缺少 $REPLICA_ENV（格式见 scripts/replica/lib.sh 开头）" >&2
+  if [[ ! -f "${REPLICA_ENV}" ]]; then
+    echo "缺少 ${REPLICA_ENV}（格式见 scripts/replica/lib.sh 开头）" >&2
     exit 2
   fi
   # shellcheck disable=SC1090
-  source "$REPLICA_ENV"
+  source "${REPLICA_ENV}"
   local n v
   for n in "${NODES[@]}"; do
     v="${n}_ssh"
-    [[ -n "${!v:-}" ]] || { echo "$REPLICA_ENV 缺 ${n}_ssh" >&2; exit 2; }
+    [[ -n "${!v:-}" ]] || { echo "${REPLICA_ENV} 缺 ${n}_ssh" >&2; exit 2; }
   done
 }
 
@@ -31,24 +31,45 @@ other() { [[ "$1" == vps ]] && echo shanghai || echo vps; }
 ssh_target() { local v="${1}_ssh"; echo "${!v}"; }
 ssh_port() { local v="${1}_port"; echo "${!v:-22}"; }
 
-# 在节点上执行，不分配终端（不能有交互）。
+# 在节点上执行，不分配终端（不能有交互）。<b>不读本机标准输入</b>（ssh -n）：2026-10-25 演练时
+# 检查阶段的 ssh 把用户提前敲进终端的「shanghai」吞掉了，确认提示读到的就不是它。要往远端喂数据用 on_in。
 on() {
   local n="$1"; shift
-  ssh -o BatchMode=yes -o ConnectTimeout=20 -p "$(ssh_port "$n")" "$(ssh_target "$n")" "$@"
+  ssh -n -o BatchMode=yes -o ConnectTimeout=20 -p "$(ssh_port "${n}")" "$(ssh_target "${n}")" "$@"
+}
+
+# 同 on，但把本机标准输入转给远端（管道 / 重定向喂数据时用）。
+on_in() {
+  local n="$1"; shift
+  ssh -o BatchMode=yes -o ConnectTimeout=20 -p "$(ssh_port "${n}")" "$(ssh_target "${n}")" "$@"
+}
+
+# 向人要确认：直接从终端读（有终端时），读之前清掉提前敲进去的内容——免得没看到摘要就被自动确认。
+# 没有终端（脚本被管道驱动）时退回读标准输入。结果放在全局 ANSWER。
+ask() {
+  ANSWER=""
+  if { exec 9</dev/tty; } 2>/dev/null; then
+    local junk
+    while read -r -t 1 junk <&9; do :; done
+    read -r -p "$1" ANSWER <&9 || true
+    exec 9<&-
+  else
+    read -r -p "$1" ANSWER || true
+  fi
 }
 
 # 需要人输入 sudo 口令时用：分配终端。输出会混进 sudo 提示，所以**不要捕获它的输出**——
 # 要取结果就让远端写文件，再用 on 读回来。
 on_tty() {
   local n="$1"; shift
-  ssh -t -o ConnectTimeout=20 -p "$(ssh_port "$n")" "$(ssh_target "$n")" "$@"
+  ssh -t -o ConnectTimeout=20 -p "$(ssh_port "${n}")" "$(ssh_target "${n}")" "$@"
 }
 
 # 以 trader 在节点上执行一条只读 SQL（走节点本机 ~/.pgpass；trader 有 pg_monitor，能看复制状态）。
 # 用开发库连接：查的都是集群级状态，与连哪个库无关。SQL 走标准输入，免得穿过两层引号。
 sql() {
   local n="$1" q="$2"
-  printf '%s\n' "$q" | on "$n" "psql -h localhost -U trader -d db_trader_dev -w -AtX -F'|' -v ON_ERROR_STOP=1 -f -"
+  printf '%s\n' "${q}" | on_in "${n}" "psql -h localhost -U trader -d db_trader_dev -w -AtX -F'|' -v ON_ERROR_STOP=1 -f -"
 }
 
 # 节点上应用是否在跑：有 trader-app.jar 的 java 进程或 8093 在监听，任一即算在跑。

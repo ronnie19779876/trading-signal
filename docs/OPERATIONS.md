@@ -378,6 +378,9 @@ shanghai_port=2022
 ./scripts/replica/switchover.sh shanghai
 ```
 
+**等「确认请输入目标名」的提示出现后再输入**（提示前敲的内容会被清掉）。网关的顺序：旧侧退 IB Gateway、停 OpenD → 跑脚本 → 目标侧登录 IB Gateway（2FA）、启 OpenD。
+**目标侧 OpenD 长期没用过时，先验证它能用记住的凭证自动登录**（2026-10-25 上海的凭证就失效了）：失效时停服务，前台 `./FutuOpenD -login_account=<账号>` 交互输密码、记住密码选 Y，Ctrl+C 后再 `systemctl start`。
+
 脚本依次：检查 → 停旧侧应用 → 旧侧 CHECKPOINT → 等目标追平 → 旧侧正常关闭数据库 → 核对关闭检查点已到目标（越不过就停，旧侧可原样回滚，脚本会打印命令）
 → 提升目标 → 旧侧改备库 → 目标启动应用。之后**人工**：旧侧退出 IB Gateway、停 OpenD，目标登录 IB Gateway、启 OpenD；本机隧道改指目标。
 避开美东交易日 17:30～22:30 的跑批与周六 06:30～10:00 的周作业。
