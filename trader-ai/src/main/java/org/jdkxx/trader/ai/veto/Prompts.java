@@ -10,7 +10,8 @@ import java.nio.charset.StandardCharsets;
  */
 public final class Prompts {
 
-    public static final String VERSION = "sentinel-veto-v1";
+    /** v2（3.4.8）：财报日期改用券商公告日（{@code calendarHint} 的 lastAnnounced / nextScheduled），已公布的财报不构成事件风险 */
+    public static final String VERSION = "sentinel-veto-v2";
 
     private Prompts() {
     }

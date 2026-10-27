@@ -41,9 +41,10 @@ public class SignalConfiguration {
             org.jdkxx.trader.storage.marketdata.IndexConstituentRepository constituents, DailyBarRepository bars,
             RehabFactorRepository rehabs, TradingDayRepository days, org.jdkxx.trader.storage.marketdata.ValuationRepository valuations,
             org.jdkxx.trader.storage.marketdata.FinancialRepository financials,
-            org.jdkxx.trader.storage.marketdata.CompanyProfileRepository profiles, MarketDataProperties marketData) {
+            org.jdkxx.trader.storage.marketdata.CompanyProfileRepository profiles,
+            org.jdkxx.trader.storage.selection.SelectionEarningsRepository earnings, MarketDataProperties marketData) {
         return new org.jdkxx.trader.core.signal.ai.SignalPayloadBuilder(instruments, constituents, bars, rehabs, days, valuations,
-                financials, profiles, ZoneId.of(marketData.zone()));
+                financials, profiles, earnings, ZoneId.of(marketData.zone()));
     }
 
     @Bean

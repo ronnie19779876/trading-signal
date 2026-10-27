@@ -36,27 +36,43 @@ public final class QuarterAvailability {
      */
     public static List<QuarterFacts> resolve(List<QuarterFacts> quarters, Collection<LocalDate> pubDates,
                                              NavigableSet<LocalDate> tradingDays) {
-        TreeSet<LocalDate> pubs = new TreeSet<>(pubDates);
-        LocalDate[] matched = new LocalDate[quarters.size()];
-        long maxLag = 0;
+        List<Period> periods = quarters.stream().map(q -> new Period(q.periodEnd(), q.fiscalQ4())).toList();
+        List<LocalDate> available = availableDates(periods, pubDates, tradingDays);
+        List<QuarterFacts> out = new ArrayList<>(quarters.size());
         for (int i = 0; i < quarters.size(); i++) {
-            LocalDate end = quarters.get(i).periodEnd();
+            out.add(quarters.get(i).withAvailableOn(available.get(i)));
+        }
+        return out;
+    }
+
+    /** 一期报表：真实期末与是否财年第四季（年报按第四季的期限）。 */
+    public record Period(LocalDate periodEnd, boolean fiscalQ4) {
+    }
+
+    /** 与 {@link #resolve} 同一口径，只给日期：结果与 {@code periods} 一一对应（入场信号的模型输入也用它判断报表在判定日是否已公布）。 */
+    public static List<LocalDate> availableDates(List<Period> periods, Collection<LocalDate> pubDates,
+                                                 NavigableSet<LocalDate> tradingDays) {
+        TreeSet<LocalDate> pubs = new TreeSet<>(pubDates);
+        LocalDate[] matched = new LocalDate[periods.size()];
+        long maxLag = 0;
+        for (int i = 0; i < periods.size(); i++) {
+            LocalDate end = periods.get(i).periodEnd();
             LocalDate p = pubs.higher(end);
             if (p != null && !p.isAfter(end.plusDays(MATCH_WINDOW_DAYS))) {
                 matched[i] = p;
                 maxLag = Math.max(maxLag, ChronoUnit.DAYS.between(end, p));
             }
         }
-        List<QuarterFacts> out = new ArrayList<>(quarters.size());
-        for (int i = 0; i < quarters.size(); i++) {
-            QuarterFacts q = quarters.get(i);
+        List<LocalDate> out = new ArrayList<>(periods.size());
+        for (int i = 0; i < periods.size(); i++) {
+            Period q = periods.get(i);
             LocalDate available = matched[i];
             if (available == null) {
                 LocalDate statutory = q.periodEnd().plusDays(q.fiscalQ4() ? STATUTORY_DAYS_Q4 : STATUTORY_DAYS);
                 LocalDate observed = q.periodEnd().plusDays(maxLag);
                 available = rollToTradingDay(statutory.isAfter(observed) ? statutory : observed, tradingDays);
             }
-            out.add(q.withAvailableOn(available));
+            out.add(available);
         }
         return out;
     }

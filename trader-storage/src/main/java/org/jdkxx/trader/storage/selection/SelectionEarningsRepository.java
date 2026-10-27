@@ -62,6 +62,19 @@ public class SelectionEarningsRepository {
                 Long.class, Date.valueOf(from), Date.valueOf(to)));
     }
 
+    /**
+     * 一只标的的全部公告日（含未来的预定日期），按公告日从早到晚。没有回补过公告日的标的（ETF、选股范围之外）返回空列表。
+     * 入场信号的模型输入据此判断财报是刚公布还是即将公布（3.4.8）。
+     */
+    public List<EarningsEvent> events(long instrumentId) {
+        return jdbc.query("""
+                        SELECT period_text, fiscal_year, pub_date, pub_time_text, timing, is_current
+                          FROM selection_earnings_event WHERE instrument_id = ? ORDER BY pub_date, period_text""",
+                (rs, n) -> new EarningsEvent(rs.getString(1), rs.getInt(2), rs.getDate(3).toLocalDate(), rs.getString(4),
+                        org.jdkxx.trader.domain.selection.EarningsTiming.valueOf(rs.getString(5)), rs.getBoolean(6)),
+                instrumentId);
+    }
+
     /** 一次公告对应的那一季还缺哪几类报表（INCOME / BALANCE_SHEET / CASH_FLOW）。 */
     public record IncompleteFinancials(long instrumentId, String symbol, LocalDate pubDate, List<String> missing) {
     }

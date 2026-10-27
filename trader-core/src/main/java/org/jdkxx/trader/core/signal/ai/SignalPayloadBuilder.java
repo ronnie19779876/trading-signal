@@ -8,6 +8,8 @@ import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.RehabFactor;
 import org.jdkxx.trader.domain.ValuationSnapshot;
+import org.jdkxx.trader.domain.selection.EarningsEvent;
+import org.jdkxx.trader.domain.selection.QuarterAvailability;
 import org.jdkxx.trader.domain.signal.GateResult;
 import org.jdkxx.trader.domain.signal.Indicators;
 import org.jdkxx.trader.domain.signal.SentinelEvaluation;
@@ -24,25 +26,27 @@ import org.jdkxx.trader.storage.marketdata.InstrumentRow;
 import org.jdkxx.trader.storage.marketdata.RehabFactorRepository;
 import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
 import org.jdkxx.trader.storage.marketdata.ValuationRepository;
+import org.jdkxx.trader.storage.selection.SelectionEarningsRepository;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * 发给模型的输入：全部由代码算好，LinkedHashMap 保证键序固定（前缀缓存要命中、输入哈希要稳定），数值统一取有限位小数。
  *
  * <p>刻意不含：持仓数量、成本、净值、账户信息，也不说是否持有（用户 2026-09-17 决定）。
- * 财报只取期末早于判定日的；判定日早于今天 7 天以上（手工分析过去的日子）时只取期末早于判定日 45 天的，
- * 因为库里没有财报公布日，更近的那期在判定日可能还没公布。
+ * 财报只取期末早于判定日的；判定日早于今天 7 天以上（手工分析过去的日子）时再要求那期在判定日已经公布——
+ * 公布日与量化选股同一口径（{@link QuarterAvailability}：期末后 75 天内就近匹配券商公告日，没匹配上按法定期限兜底），
+ * 3.4.8 前没有接公告日，一律往前让 45 天。{@code calendarHint} 见 {@link EarningsCalendarHint}。
  */
 public class SignalPayloadBuilder {
 
@@ -73,12 +77,14 @@ public class SignalPayloadBuilder {
     private final ValuationRepository valuations;
     private final FinancialRepository financials;
     private final CompanyProfileRepository profiles;
+    private final SelectionEarningsRepository earnings;
     private final ZoneId zone;
     private final SentinelThresholds th = SentinelThresholds.V1;
 
     public SignalPayloadBuilder(InstrumentRepository instruments, IndexConstituentRepository constituents, DailyBarRepository bars,
                                 RehabFactorRepository rehabs, TradingDayRepository days, ValuationRepository valuations,
-                                FinancialRepository financials, CompanyProfileRepository profiles, ZoneId zone) {
+                                FinancialRepository financials, CompanyProfileRepository profiles, SelectionEarningsRepository earnings,
+                                ZoneId zone) {
         this.instruments = instruments;
         this.constituents = constituents;
         this.bars = bars;
@@ -87,6 +93,7 @@ public class SignalPayloadBuilder {
         this.valuations = valuations;
         this.financials = financials;
         this.profiles = profiles;
+        this.earnings = earnings;
         this.zone = zone;
     }
 
@@ -98,9 +105,12 @@ public class SignalPayloadBuilder {
         root.put("signal", signal(e));
         root.put("technicals", technicals(row, asOf, caveats));
         root.put("valuation", valuation(row, asOf, caveats));
-        Map<String, Object> fin = financials(row, asOf, today, caveats);
+        boolean pastDate = asOf.isBefore(today.minusDays(7));
+        List<EarningsEvent> events = earnings.events(row.id());
+        TreeSet<LocalDate> calendar = new TreeSet<>(days.between(Market.US, asOf.minusYears(4), asOf.plusDays(400)));
+        Map<String, Object> fin = financials(row, asOf, pastDate, events, calendar, caveats);
         root.put("financials", fin);
-        root.put("calendarHint", calendarHint(fin, asOf));
+        root.put("calendarHint", EarningsCalendarHint.build(events, asOf, latestQuarterEnd(fin), calendar, pastDate, caveats));
         root.put("profile", profile(row, caveats));
         root.put("caveats", caveats);
         return root;
@@ -269,13 +279,18 @@ public class SignalPayloadBuilder {
         return m;
     }
 
-    private Map<String, Object> financials(InstrumentRow row, LocalDate asOf, LocalDate today, List<String> caveats) {
-        LocalDate cutoff = asOf.isBefore(today.minusDays(7)) ? asOf.minusDays(45) : asOf;
+    private Map<String, Object> financials(InstrumentRow row, LocalDate asOf, boolean pastDate, List<EarningsEvent> events,
+                                           TreeSet<LocalDate> calendar, List<String> caveats) {
+        Map<FinancialStatement, List<FinancialReport>> reports = new java.util.EnumMap<>(FinancialStatement.class);
+        for (FinancialStatement st : FIELDS.keySet()) {
+            reports.put(st, financials.find(row.instrument(), row.id(), st, 12));
+        }
+        Set<LocalDate> unpublished = pastDate ? unpublishedOn(asOf, reports, events, calendar) : Set.of();
         Map<String, Map<String, Object>> quarters = new LinkedHashMap<>();
         Map<String, Map<String, Object>> annual = new LinkedHashMap<>();
         for (Map.Entry<FinancialStatement, Map<Long, String>> fields : FIELDS.entrySet()) {
-            for (FinancialReport rep : financials.find(row.instrument(), row.id(), fields.getKey(), 12)) {
-                if (!rep.periodEnd().isBefore(cutoff)) {
+            for (FinancialReport rep : reports.get(fields.getKey())) {
+                if (!rep.periodEnd().isBefore(asOf) || unpublished.contains(rep.periodEnd())) {
                     continue;
                 }
                 boolean fy = rep.periodText().contains("FY");
@@ -317,22 +332,38 @@ public class SignalPayloadBuilder {
                 .limit(limit).toList();
     }
 
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> calendarHint(Map<String, Object> fin, LocalDate asOf) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        List<Map<String, Object>> quarters = (List<Map<String, Object>>) fin.get("quarters");
-        if (quarters.isEmpty()) {
-            m.put("latestQuarterEnd", null);
-            return m;
+    /**
+     * 判定日还没公布的那些期（库内期末）。按期末去重后一起解析，年报与第四季同一期末、按第四季的期限。
+     * 公告日为空（ETF、选股范围之外）时全部走法定期限兜底。
+     */
+    static Set<LocalDate> unpublishedOn(LocalDate asOf, Map<FinancialStatement, List<FinancialReport>> reports, List<EarningsEvent> events,
+                                        TreeSet<LocalDate> calendar) {
+        Map<LocalDate, Boolean> q4 = new java.util.TreeMap<>();
+        for (List<FinancialReport> list : reports.values()) {
+            for (FinancialReport rep : list) {
+                boolean fourth = rep.periodText().contains("FY") || rep.periodText().endsWith("Q4");
+                q4.merge(rep.periodEnd(), fourth, Boolean::logicalOr);
+            }
         }
-        LocalDate end = LocalDate.parse((String) quarters.get(0).get("periodEnd"));
-        long since = ChronoUnit.DAYS.between(end, asOf);
-        m.put("latestQuarterEnd", end.toString());
-        m.put("daysSinceLatestQuarterEnd", since);
-        m.put("note", "系统没有财报日历。美股季报通常在期末后约 25~45 天公布、下一期期末约在最近期末后 91 天；"
-                + "距最近期末 " + since + " 天，据此估计下一次财报大约在判定日后 " + Math.max(0, 91 + 25 - since) + "~"
-                + Math.max(0, 91 + 45 - since) + " 天");
-        return m;
+        // 库内期末比真实期末早 1 天（§25.5），公告日匹配用真实期末
+        List<QuarterAvailability.Period> periods = q4.entrySet().stream()
+                .map(e -> new QuarterAvailability.Period(e.getKey().plusDays(1), e.getValue())).toList();
+        List<LocalDate> available = QuarterAvailability.availableDates(periods, events.stream().map(EarningsEvent::pubDate).toList(), calendar);
+        // 判定日当天盘后或时段未知的公告，与 calendarHint 同一口径算作尚未公布（APH 2026-07-29 时段未知：提示说未反映、报表却已给出）
+        boolean pendingOnAsOf = events.stream().anyMatch(e -> e.pubDate().equals(asOf) && !EarningsCalendarHint.reflected(e, asOf));
+        Set<LocalDate> out = new HashSet<>();
+        for (int i = 0; i < periods.size(); i++) {
+            if (available.get(i).isAfter(asOf) || (pendingOnAsOf && available.get(i).equals(asOf))) {
+                out.add(periods.get(i).periodEnd().minusDays(1));
+            }
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static LocalDate latestQuarterEnd(Map<String, Object> fin) {
+        List<Map<String, Object>> quarters = (List<Map<String, Object>>) fin.get("quarters");
+        return quarters.isEmpty() ? null : LocalDate.parse((String) quarters.get(0).get("periodEnd"));
     }
 
     private Map<String, Object> profile(InstrumentRow row, List<String> caveats) {
