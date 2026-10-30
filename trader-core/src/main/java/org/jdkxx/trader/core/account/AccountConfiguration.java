@@ -17,7 +17,9 @@ import org.jdkxx.trader.storage.marketdata.DailyBarRepository;
 import org.jdkxx.trader.storage.marketdata.InstrumentRepository;
 import org.jdkxx.trader.storage.marketdata.JobRunRepository;
 import org.jdkxx.trader.storage.marketdata.PoolRepository;
+import org.jdkxx.trader.storage.marketdata.RehabFactorRepository;
 import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
+import org.jdkxx.trader.storage.selection.SelectionEarningsRepository;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -35,7 +37,7 @@ import java.time.ZoneId;
  */
 @Configuration
 @ConditionalOnProperty(name = "trader.storage.enabled", havingValue = "true")
-@EnableConfigurationProperties(AccountProperties.class)
+@EnableConfigurationProperties({AccountProperties.class, HoldingReviewProperties.class})
 public class AccountConfiguration {
 
     @Bean(destroyMethod = "close")
@@ -65,10 +67,21 @@ public class AccountConfiguration {
                 Clock.systemUTC());
     }
 
+    /** 持仓风险面板（3.5.0，ARCHITECTURE §29）：只读，只查库。 */
+    @Bean
+    public HoldingReviewService holdingReviewService(HoldingReviewProperties props, AccountSnapshotRepository snapshots,
+                                                     PoolRepository pool, InstrumentRepository instruments, DailyBarRepository bars,
+                                                     RehabFactorRepository rehabs, TradingDayRepository days,
+                                                     SelectionEarningsRepository earnings, MarketDataProperties marketData) {
+        return new HoldingReviewService(props, snapshots, pool, instruments, bars, rehabs, days, earnings, Clock.systemUTC(),
+                ZoneId.of(marketData.zone()));
+    }
+
     @Bean
     public AccountAuditService accountAuditService(AccountSnapshotRepository snapshots, TradingDayRepository days,
-                                                   JobRunRepository jobRuns, MarketDataProperties marketData) {
-        return new AccountAuditService(snapshots, days, jobRuns, Clock.systemUTC(), ZoneId.of(marketData.zone()));
+                                                   JobRunRepository jobRuns, HoldingReviewService review,
+                                                   MarketDataProperties marketData) {
+        return new AccountAuditService(snapshots, days, jobRuns, review, Clock.systemUTC(), ZoneId.of(marketData.zone()));
     }
 
     @Bean

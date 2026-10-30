@@ -33,6 +33,12 @@ public class SelectionTargets {
                 .sorted(Comparator.comparing(InstrumentRow::symbol)).toList();
     }
 
+    /** 池与持仓里的普通股：公告日每天刷新（3.5.0，持仓风险面板要的预定日期最多晚一天），其余标的按周。 */
+    public List<InstrumentRow> poolAndHoldings() {
+        return scope.poolAndHoldings().stream().filter(r -> r.type() == SecurityType.STOCK)
+                .sorted(Comparator.comparing(InstrumentRow::symbol)).toList();
+    }
+
     /** 只取指定代码（大小写不敏感）；给了不在范围内的代码直接报错，免得以为取了其实没取。 */
     public List<InstrumentRow> only(Collection<String> symbols) {
         if (symbols == null || symbols.isEmpty()) {

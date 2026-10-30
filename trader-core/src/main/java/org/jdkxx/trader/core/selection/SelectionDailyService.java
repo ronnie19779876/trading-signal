@@ -25,8 +25,8 @@ import java.util.concurrent.TimeUnit;
 /**
  * 量化选股的每日与每周维护（§25.7）。
  * <ul>
- *   <li>每日：估值快照续上估值序列 → 近几天发了财报的标的、以及 45 天内报表还没到齐的（3.4.6）补取最近 4 季季报与近 3 个月估值
- *       → 打分 → 模拟交易重算（§26）；</li>
+ *   <li>每日：池与持仓刷新公告日（3.5.0，持仓风险面板）→ 估值快照续上估值序列 → 近几天发了财报的标的、以及 45 天内报表还没到齐的（3.4.6）
+ *       补取最近 4 季季报与近 3 个月估值 → 打分 → 模拟交易重算（§26）；</li>
  *   <li>每周：全部标的刷新公告日，证券类型、估值历史、季报、盈透价格只补缺的（新进成分股由此补齐）。</li>
  * </ul>
  * 补取失败只记部分失败、照样打分（用的是库里已有的数据，审计会显示新鲜度）。
@@ -70,6 +70,7 @@ public class SelectionDailyService {
 
     public String daily(LocalDate date, JobContext ctx) {
         List<InstrumentRow> all = targets.all();
+        String events = refreshPoolAndHoldingEvents(ctx);
         ctx.progress("估值快照续接");
         int appended = valuations.appendFromSnapshot(date, all.stream().map(InstrumentRow::id).toList());
 
@@ -121,8 +122,33 @@ public class SelectionDailyService {
             ctx.partial("模拟交易重算失败：" + e.getMessage());
             simulated = "模拟交易重算失败";
         }
-        return "估值续接 " + appended + " 只；新公告补取 " + ok + "/" + refresh.size()
+        return events + "；估值续接 " + appended + " 只；新公告补取 " + ok + "/" + refresh.size()
                 + (catchingUp > 0 ? "（其中报表未到齐续取 " + catchingUp + " 只）" : "") + "；" + scored + "；" + simulated;
+    }
+
+    /** 池与持仓的公告日每天刷新（预定日期可能临时变动）；失败只记部分失败，面板照样用库里已有的。 */
+    String refreshPoolAndHoldingEvents(JobContext ctx) {
+        List<InstrumentRow> rows = targets.poolAndHoldings();
+        int ok = 0;
+        for (int i = 0; i < rows.size(); i++) {
+            InstrumentRow r = rows.get(i);
+            ctx.progress("池与持仓公告日 " + (i + 1) + "/" + rows.size() + " " + r.symbol());
+            try {
+                backfill.earnings(r);
+                ok++;
+            } catch (Exception e) {
+                Throwable c = unwrap(e);
+                log.warn("刷新公告日 {} 失败：{}", r.symbol(), c.toString());
+                if (c instanceof NotConnectedException) {
+                    ctx.partial("网关未连接，公告日刷新停在 " + r.symbol());
+                    break;
+                }
+            }
+        }
+        if (ok < rows.size()) {
+            ctx.partial("池与持仓公告日刷新失败 " + (rows.size() - ok) + " 只");
+        }
+        return "池与持仓公告日 " + ok + "/" + rows.size();
     }
 
     /**

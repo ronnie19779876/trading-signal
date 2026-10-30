@@ -8,7 +8,7 @@ import RecoveryAlert from '../components/RecoveryAlert.vue'
 import PositionDrawer, { type PositionRow } from '../components/positions/PositionDrawer.vue'
 import { money, num, signed, timeEt, trend } from '../lib/format'
 import { sectorCn } from '../lib/sector'
-import { accountApi, type SnapshotView } from '../api/account'
+import { accountApi, type HoldingReview, type HoldingReviewItem, type SnapshotView } from '../api/account'
 import { getPool, type InstrumentView } from '../api/marketdata'
 
 /**
@@ -99,8 +99,20 @@ function signedNum(v: number | null): string {
 
 // ---- 取数 ----
 // 两块各自独立、失败自动重试；成功才覆盖，失败的保留上一次的数据（3.4.3，见 useRecoveringLoad）
+/** 持仓风险面板（3.5.0，§29）：只取趋势与下次财报两列，详情在仪表盘的「持仓风险」 */
+const review = ref<HoldingReview | null>(null)
+const reviewBySymbol = computed(() => new Map((review.value?.items ?? []).map((i) => [i.symbol, i])))
+const TIMING: Record<string, string> = { PRE_MARKET: '盘前', DURING_MARKET: '盘中', AFTER_MARKET: '盘后', UNKNOWN: '时段未知' }
+function reviewOf(symbol: string): HoldingReviewItem | undefined {
+  return reviewBySymbol.value.get(norm(symbol))
+}
+function stateType(s: string | undefined): 'success' | 'warning' | 'danger' | 'info' {
+  return s === 'UP_STRONG' ? 'success' : s === 'BROKEN' ? 'danger' : s === 'UNAVAILABLE' || !s ? 'info' : 'warning'
+}
+
 const daily = useRecoveringLoad((): Stages => [{
   池: async () => { pool.value = await getPool() },
+  持仓风险: async () => { review.value = await accountApi.holdingsReview() },
   最新快照: async () => {
     view.value = await accountApi.latest().catch((e) => {
       if ((e as { response?: { status?: number } }).response?.status === 404) return null // 还没拍过快照
@@ -194,6 +206,7 @@ onBeforeUnmount(() => {
               <th v-if="source === 'LIVE'" class="r">当日盈亏</th>
               <th class="r">浮动盈亏</th>
               <th v-if="source === 'LIVE'" class="r">占组合</th>
+              <th>趋势</th><th>下次财报</th>
             </tr>
           </thead>
           <tbody>
@@ -218,9 +231,23 @@ onBeforeUnmount(() => {
               <td v-if="source === 'LIVE'" class="r num" :class="trend(r.dailyPnl)">{{ signed(r.dailyPnl) }}</td>
               <td class="r num" :class="trend(r.unrealizedPnl)">{{ signed(r.unrealizedPnl) }}</td>
               <td v-if="source === 'LIVE'" class="r num">{{ r.portfolioPct === null ? '—' : num(r.portfolioPct) + '%' }}</td>
+              <td>
+                <el-tooltip v-if="reviewOf(r.symbol)?.trend" placement="top"
+                            :content="`距 200 日均线 ${num(reviewOf(r.symbol)!.trend!.pctVsSmaLong)}%（${reviewOf(r.symbol)!.trend!.date}）`">
+                  <el-tag size="small" :type="stateType(reviewOf(r.symbol)?.trend?.state)">{{ reviewOf(r.symbol)!.trend!.stateLabel }}</el-tag>
+                </el-tooltip>
+                <span v-else class="muted-cell">—</span>
+              </td>
+              <td :class="{ 'next-warn': reviewOf(r.symbol)?.earnings?.next?.inWindow }">
+                <template v-if="reviewOf(r.symbol)?.earnings?.next">
+                  {{ reviewOf(r.symbol)!.earnings!.next!.date }} {{ TIMING[reviewOf(r.symbol)!.earnings!.next!.timing] }}{{ reviewOf(r.symbol)!.earnings!.next!.estimated ? '（估计）' : '' }}
+                  <span class="muted-cell">· 第 {{ reviewOf(r.symbol)!.earnings!.next!.tradingDaysAhead }} 个交易日</span>
+                </template>
+                <span v-else class="muted-cell">—</span>
+              </td>
             </tr>
             <tr v-if="!rows.length">
-              <td :colspan="source === 'LIVE' ? 12 : 7" class="empty">{{ loaded ? '无持仓' : '加载中…' }}</td>
+              <td :colspan="source === 'LIVE' ? 14 : 9" class="empty">{{ loaded ? '无持仓' : '加载中…' }}</td>
             </tr>
           </tbody>
         </table>
@@ -250,4 +277,5 @@ onBeforeUnmount(() => {
   color: var(--el-color-warning); background: var(--el-color-warning-light-9);
 }
 tr.picked td { background: var(--el-color-primary-light-9); }
+.next-warn { color: var(--el-color-warning-dark-2); font-weight: 600; }
 </style>

@@ -1,5 +1,6 @@
 package org.jdkxx.trader.core.signal.ai;
 
+import org.jdkxx.trader.domain.holding.EarningsReaction;
 import org.jdkxx.trader.domain.selection.EarningsEvent;
 import org.jdkxx.trader.domain.selection.EarningsTiming;
 import org.jdkxx.trader.domain.selection.QuarterAvailability;
@@ -78,10 +79,7 @@ public final class EarningsCalendarHint {
 
     /** 判定日收盘价是否已反映这次公告：之前的日子，或判定日当天盘前 / 盘中。 */
     static boolean reflected(EarningsEvent e, LocalDate asOf) {
-        if (e.pubDate().isBefore(asOf)) {
-            return true;
-        }
-        return e.pubDate().equals(asOf) && (e.timing() == EarningsTiming.PRE_MARKET || e.timing() == EarningsTiming.DURING_MARKET);
+        return EarningsReaction.reflected(e, asOf);
     }
 
     private static Map<String, Object> event(EarningsEvent e, String daysKey, int days) {
@@ -94,7 +92,7 @@ public final class EarningsCalendarHint {
     }
 
     /** (from, to] 里的交易日数；日历覆盖不到的部分按工作日数（未来的假日会多算，只用于提示）。 */
-    static int tradingDaysBetween(LocalDate from, LocalDate to, NavigableSet<LocalDate> tradingDays) {
+    public static int tradingDaysBetween(LocalDate from, LocalDate to, NavigableSet<LocalDate> tradingDays) {
         if (!to.isAfter(from)) {
             return 0;
         }

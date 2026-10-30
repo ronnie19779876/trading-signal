@@ -3839,6 +3839,155 @@
           "response": []
         },
         {
+          "name": "持仓风险面板（3.5.0）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/account/holdings-review?days=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "account",
+                "holdings-review"
+              ],
+              "query": [
+                {
+                  "key": "days",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "只读、只查库。只检查用户定的规则、给出数字，不给买卖建议。每只持仓（与池里没持有的）的趋势状态、下次财报、最近约 20 季财报后的价格反应、压力情景（历史最大跌幅 × 倍数）、触发的复核条件。比例是百分数的数值。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"items 是数组\", () => pm.expect(body.items).to.be.an(\"array\"));",
+                  "pm.test(\"有参数\", () => pm.expect(body.params.windowDays).to.be.a(\"number\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "加仓检查（3.5.0）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/account/add-check/{{symbol}}?shares=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "account",
+                "add-check",
+                "{{symbol}}"
+              ],
+              "query": [
+                {
+                  "key": "shares",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "按四条规则逐条判定「再买 shares 股」：趋势门、财报窗口、加仓后压力情景是否在亏损预算内（没设预算为 SKIPPED）、不逆势摊低。只读。没有标的 404。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200 或 404（没有这个标的）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));",
+                  "if (pm.response.code === 200) { pm.test(\"四条规则\", () => pm.expect(pm.response.json().rules.length).to.eql(4)); }"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "持仓复核逐日历史（历史验证用）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/account/holdings-review/history/{{symbol}}?from=2026-01-01&to=2026-09-30",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "account",
+                "holdings-review",
+                "history",
+                "{{symbol}}"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2026-01-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-09-30"
+                }
+              ]
+            },
+            "description": "逐日的趋势状态与复核条件（active 当天成立、edges 当天刚刚成立），close 为结构口径。供 scripts/research/holdings_review_report.py 统计。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200 或 404（没有这个标的）\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
           "name": "实时账户（按需订阅）",
           "request": {
             "method": "GET",

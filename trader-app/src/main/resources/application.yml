@@ -117,6 +117,15 @@ trader:
     snapshot-cron: "0 0 18 * * MON-FRI"    # 美东 18:00：排在增量 17:30、估值 17:40 之后；21:00 补偿检查兜底
     value-tolerance: 0.002                  # 市值对账容差（比例），超过 5 倍记 FAIL
     identity-tolerance: 1                   # 资金恒等式容差（美元）
+  # 持仓风险面板（3.5.0，ARCHITECTURE §29）：只检查用户定的规则、给出数字，不给买卖建议。默认值为用户 2026-10-30 认可的方案取值
+  holding-review:
+    window-days: 10            # 财报预警窗口（交易日）
+    stress-multiple: 1.5       # 压力情景 = 历史最大跌幅 × 这个倍数
+    # loss-budget-pct: 1       # 单只过财报最多亏净值的百分之几——由用户自己定；不配就不判超预算、不给仓位换算
+    sma-short: 50              # 短均线；长均线、斜率回看、ATR、吊灯沿用入场信号 sentinel-v1
+    break-confirm-days: 3      # 连续几天收盘低于 200 日均线算破位确认
+    death-cross: true          # 50 日均线在 200 日均线之下作为复核条件
+    include-pool: true         # 池里没持有的也给（只有分布与仓位换算）
   # 入场信号（第 4 期）。判据参数跟着判据版本写死在代码里，这里只有开关与时点；定时评估只在 schedule-enabled 的实例装配
   signal:
     enabled: true

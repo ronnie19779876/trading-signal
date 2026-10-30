@@ -37,8 +37,10 @@ class AccountAuditServiceTest {
     private final AccountSnapshotRepository snapshots = mock(AccountSnapshotRepository.class);
     private final TradingDayRepository days = mock(TradingDayRepository.class);
 
+    private final HoldingReviewService review = mock(HoldingReviewService.class);
+
     private AccountAuditService service(Clock clock) {
-        return new AccountAuditService(snapshots, days, mock(JobRunRepository.class), clock, ET);
+        return new AccountAuditService(snapshots, days, mock(JobRunRepository.class), review, clock, ET);
     }
 
     private static AccountSnapshotRow row(String status) {
@@ -59,6 +61,35 @@ class AccountAuditServiceTest {
         when(days.covers(eq(Market.US), any())).thenReturn(true);
         when(days.isTradingDay(eq(Market.US), any())).thenAnswer(inv -> MON.equals(inv.getArgument(1)));
         when(days.between(eq(Market.US), any(), any())).thenReturn(List.of(LocalDate.of(2026, 9, 11), MON));
+    }
+
+    /** 持仓风险面板的提示项按当前持仓算：审最近一个收盘日时附上、只提示；审过去的日期不附（那不是那天的状态）。 */
+    @Test
+    void 持仓风险提示只附在最近一个收盘日的审计里且不影响通过() {
+        when(snapshots.on(MON)).thenReturn(List.of(row("OK")));
+        when(review.auditChecks()).thenReturn(List.of(new Check("earningsAhead", false, false, "1 只持仓在 10 个交易日内发财报", 1, List.of("X"))));
+        // 09-11 也得是交易日，否则走休市分支提前返回，「不附」就成了假通过
+        when(days.isTradingDay(eq(Market.US), eq(LocalDate.of(2026, 9, 11)))).thenReturn(true);
+
+        Report latest = service(AT_1900_ET).audit(null);
+        Report sameDay = service(AT_1900_ET).audit(MON);
+        Report past = service(AT_1900_ET).audit(LocalDate.of(2026, 9, 11));
+
+        assertThat(latest.ok()).isTrue();
+        assertThat(check(latest, "earningsAhead").critical()).isFalse();
+        assertThat(sameDay.checks()).extracting(Check::name).contains("earningsAhead");
+        assertThat(past.checks()).extracting(Check::name).contains("snapshotExists").doesNotContain("earningsAhead");
+    }
+
+    @Test
+    void 持仓风险面板出错只提示() {
+        when(snapshots.on(MON)).thenReturn(List.of(row("OK")));
+        when(review.auditChecks()).thenThrow(new IllegalStateException("db down"));
+
+        Report r = service(AT_1900_ET).audit(null);
+
+        assertThat(r.ok()).isTrue();
+        assertThat(check(r, "holdingReview").detail()).contains("db down");
     }
 
     @Test

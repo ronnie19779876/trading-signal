@@ -82,6 +82,38 @@ class SelectionDailyServiceTest {
         org.assertj.core.api.Assertions.assertThat(summary).contains("新公告补取 2/2（其中报表未到齐续取 1 只）");
     }
 
+    /** 3.5.0：池与持仓的公告日每天刷新（持仓风险面板要的预定日期最多晚一天）；一只失败不影响其余，只记部分失败。 */
+    @Test
+    void 每日先刷新池与持仓的公告日() throws Exception {
+        java.time.LocalDate d = java.time.LocalDate.of(2026, 10, 30);
+        SelectionTargets targets = mock(SelectionTargets.class);
+        org.jdkxx.trader.storage.marketdata.InstrumentRow goog = row(21, "GOOG"), msft = row(22, "MSFT");
+        when(targets.all()).thenReturn(List.of(goog, msft));
+        when(targets.poolAndHoldings()).thenReturn(List.of(goog, msft));
+        SelectionBackfillService backfill = mock(SelectionBackfillService.class);
+        when(backfill.earnings(goog)).thenThrow(new IllegalStateException("超时"));
+        SelectionScoringService scoring = mock(SelectionScoringService.class);
+        when(scoring.scoreDay(any(), any())).thenReturn("评分");
+        SelectionSimService sim = mock(SelectionSimService.class);
+        when(sim.update(any(), any())).thenReturn("模拟");
+        List<String> partials = new java.util.ArrayList<>();
+        JobContext recording = new JobContext() {
+            public long id() { return 1; }
+            public void progress(String text) { }
+            public void partial(String reason) { partials.add(reason); }
+            public boolean cancelled() { return false; }
+        };
+        SelectionDailyService service = new SelectionDailyService(targets, mock(SelectionValuationRepository.class),
+                mock(SelectionEarningsRepository.class), mock(FinancialRepository.class), mock(SelectionDataGateway.class), scoring, backfill, sim);
+
+        String summary = service.daily(d, recording);
+
+        org.mockito.Mockito.verify(backfill).earnings(goog);
+        org.mockito.Mockito.verify(backfill).earnings(msft);
+        org.assertj.core.api.Assertions.assertThat(summary).startsWith("池与持仓公告日 1/2；");
+        org.assertj.core.api.Assertions.assertThat(partials).contains("池与持仓公告日刷新失败 1 只");
+    }
+
     private static org.jdkxx.trader.storage.marketdata.InstrumentRow row(long id, String symbol) {
         return new org.jdkxx.trader.storage.marketdata.InstrumentRow(id, org.jdkxx.trader.domain.Market.US, symbol, symbol, null,
                 org.jdkxx.trader.domain.SecurityType.STOCK, 1, null, false, "NYSE", null, "RESOLVED");

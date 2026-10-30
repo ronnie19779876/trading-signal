@@ -182,6 +182,117 @@ export interface LiveView {
   lastError: string | null
 }
 
+// ---------------------------------------------------------------- 持仓风险面板（3.5.0，ARCHITECTURE §29）
+// 只检查用户定的规则、给出数字，不给买卖建议。比例一律是百分数的数值（-9.63 表示 -9.63%）。
+
+export type TrendState = 'UP_STRONG' | 'UP_WEAK' | 'ABOVE_FLAT' | 'BELOW' | 'BROKEN' | 'UNAVAILABLE'
+export type ReviewTrigger = 'BREAK_CONFIRMED' | 'DEATH_CROSS' | 'CHANDELIER_BREACH' | 'EARNINGS_OVER_BUDGET'
+
+export interface HoldingTrend {
+  /** 判定日 = 这只标的最新一根日 K */
+  date: string
+  close: number
+  smaShort: number | null
+  smaLong: number | null
+  smaLongPrior: number | null
+  state: TrendState
+  stateLabel: string
+  /** = 入场信号的趋势门（收盘 > 200 日均线且均线上升） */
+  trendGatePass: boolean
+  pctVsSmaShort: number | null
+  pctVsSmaLong: number | null
+  belowDays: number
+  deathCross: boolean
+  deathCrossSince: string | null
+  chandelier: number | null
+  chandelierBreach: boolean
+  pctFrom52wHigh: number | null
+  /** 相对盈透均价（只有持仓有） */
+  pnlVsCostPct: number | null
+}
+
+export interface UpcomingEarnings {
+  period: string | null
+  date: string
+  timing: 'PRE_MARKET' | 'DURING_MARKET' | 'AFTER_MARKET' | 'UNKNOWN'
+  /** 最新日 K 那天之后第几个交易日（0 = 当天盘后或时段未知） */
+  tradingDaysAhead: number
+  /** 券商还没排期，按上次公告 + 91 天估计 */
+  estimated: boolean
+  inWindow: boolean
+}
+
+export interface EarningsSample {
+  period: string
+  pubDate: string
+  timing: string
+  reactionDate: string
+  /** 开盘相对基准收盘；时段未知时取波动更大那天的口径 */
+  gapPct: number | null
+  movePct: number
+}
+
+export interface EarningsStats {
+  samples: number
+  meanAbsMovePct: number
+  medianAbsMovePct: number
+  maxDropPct: number
+  maxRisePct: number
+  bigMoves: number
+  ups: number
+  downs: number
+  worstGapPct: number | null
+}
+
+export interface EarningsScenario {
+  historicalDropPct: number
+  stressDropPct: number
+  historicalLoss: number | null
+  stressLoss: number | null
+  stressLossPctOfNav: number | null
+  /** 没设亏损预算时为 null */
+  overBudget: boolean | null
+}
+
+export interface HoldingReviewItem {
+  symbol: string
+  role: 'HOLDING' | 'POOL'
+  quantity: number | null
+  averageCost: number | null
+  price: number | null
+  marketValue: number | null
+  weightPct: number | null
+  trend: HoldingTrend | null
+  earnings: { next: UpcomingEarnings | null; stats: EarningsStats | null; samples: EarningsSample[]; scenario: EarningsScenario | null } | null
+  triggers: { trigger: ReviewTrigger; detail: string }[]
+  maxWeightPctInBudget: number | null
+  problem: string | null
+}
+
+export interface HoldingReview {
+  snapshotDate: string | null
+  netLiquidation: number | null
+  params: {
+    windowDays: number
+    stressMultiple: number
+    lossBudgetPct: number | null
+    rules: { smaShort: number; smaLong: number; slopeLookback: number; breakConfirmDays: number; deathCross: boolean;
+             atrPeriod: number; chandelierPeriod: number; chandelierAtrMultiple: number }
+  }
+  items: HoldingReviewItem[]
+}
+
+export interface AddCheck {
+  symbol: string
+  shares: number
+  price: number
+  priceDate: string
+  held: boolean
+  allPass: boolean
+  conclusion: string
+  rules: { rule: 'TREND' | 'EARNINGS_WINDOW' | 'LOSS_BUDGET' | 'NO_AVERAGING_DOWN'; status: 'PASS' | 'FAIL' | 'SKIPPED'; detail: string }[]
+}
+
 export const accountApi = {
   /** 第一次读会发起订阅（WARMING），5 分钟没人读自动退订。 */
   live: async () => (await http.get<LiveView>('/api/account/live')).data,
@@ -197,4 +308,9 @@ export const accountApi = {
     (await http.post<HoldingSyncResult>('/api/account/holdings/sync', null, { params: { apply }, timeout: 60_000 })).data,
   audit: async (date?: string) =>
     (await http.get<AuditReport>('/api/account/audit', { params: date ? { date } : {} })).data,
+  /** 持仓风险面板：要算每只 6 年日 K，放宽超时。 */
+  holdingsReview: async (days?: number) =>
+    (await http.get<HoldingReview>('/api/account/holdings-review', { params: days ? { days } : {}, timeout: 60_000 })).data,
+  addCheck: async (symbol: string, shares: number) =>
+    (await http.get<AddCheck>(`/api/account/add-check/${encodeURIComponent(symbol)}`, { params: { shares }, timeout: 30_000 })).data,
 }

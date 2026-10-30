@@ -417,6 +417,9 @@ shanghai_port=2022
 - 对账不过时看 `GET /api/account/snapshots/latest` 的 `snapshot.recon`：市值偏差多半是缺价（看 `positions[].priceSource`），
   恒等式不过多半是账户里有期权等非股票资产。
 - 开发实例验证快照用 `POST /api/account/snapshot?force=true`（只在 DEV 可用，写开发库）。
+- 持仓风险面板（3.5.0，ARCHITECTURE §29）：仪表盘「持仓风险」卡片、`GET /api/account/holdings-review`；巡检第三段的
+  `earningsAhead`（10 个交易日内有财报的持仓）、`reviewTriggers`（触发复核条件的持仓）只提示。亏损预算由用户在 `trader.env` 设
+  `TRADER_HOLDINGREVIEW_LOSSBUDGETPCT`（百分数，如 1），改完重启生效；不设就不判超预算。只检查用户定的规则，不是买卖建议。
 
 ## 4d. 入场信号与模型第二意见（第 4 期）
 

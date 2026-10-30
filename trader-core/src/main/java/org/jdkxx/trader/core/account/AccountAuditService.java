@@ -29,6 +29,7 @@ import java.util.stream.Collectors;
  *
  * <p>快照定在美东 18:00，巡检常在前后脚跑：当天还没过 18:30 时缺快照只提示、不判失败，过了才是关键项失败——
  * 盈透只给当前状态，这一天的快照过了次日盘前就补不回来。对账 FAIL 是关键项，WARN 与缺价只提示。
+ * 3.5.0 起附上持仓风险面板的两条提示项（{@code earningsAhead}、{@code reviewTriggers}），只提示、不影响通过与否。
  */
 public class AccountAuditService {
 
@@ -37,14 +38,16 @@ public class AccountAuditService {
     private final AccountSnapshotRepository snapshots;
     private final TradingDayRepository days;
     private final JobRunRepository jobs;
+    private final HoldingReviewService review;
     private final Clock clock;
     private final ZoneId zone;
 
     public AccountAuditService(AccountSnapshotRepository snapshots, TradingDayRepository days, JobRunRepository jobs,
-                               Clock clock, ZoneId zone) {
+                               HoldingReviewService review, Clock clock, ZoneId zone) {
         this.snapshots = snapshots;
         this.days = days;
         this.jobs = jobs;
+        this.review = review;
         this.clock = clock;
         this.zone = zone;
     }
@@ -103,6 +106,15 @@ public class AccountAuditService {
                 last.map(j -> "最近一次账户快照作业 #" + j.id() + " " + j.status() + "（" + j.startedAt() + "）")
                         .orElse("还没有跑过账户快照作业"),
                 last.isPresent() ? 1 : 0, List.of()));
+
+        // 持仓风险面板的两条提示（3.5.0，§29）：按当前持仓与最新 K 线算，所以只在审最近一个收盘日时附上；审过去的日期不附
+        if (date == null || d.equals(expectedDate(now))) {
+            try {
+                checks.addAll(review.auditChecks());
+            } catch (RuntimeException e) {
+                checks.add(new Check("holdingReview", false, false, "持仓风险面板算不出来：" + e.getMessage(), 0, List.of()));
+            }
+        }
 
         boolean ok = checks.stream().filter(Check::critical).allMatch(Check::ok);
         return new Report(d, ok, clock.instant(), summary, checks);

@@ -4,6 +4,7 @@ import MoneyTiles from '../components/dash/MoneyTiles.vue'
 import EquityPanel from '../components/dash/EquityPanel.vue'
 import CandidatePanel, { type CandidateRow } from '../components/dash/CandidatePanel.vue'
 import HoldingsPanel, { type HoldingRow } from '../components/dash/HoldingsPanel.vue'
+import RiskPanel from '../components/dash/RiskPanel.vue'
 import EvaluationDrawer from '../components/signals/EvaluationDrawer.vue'
 import { useMarketClock } from '../composables/useMarketClock'
 import { useLiveAccount } from '../composables/useLiveAccount'
@@ -11,7 +12,7 @@ import { useRecoveringLoad, type Stages } from '../composables/useRecoveringLoad
 import RecoveryAlert from '../components/RecoveryAlert.vue'
 import { auditCheckLabel } from '../lib/audit'
 import { daysAgoEt, isoEt } from '../lib/format'
-import { accountApi, type AccountSnapshot, type AuditReport, type SnapshotView } from '../api/account'
+import { accountApi, type AccountSnapshot, type AuditReport, type HoldingReview, type SnapshotView } from '../api/account'
 import { signalsApi, type EvaluationRow } from '../api/signals'
 import { getBars, getPool, type DailyBar, type InstrumentView } from '../api/marketdata'
 import { getQuotes, type Quote } from '../api/quotes'
@@ -25,6 +26,7 @@ import { getQuotes, type Quote } from '../api/quotes'
  * 刷新分三档：实时账户盘中 1 秒、其余 5 秒（见 useLiveAccount）；日级数据（快照、评估、日 K）5 分钟一轮；
  * 报价在开市时段 5 秒一轮、休市 60 秒。
  * 页面切到后台即暂停。日级数据各块独立、失败自动重试（3.4.3，见 useRecoveringLoad）。
+ * 3.5.0 起底部加「持仓风险」（趋势、财报预警、复核条件、加仓检查，§29）。
  */
 const NAV_DAYS = 180
 
@@ -38,6 +40,7 @@ const barsBySymbol = ref<Map<string, DailyBar[]>>(new Map())
 const quotes = ref<Map<string, Quote>>(new Map())
 const signalAudit = ref<AuditReport | null>(null)
 const accountAudit = ref<AuditReport | null>(null)
+const holdingReview = ref<HoldingReview | null>(null)
 
 const drawer = ref(false)
 const pickedSymbol = ref<string | null>(null)
@@ -63,6 +66,7 @@ const daily = useRecoveringLoad((): Stages => [
     池: async () => { pool.value = await getPool() },
     信号审计: async () => { signalAudit.value = await signalsApi.audit() },
     账户审计: async () => { accountAudit.value = await accountApi.audit() },
+    持仓风险: async () => { holdingReview.value = await accountApi.holdingsReview() },
   },
   {
     评估: async () => { if (signalAudit.value) await loadEvaluations(signalAudit.value.date) },
@@ -268,6 +272,7 @@ function openCandidate(symbol: string) {
                      :eval-date="evalDate" :loaded="loaded"
                      @open="openCandidate" />
     </div>
+    <RiskPanel :review="holdingReview" :pending="pending('持仓风险')" />
 
     <EvaluationDrawer v-model="drawer" :symbol="pickedSymbol" :date="evalDate" />
   </div>

@@ -19,5 +19,6 @@ export const AUDIT_CHECK_LABEL: Record<string, string> = {
   scored: '当天评分', ratedShare: '可评级占比', valuationFresh: '估值新鲜度', ratingDistribution: '评级分布',
   exclusions: '排除原因', ratedBySector: '各板块评级', priceSeams: '盈透接缝', knownBiases: '已知偏差',
   simUpdated: '模拟交易算到当天', simTargetHits: '模拟交易止盈提示', financialsComplete: '季报到齐',
+  earningsAhead: '持仓财报预警', reviewTriggers: '持仓复核条件', holdingReview: '持仓风险面板',
 }
 export const auditCheckLabel = (name: string) => AUDIT_CHECK_LABEL[name] ?? name
