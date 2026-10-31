@@ -226,6 +226,35 @@ class ConnectionSupervisorTest {
     assertThat(supervisor.state()).isEqualTo(GatewayState.RECONNECTING);
   }
 
+  /**
+   * Regression found in the 2026-10-31 review: handleTransportClosed released the lock between the
+   * teardown and scheduling the reconnect while the state was still CONNECTED. The production
+   * scheduler has two threads, so a second close event (reader exit after a peer close, or a
+   * heartbeat failure) could run in that window, pass the CONNECTED check and schedule a second
+   * reconnect: two attempts with the same client-id (326, kicking each other off). Here the second
+   * event is run inside the window via the scheduler hook (the onDisconnected dispatch happens
+   * there).
+   */
+  @Test
+  void 断线处理窗口内的第二次断线不会安排第二次重连() {
+    supervisor.connect();
+    transport.opens.get(0).complete(null);
+    scheduler.runPending();
+
+    supervisor.onTransportClosed("对端关闭"); // queued; the hook fires on the next execute
+    scheduler.beforeNextExecute(
+        () -> {
+          supervisor.onTransportClosed("读线程退出");
+          scheduler.runPending();
+        });
+    scheduler.runPending();
+    assertThat(supervisor.state()).isEqualTo(GatewayState.RECONNECTING);
+
+    scheduler.tick(Duration.ofSeconds(5));
+    assertThat(transport.opens).as("只多一次建连").hasSize(2);
+    assertThat(events).containsExactly("connected", "disconnected");
+  }
+
   @Test
   void 就绪后传输层已断开的不进入CONNECTED() {
     supervisor.connect();

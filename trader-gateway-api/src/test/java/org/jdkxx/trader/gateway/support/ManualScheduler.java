@@ -57,8 +57,24 @@ final class ManualScheduler extends AbstractExecutorService implements Scheduled
     return t;
   }
 
+  /**
+   * One-shot hook run at the start of the next {@link #execute}: lets a test squeeze another task
+   * into a window where the code under test has released its lock but not yet finished, emulating
+   * the second thread of the production two-thread scheduler.
+   */
+  private Runnable beforeNextExecute;
+
+  void beforeNextExecute(Runnable hook) {
+    this.beforeNextExecute = hook;
+  }
+
   @Override
   public void execute(Runnable command) {
+    Runnable hook = beforeNextExecute;
+    if (hook != null) {
+      beforeNextExecute = null;
+      hook.run();
+    }
     add(
         () -> {
           command.run();

@@ -242,20 +242,25 @@ public final class ConnectionSupervisor {
    * and a fresh backoff sequence starts if a connection is still wanted.
    */
   private void handleTransportClosed(String reason) {
+    int gen;
     synchronized (lock) {
       if (state != GatewayState.CONNECTED && state != GatewayState.CONNECTING) {
         return;
       }
-      generation++;
+      gen = ++generation;
       cancelTasks();
       safeClose();
-      if (!wantConnected) {
-        setState(GatewayState.DISCONNECTED, reason);
-      }
+      // Leave CONNECTED before releasing the lock (found in the 2026-10-31 review): the scheduler
+      // has two threads, and a second close event in the window below used to pass the check above
+      // and schedule a second reconnect, i.e. two attempts with the same client-id (326). A
+      // connect() in the window now waits for the pending reconnect instead of reporting success.
+      setState(wantConnected ? GatewayState.RECONNECTING : GatewayState.DISCONNECTED, reason);
     }
     notifyDisconnected(reason);
     synchronized (lock) {
-      if (wantConnected) {
+      // Nothing else may have moved on in the meantime: a disconnect / fatal error bumps the
+      // generation, and a reconnect already scheduled must not be overwritten (it would leak).
+      if (wantConnected && generation == gen && reconnectTask == null) {
         attempts = 0;
         scheduleReconnect(reason);
       }
