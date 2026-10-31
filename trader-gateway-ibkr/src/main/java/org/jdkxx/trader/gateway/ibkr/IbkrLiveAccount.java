@@ -41,7 +41,8 @@ import java.util.function.Consumer;
  * <b>账户汇总不在这里</b>：它改成了连接周期内只订一次的常驻订阅（{@link IbkrAccountSummaryFeed}，3.0.9），
  * 实时账户与每日快照共用那一条。原因见该类的注释——盈透的名额不随取消释放，订了又退迟早撞 322。
  *
- * <p>账户盈亏的核对口径演变：3.0.10 扣已实现（被 10-09 证伪）→ 3.1.5 平仓日只比浮盈 → 3.4.6 没有平仓时只比当日，见 {@link #verifyPnl()}。
+ * <p>账户盈亏的核对口径演变：3.0.10 扣已实现（被 10-09 证伪）→ 3.1.5 平仓日只比浮盈 → 3.4.6 没有平仓时只比当日
+ * → 3.5.1 比浮盈时按账户更新推送的新均价修正逐只浮盈（平仓与加仓同一天），见 {@link #verifyPnl()}。
  * <p><b>持仓均价与逐只浮盈</b>（3.4.6）：有账户更新推送（{@link IbkrPortfolioFeed}，只在生产实例）且数量一致时取它的值，
  * 与盈透 App 同源；当日、市值仍取 reqPnLSingle，现价仍取行情。
  */
@@ -497,6 +498,7 @@ final class IbkrLiveAccount {
         }
         double daily = 0;
         double unreal = 0;
+        double costLag = 0;
         for (String conId : positions.keySet()) {
             IbkrAccounts.PnlSingleRow r = singleRows.get(conId);
             if (IbkrAccounts.amount(r.daily()) == null || IbkrAccounts.amount(r.unrealized()) == null) {
@@ -504,7 +506,11 @@ final class IbkrLiveAccount {
             }
             daily += r.daily();
             unreal += r.unrealized();
+            costLag += costLag(conId);
         }
+        // 加仓当天 reqPnLSingle 的浮盈按加仓前的均价算（3.4.6）：用账户更新推送的新均价把这部分成本差扣掉，
+        // 价格基准仍是 reqPnLSingle 自己的。不加仓的日子两边均价相同，修正量为 0（3.5.1，2026-10-30 平仓与加仓同一天）。
+        unreal -= costLag;
         // 当天有没有平仓：账户级 realized 非 0 即有（逐只的 realized 恒为 Double.MAX_VALUE，不可用）。
         // realized 不可用时判断不了，按「有平仓」处理——只比浮盈，宁可少一道也不要在平仓日把当日盈亏整天挂空。
         java.math.BigDecimal realizedAmount = IbkrAccounts.amount(row.realized());
@@ -514,7 +520,7 @@ final class IbkrLiveAccount {
         // 没有平仓：只比当日（3.4.6）。加仓日 reqPnLSingle 的浮盈按加仓前的成本算、和账户口径差一个固定量
         // （2026-10-20 GOOG 恒差 1,179.65，网关次日重启也没改对），而当日两边精确相等（差 0.0）；
         // 首条推送不完整时当日照样对不上（10-22 实测差 48.74），把关能力不减。
-        // 平仓日：当日不可比（见上），只能比浮盈——同一天又有加仓且成本滞后时会判不通过，照实记日志。
+        // 平仓日：当日不可比（见上），只能比浮盈；同一天又有加仓时，上面已按新均价修正了逐只浮盈（3.5.1）。
         boolean unrealOk = !closedToday || Math.abs(row.unrealized() - unreal) <= PNL_TOLERANCE;
         boolean dailyOk = closedToday || Math.abs(row.daily() - daily) <= PNL_TOLERANCE;
 
@@ -528,7 +534,21 @@ final class IbkrLiveAccount {
             listener.onPnl(IbkrAccounts.pnl(row, wire.now()));
             return;
         }
-        logPnlMismatch(row, realized, daily, unreal, closedToday);
+        logPnlMismatch(row, realized, daily, unreal, costLag, closedToday);
+    }
+
+    /**
+     * 这只持仓的成本滞后量 =（账户更新推送的均价 − 持仓接口的均价）× 数量；没有推送或数量不一致时为 0。
+     * 2026-10-30 生产：NVDA 加仓 10 股，110 ×（193.46155755 − 192.2977127272727）= 128.02，正好是那天浮盈差。
+     */
+    private double costLag(String conId) {
+        IbkrAccounts.PositionRow p = positions.get(conId);
+        if (p == null || p.position() == null || !p.position().isValid() || Double.isNaN(p.averageCost())) {
+            return 0;
+        }
+        java.math.BigDecimal qty = p.position().value();
+        Double feed = IbkrPortfolioFeed.averageCost(portfolioRows(), conId, qty);
+        return feed == null ? 0 : (feed - p.averageCost()) * qty.doubleValue();
     }
 
     /**
@@ -554,15 +574,15 @@ final class IbkrLiveAccount {
      * 事后只能靠净值反推去猜盈透的口径。这条日志就是为了让下一次失败留下证据而不是沉默。
      */
     private void logPnlMismatch(IbkrAccounts.PnlRow row, Double realized, double singlesDaily, double singlesUnrealized,
-                                boolean closedToday) {
+                                double costLag, boolean closedToday) {
         if (pnlMismatchLogged) {
             return;
         }
         pnlMismatchLogged = true;
-        log.warn("实时账户盈亏核对不通过（{} 只持仓）：账户 当日={} 浮盈={} 已实现={}；逐只之和 当日={} 浮盈={}；"
+        log.warn("实时账户盈亏核对不通过（{} 只持仓）：账户 当日={} 浮盈={} 已实现={}；逐只之和 当日={} 浮盈={}（已扣成本滞后 {}）；"
                         + "当日差={}（{}）浮盈差={}（容差 {}）",
                 positions.size(), row.daily(), row.unrealized(), realized == null ? "未设" : realized,
-                singlesDaily, singlesUnrealized,
+                singlesDaily, singlesUnrealized, costLag,
                 row.daily() - singlesDaily, closedToday ? "当天有平仓，未参与判定" : "参与判定",
                 row.unrealized() - singlesUnrealized, PNL_TOLERANCE);
     }

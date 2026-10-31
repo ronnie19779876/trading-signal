@@ -423,6 +423,75 @@ class IbkrLiveAccountTest {
         assertThat(rec.pnls).isEmpty();
     }
 
+    private static IbkrAccounts.PositionRow pos(int conId, String symbol, double qty, double avg) {
+        IbkrAccounts.PositionRow p = pos(conId, symbol, qty);
+        return new IbkrAccounts.PositionRow(p.account(), p.contract(), p.position(), avg);
+    }
+
+    /**
+     * 2026-10-30 生产：同一天清仓 SGOV（平仓 → 只比浮盈）又给 NVDA 加了 10 股（reqPnLSingle 浮盈按加仓前均价）。日志原数：
+     * <pre>
+     * 账户   当日=-2173.1959660586967  浮盈=21201.05744131204  已实现=137.0360184
+     * 逐只之和 当日=-2215.599096058722   浮盈=21329.08037181204   浮盈差=-128.02293049999935
+     * </pre>
+     * NVDA 持仓接口均价 192.2977127272727、账户更新推送 193.46155755：110 × 1.16384482 = 128.0229305，正好是浮盈差。
+     * 3.5.1 起按新均价修正逐只浮盈后对得上 → 采用；显示仍是账户口径原值。逐只在这里拆成 NVDA + SPY 两只，只看合计。
+     */
+    private void sameDayCloseAndAdd() {
+        live.subscribe();
+        wire.handlers.get(POS).item(pos(4815747, "NVDA", 110, 192.2977127272727));
+        wire.handlers.get(POS).item(pos(756733, "SPY", 210, 668.4270476));
+        wire.handlers.get(POS).end();
+        // 第一只占 102、第二只占 104（同 positionsAndSingles 的编号）；合计浮盈 21329.08037181204
+        wire.handlers.get(SINGLE_IBKR).item(new IbkrAccounts.PnlSingleRow(
+                Decimal.get(110), -840.6, 1329.08037181204, Double.MAX_VALUE, 22574.2));
+        wire.handlers.get(SINGLE_SPY).item(new IbkrAccounts.PnlSingleRow(
+                Decimal.get(210), -1374.999096058722, 20000.0, Double.MAX_VALUE, 158944.8));
+    }
+
+    @Test
+    void 平仓与加仓同一天_按新均价修正逐只浮盈后采用() {
+        sameDayCloseAndAdd();
+        portfolio(feedRow(4815747, 110, 193.46155755, 1293.43), feedRow(756733, 210, 668.4270476, 18547.82));
+
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(-2173.1959660586967, 21201.05744131204, 137.0360184));
+
+        assertThat(rec.pnls).as("10-30 那天账户盈亏不该整天空着").hasSize(1);
+        assertThat(rec.pnls.get(0).unrealized().doubleValue()).as("显示仍是账户口径原值").isCloseTo(21201.05744131204, within(1e-9));
+    }
+
+    /** 守护：没有账户更新推送（开发实例）时不修正，行为与 3.5.0 相同——照样判不通过。 */
+    @Test
+    void 没有账户更新推送时不修正() {
+        sameDayCloseAndAdd();
+
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(-2173.1959660586967, 21201.05744131204, 137.0360184));
+
+        assertThat(rec.pnls).isEmpty();
+    }
+
+    /** 守护：推送里的数量与持仓接口不一致（加仓的推送还没到）时不拿它修正，免得用错一批的均价。 */
+    @Test
+    void 推送数量不一致时不修正() {
+        sameDayCloseAndAdd();
+        portfolio(feedRow(4815747, 100, 193.46155755, 1293.43), feedRow(756733, 210, 668.4270476, 18547.82));
+
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(-2173.1959660586967, 21201.05744131204, 137.0360184));
+
+        assertThat(rec.pnls).isEmpty();
+    }
+
+    /** 守护：修正不等于放松——修正后浮盈仍差得远（这里再多 50）照样不采用。 */
+    @Test
+    void 修正后仍对不上照样不采用() {
+        sameDayCloseAndAdd();
+        portfolio(feedRow(4815747, 110, 193.46155755, 1293.43), feedRow(756733, 210, 668.4270476, 18547.82));
+
+        wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(-2173.1959660586967, 21201.05744131204 - 50, 137.0360184));
+
+        assertThat(rec.pnls).isEmpty();
+    }
+
     /** 接上账户更新推送：首批到齐后重发持仓，数量一致的那只均价换成推送的值，其余原样。 */
     private IbkrPortfolioFeed portfolio(IbkrAccounts.PortfolioRow... rows) {
         IbkrPortfolioFeed feed = new IbkrPortfolioFeed(wire, () -> ACCT);
@@ -480,10 +549,18 @@ class IbkrLiveAccountTest {
                 .isEqualByComparingTo("95.96");
     }
 
-    /** 核对用的仍是逐只盈亏的原值：账户更新推送的浮盈（3 分钟一批、盈透自己的标价）不参与，免得两边时刻不同判不通过。 */
+    /**
+     * 核对用的仍是逐只盈亏的原值：账户更新推送的<b>浮盈</b>（3 分钟一批、盈透自己的标价）不参与，免得两边时刻不同判不通过。
+     * 3.5.1 起推送的<b>均价</b>参与（修正加仓日的成本滞后），所以这里持仓均价与推送一致——不加仓的日子本来就一致，修正量为 0。
+     */
     @Test
     void 核对不受账户更新推送影响() {
-        positionsAndSingles(true);
+        live.subscribe();
+        wire.handlers.get(POS).item(pos(43645865, "IBKR", 11.1142, 74.16640875));
+        wire.handlers.get(POS).item(pos(756733, "SPY", 210, 668.4270476));
+        wire.handlers.get(POS).end();
+        wire.handlers.get(SINGLE_IBKR).item(new IbkrAccounts.PnlSingleRow(Decimal.get(11.1142), 25.67, 183.65, Double.MAX_VALUE, 1007.95));
+        wire.handlers.get(SINGLE_SPY).item(new IbkrAccounts.PnlSingleRow(Decimal.get(210), 890.32, 22145.11, Double.MAX_VALUE, 160225.80));
         portfolio(feedRow(43645865, 11.1142, 74.16640875, 9999.0), feedRow(756733, 210, 668.4270476, 9999.0));
 
         wire.handlers.get(PNL).item(new IbkrAccounts.PnlRow(1280.50, 22328.76, 364.51));   // 平仓日：比浮盈（逐只原值之和 22328.76）

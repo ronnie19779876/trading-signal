@@ -189,6 +189,13 @@ final class IbkrPortfolioFeed {
         return feed;
     }
 
+    /** 这只持仓在推送里的均价（不打日志，核对用）——只在数量一致时给。 */
+    static Double averageCost(Map<String, IbkrAccounts.PortfolioRow> rows, String conId, BigDecimal quantity) {
+        IbkrAccounts.PortfolioRow r = matching(rows, conId, quantity);
+        BigDecimal v = r == null ? null : IbkrAccounts.amount(r.averageCost());
+        return v == null ? null : v.doubleValue();
+    }
+
     /** 这只持仓在推送里的浮盈——同样只在数量一致时给。 */
     static BigDecimal unrealized(Map<String, IbkrAccounts.PortfolioRow> rows, String conId, BigDecimal quantity) {
         IbkrAccounts.PortfolioRow r = matching(rows, conId, quantity);
