@@ -46,12 +46,13 @@ import org.jdkxx.trader.storage.selection.SelectionEarningsRepository;
  *
  * <p>Deliberately left out: position size, cost, net liquidation, account information, and whether
  * the name is held at all (user decision 2026-09-17). Only financial periods ending before the
- * judgement date are included; when the judgement date is more than 7 days before today (manual
- * analysis of a past day) the period must also have been announced by the judgement date - the
- * announcement date uses the same rule as quant selection ({@link QuarterAvailability}: nearest
- * broker announcement date within 75 days after period end, falling back to the statutory deadline
- * when none matches). Before 3.4.8 announcement dates were not wired in and everything was simply
- * held back 45 days. {@code calendarHint}: see {@link EarningsCalendarHint}.
+ * judgement date are included, and the period must also have been announced by the judgement date
+ * (always, including today's judgement: an after-market or unknown-session announcement on the
+ * judgement date counts as not yet announced) - the announcement date uses the same rule as quant
+ * selection ({@link QuarterAvailability}: nearest broker announcement date within 75 days after
+ * period end, falling back to the statutory deadline when none matches). Before 3.4.8 announcement
+ * dates were not wired in and everything was simply held back 45 days. {@code calendarHint}: see
+ * {@link EarningsCalendarHint}.
  */
 public class SignalPayloadBuilder {
 
@@ -157,6 +158,20 @@ public class SignalPayloadBuilder {
     this.zone = zone;
   }
 
+  /**
+   * Builds the input with today taken in the market zone, the same as {@link AiVetoService}: the
+   * preview endpoint used the JVM default zone (production runs in Asia/Shanghai), so for part of
+   * the day its "today" was a different date (found in the 2026-10-31 review).
+   */
+  public Map<String, Object> build(InstrumentRow row, SentinelEvaluation e) {
+    return build(row, e, LocalDate.now(zone));
+  }
+
+  /**
+   * @param today only decides whether the judgement date counts as a past date (more than 7 days
+   *     back), which adds a caveat to calendarHint; the financials are filtered by the judgement
+   *     date either way
+   */
   public Map<String, Object> build(InstrumentRow row, SentinelEvaluation e, LocalDate today) {
     LocalDate asOf = e.asOf();
     List<String> caveats = new ArrayList<>();
@@ -169,7 +184,7 @@ public class SignalPayloadBuilder {
     List<EarningsEvent> events = earnings.events(row.id());
     TreeSet<LocalDate> calendar =
         new TreeSet<>(days.between(Market.US, asOf.minusYears(4), asOf.plusDays(400)));
-    Map<String, Object> fin = financials(row, asOf, pastDate, events, calendar, caveats);
+    Map<String, Object> fin = financials(row, asOf, events, calendar, caveats);
     root.put("financials", fin);
     root.put(
         "calendarHint",
@@ -379,7 +394,6 @@ public class SignalPayloadBuilder {
   private Map<String, Object> financials(
       InstrumentRow row,
       LocalDate asOf,
-      boolean pastDate,
       List<EarningsEvent> events,
       TreeSet<LocalDate> calendar,
       List<String> caveats) {
@@ -388,11 +402,10 @@ public class SignalPayloadBuilder {
     for (FinancialStatement st : FIELDS.keySet()) {
       reports.put(st, financials.find(row.instrument(), row.id(), st, 12));
     }
-    // Judgement dates within 7 days of today skip the announcement check: everything stored is
-    // public by now (note: for an asOf a few days back this can include a period announced after
-    // asOf)
-    Set<LocalDate> unpublished =
-        pastDate ? unpublishedOn(asOf, reports, events, calendar) : Set.of();
+    // The announcement check applies to every judgement date. It used to be skipped within 7 days
+    // of today ("everything stored is public by now"), which sent a period announced after a recent
+    // asOf, and on asOf itself one announced after market (found in the 2026-10-31 review)
+    Set<LocalDate> unpublished = unpublishedOn(asOf, reports, events, calendar);
     Map<String, Map<String, Object>> quarters = new LinkedHashMap<>();
     Map<String, Map<String, Object>> annual = new LinkedHashMap<>();
     for (Map.Entry<FinancialStatement, Map<Long, String>> fields : FIELDS.entrySet()) {

@@ -62,7 +62,7 @@ public class SignalController {
       throw new IllegalStateException(
           j.symbol() + " " + j.evaluation().asOf() + " 不予判定：" + j.evaluation().statusDetail());
     }
-    return payloads.build(facade.instrument(symbol), j.evaluation(), LocalDate.now());
+    return payloads.build(facade.instrument(symbol), j.evaluation());
   }
 
   /**
