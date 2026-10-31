@@ -38,7 +38,7 @@
     <properties>
         <!-- The version is changed here and only here. Development/testing always uses -SNAPSHOT; a release drops
              SNAPSHOT and gets a tag. Only release versions may be deployed to production. Rules: README, versioning section -->
-        <revision>3.5.2</revision>
+        <revision>3.5.3-SNAPSHOT</revision>
 
         <java.version>21</java.version>
         <maven.compiler.release>21</maven.compiler.release>
