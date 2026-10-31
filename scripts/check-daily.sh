@@ -35,8 +35,7 @@ FETCH_BODY=""
 # No curl -f: it returns the same non-zero code for 4xx/5xx and for "cannot connect", so it cannot tell
 # "the service is up but the endpoint blew up" from "the service is not running". Instead the status code
 # is taken with -w and the body with -o: code 000 means no connection.
-# The third argument is one extra acceptable status code (the health endpoint returns 503 when degraded,
-# and the body is still the complete JSON).
+# The third argument is one extra acceptable status code (used for the health endpoint, see below).
 fetch() {
   local title="$1" url="$2" alsoOk="${3:-}" tmp code
   FETCH_BODY=""
@@ -83,7 +82,11 @@ audit "信号审计"     "$BASE/api/signals/audit$SUFFIX"
 audit "量化选股审计" "$BASE/api/selection/audit$SUFFIX"
 
 # Health: batch jobs and gateways. DEGRADED counts as a problem too -- a failed or skipped job shows up here.
-# When degraded, actuator returns 503 and the body is still the complete JSON, so a 503 is parsed as usual.
+# The HTTP code says nothing about health: application.yml sets status.http-mapping (DEGRADED: 200), which
+# replaces Spring's default mapping, so every status -- DOWN included -- answers 200 (the comment here used
+# to claim 503 for degraded / DOWN; corrected after the 2026-10-31 review). The verdict therefore comes from
+# the body's top-level "status" only; components are listed for diagnosis. 503 is still accepted and parsed
+# the same way in case the mapping is ever changed back to Spring's default.
 if fetch "健康接口" "$BASE/actuator/health" 503; then
 printf '%s' "$FETCH_BODY" | python3 -c '
 import sys, json
