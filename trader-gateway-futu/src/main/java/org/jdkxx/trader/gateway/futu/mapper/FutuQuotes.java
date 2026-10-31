@@ -53,14 +53,22 @@ public final class FutuQuotes {
     // Reference price: in the regular session it is the broker's "previous close". In pre-market,
     // after-hours and overnight the broker computes the change against the last regular close (the
     // frozen curPrice), while lastClose is still the previous close of that earlier regular
-    // session; using it as the base would give a completely different change. Only when the session
-    // sub-structure has a positive price do we switch to it; otherwise the regular-session values
-    // (against lastClose) are kept
+    // session; using it as the base would give a completely different change. When the session
+    // sub-structure has a positive price we switch to it. Pre-market and overnight without a
+    // session trade yet (price 0 or no sub-structure): the broker shows the frozen curPrice with a
+    // change of 0, and so do we (the user's option A, 2026-10-31 review); falling back to the
+    // regular-session change against lastClose showed yesterday's whole-day move as if it were the
+    // pre-market one. After-hours without a trade keeps the regular-session values on purpose: the
+    // regular close just happened and its change against lastClose is still the day's change
     BigDecimal referenceClose = lastClose;
     if (effective != null && effective.price() != null && effective.price().signum() > 0) {
       price = effective.price();
       change = effective.change();
       changeRate = effective.changeRate();
+      referenceClose = cur;
+    } else if (session == MarketSession.PRE || session == MarketSession.OVERNIGHT) {
+      change = BigDecimal.ZERO;
+      changeRate = BigDecimal.ZERO;
       referenceClose = cur;
     }
     return new Quote(

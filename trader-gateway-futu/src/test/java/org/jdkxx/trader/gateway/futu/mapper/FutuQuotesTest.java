@@ -135,4 +135,41 @@ class FutuQuotesTest {
     assertThat(q.preMarket().price()).isNull();
     assertThat(q.preMarket().change()).isNull();
   }
+
+  @Test
+  void 盘前还没有成交时基准取冻结的curPrice_涨跌为0_盘后不变() {
+    // Found in the 2026-10-31 review: before the first pre-market trade preMarket.price is 0 and
+    // the quote fell back to the regular-session values against lastClose, so the page showed
+    // yesterday's full-day change as if it were pre-market and referenceClose contradicted the
+    // Quote Javadoc. The broker shows 0 against the frozen curPrice (user chose option A)
+    QotCommon.BasicQot noPreTrade =
+        preMarketSample().toBuilder()
+            .setPreMarket(QotCommon.PreAfterMarketData.newBuilder().setPrice(0))
+            .clearOvernight()
+            .build();
+
+    Quote pre = FutuQuotes.toQuote(noPreTrade, MarketSession.PRE, Instant.EPOCH);
+    assertThat(pre.price()).isEqualByComparingTo("357.01");
+    assertThat(pre.referenceClose()).isEqualByComparingTo("357.01");
+    assertThat(pre.change()).isEqualByComparingTo("0");
+    assertThat(pre.changeRate()).isEqualByComparingTo("0");
+
+    QotCommon.BasicQot noPreAtAll = preMarketSample().toBuilder().clearPreMarket().build();
+    Quote missing = FutuQuotes.toQuote(noPreAtAll, MarketSession.PRE, Instant.EPOCH);
+    assertThat(missing.referenceClose()).isEqualByComparingTo("357.01");
+    assertThat(missing.change()).isEqualByComparingTo("0");
+
+    QotCommon.BasicQot noOvernight =
+        preMarketSample().toBuilder()
+            .setAfterMarket(QotCommon.PreAfterMarketData.newBuilder().setPrice(0))
+            .clearOvernight()
+            .build();
+    Quote overnight = FutuQuotes.toQuote(noOvernight, MarketSession.OVERNIGHT, Instant.EPOCH);
+    assertThat(overnight.referenceClose()).isEqualByComparingTo("357.01");
+    assertThat(overnight.change()).isEqualByComparingTo("0");
+
+    Quote after = FutuQuotes.toQuote(noOvernight, MarketSession.AFTER, Instant.EPOCH);
+    assertThat(after.referenceClose()).as("盘后保持原口径").isEqualByComparingTo("355.0");
+    assertThat(after.change()).isEqualByComparingTo("2.01");
+  }
 }
