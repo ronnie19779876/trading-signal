@@ -1,6 +1,7 @@
 package org.jdkxx.trader.core.marketdata.quotes;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -13,13 +14,19 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import org.jdkxx.trader.common.ratelimit.Sleeper;
 import org.jdkxx.trader.core.marketdata.MarketDataProperties;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
 import org.jdkxx.trader.core.marketdata.universe.UnknownSymbolGuard;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.Market;
+import org.jdkxx.trader.domain.MarketSession;
+import org.jdkxx.trader.domain.Quote;
 import org.jdkxx.trader.domain.SecurityType;
 import org.jdkxx.trader.domain.SubscriptionInfo;
 import org.jdkxx.trader.gateway.MarketDataGateway;
@@ -78,6 +85,17 @@ class QuoteSubscriptionServiceTest {
   }
 
   private QuoteSubscriptionService service(boolean pauseDuringRefresh, boolean autoSubscribe) {
+    return service(
+        pauseDuringRefresh,
+        autoSubscribe,
+        d -> {
+          sleeps.add(d);
+          now.set(now.get().plus(d));
+        });
+  }
+
+  private QuoteSubscriptionService service(
+      boolean pauseDuringRefresh, boolean autoSubscribe, Sleeper sleeper) {
     when(scope.poolAndHoldings()).thenAnswer(inv -> pool.get());
     when(gateway.subscribeQuotes(anyList()))
         .thenAnswer(
@@ -110,10 +128,7 @@ class QuoteSubscriptionServiceTest {
         cache,
         new UnknownSymbolGuard(gateway, mock(InstrumentRepository.class), 200, 3),
         clock,
-        d -> {
-          sleeps.add(d);
-          now.set(now.get().plus(d));
-        });
+        sleeper);
   }
 
   /**
@@ -240,6 +255,7 @@ class QuoteSubscriptionServiceTest {
     assertThat(s.status().subscribed()).isEqualTo(2);
 
     s.onDisconnected(Broker.FUTU, "断线");
+    s.awaitReconcile(); // the clearing runs on the reconciliation thread as well
     assertThat(s.status().subscribed()).isZero();
     s.onConnected(Broker.FUTU, true);
     s.awaitReconcile();
@@ -444,5 +460,105 @@ class QuoteSubscriptionServiceTest {
     QuoteSubscriptionService s = service(true);
     s.onConnected(Broker.IBKR, false);
     assertThat(subs).isEmpty();
+  }
+
+  private static Quote quote(String symbol) {
+    return new Quote(
+        Instrument.us(symbol),
+        MarketSession.RTH,
+        java.math.BigDecimal.ONE,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        1,
+        null,
+        null,
+        null,
+        null,
+        null,
+        Instant.now(),
+        false);
+  }
+
+  /**
+   * Found in the 2026-10-31 review: the connect / disconnect callbacks run on the 2-thread
+   * futu-scheduler but took the object monitor, which reconcile holds while it blocks on gateway
+   * futures (30 s each). A reconcile stuck on a silent broker therefore parked the scheduler thread
+   * and could starve the heartbeats.
+   */
+  @Test
+  void 对账卡在券商回复上时_断线与连上事件立刻返回_之后照常清空并重订() throws Exception {
+    QuoteSubscriptionService s = service(true, true);
+    CompletableFuture<Void> pending = new CompletableFuture<>();
+    CountDownLatch entered = new CountDownLatch(1);
+    AtomicInteger calls = new AtomicInteger();
+    when(gateway.subscribeQuotes(anyList()))
+        .thenAnswer(
+            inv -> {
+              subs.add(List.copyOf(inv.getArgument(0)));
+              if (calls.getAndIncrement() == 0) {
+                entered.countDown();
+                return pending;
+              }
+              return CompletableFuture.completedFuture(null);
+            });
+    subs.clear(); // when(...) invoked the previous stub once with an empty list
+    Thread manual = new Thread(s::reconcile, "test-manual-reconcile");
+    manual.setDaemon(true);
+    manual.start();
+    assertThat(entered.await(5, TimeUnit.SECONDS)).as("对账已经卡在订阅回复上").isTrue();
+    cache.accept(quote("AAPL"));
+
+    assertTimeoutPreemptively(
+        Duration.ofSeconds(1), () -> s.onDisconnected(Broker.FUTU, "断线"), "断线事件不能等对象锁");
+    assertTimeoutPreemptively(
+        Duration.ofSeconds(1), () -> s.onConnected(Broker.FUTU, true), "连上事件不能等对象锁");
+    assertThat(cache.size()).as("新连接没有旧报价，缓存当场清空（无锁）").isZero();
+
+    pending.complete(null);
+    manual.join(5_000);
+    s.awaitReconcile();
+    // The stuck reconcile booked AAPL and MSFT on the old connection; the queued clear dropped
+    // them and the reconnect reconciliation subscribed both again
+    assertThat(subs).hasSize(2);
+    assertThat(s.status().subscribed()).isEqualTo(2);
+  }
+
+  @Test
+  void 轮转暂停在等订阅满一分钟时_连上事件立刻返回_暂停中不重订() throws Exception {
+    CountDownLatch parked = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    QuoteSubscriptionService s =
+        service(
+            true,
+            true,
+            d -> {
+              parked.countDown();
+              release.await(10, TimeUnit.SECONDS);
+              now.set(now.get().plus(d));
+            });
+    s.reconcile();
+    assertThat(subs).hasSize(1);
+    Thread pausing = new Thread(() -> s.pause(true), "test-pause");
+    pausing.setDaemon(true);
+    pausing.start();
+    assertThat(parked.await(5, TimeUnit.SECONDS)).as("暂停已经在等订阅满一分钟").isTrue();
+    cache.accept(quote("AAPL"));
+
+    assertTimeoutPreemptively(
+        Duration.ofSeconds(1), () -> s.onConnected(Broker.FUTU, true), "连上事件不能等对象锁");
+    assertThat(cache.size()).isZero();
+
+    release.countDown();
+    pausing.join(5_000);
+    s.awaitReconcile();
+    assertThat(s.paused()).isTrue();
+    assertThat(s.status().subscribed()).isZero();
+    assertThat(subs).as("暂停中的重连对账不订阅").hasSize(1);
   }
 }

@@ -42,8 +42,9 @@ import org.slf4j.LoggerFactory;
  * {@code subscriptionsWanted} are guarded by the object monitor. {@link #reconcile}, {@link #pause}
  * and {@link #resume} hold the monitor while they block on gateway futures (up to 30 s each) and,
  * in {@code pause(true)}, while sleeping until the youngest subscription is old enough. Anything
- * else that takes the monitor (the connect / disconnect callbacks, {@link #status}) waits for that
- * long.
+ * else that takes the monitor ({@link #status}, {@link #onPoolChanged}) waits for that long. The
+ * connect / disconnect callbacks never take it: they only clear the (lock-free) quote cache inline
+ * and queue the rest on {@link #worker}.
  */
 public class QuoteSubscriptionService
     implements GatewayListener, RotationRefresher.QuotaCoordinator {
@@ -113,8 +114,11 @@ public class QuoteSubscriptionService
    * the real reconciliation to this thread. Single-threaded: reconciliations from several
    * reconnects simply queue and never run concurrently.
    *
-   * <p>The clearing itself still takes the object monitor on the listener thread, so it waits for
-   * any reconciliation or pause that currently holds the monitor (see the class comment).
+   * <p>Clearing {@code subscribed} needs the object monitor, which a reconciliation or a rotation
+   * pause can hold for tens of seconds (up to about 61 s asleep in {@code pause(true)}); until
+   * 3.5.2 the callbacks took it on the listener thread and could park a futu-scheduler thread that
+   * long (found in the 2026-10-31 review). So the clearing is queued here too: it runs after
+   * whatever holds the monitor, and before any reconciliation queued later.
    */
   private final java.util.concurrent.ExecutorService worker =
       java.util.concurrent.Executors.newSingleThreadExecutor(
@@ -363,28 +367,31 @@ public class QuoteSubscriptionService
     if (broker != Broker.FUTU) {
       return;
     }
-    boolean wanted;
-    synchronized (this) {
-      subscribed.clear(); // a new connection carries no subscriptions
-      cache.clear();
-      wanted = subscriptionsWanted;
-    }
-    // Reconcile only when subscriptions are wanted: always on an auto-subscribe instance, and on
-    // any other instance only if it had subscribed before (manual reconcile, pool following). A dev
-    // instance that never subscribed must stay off the quota it shares with production.
-    if (props.autoSubscribe() || wanted) {
-      // Hand off to our own thread: do not block the 2-thread futu-scheduler for tens of seconds,
-      // or heartbeats cannot be scheduled and the connection is judged dead.
-      worker.execute(
-          () -> {
-            try {
-              Result r = reconcile();
-              log.info("富途{}，实时订阅对账：{}", reconnected ? "重连" : "连上", r);
-            } catch (RuntimeException e) {
-              log.warn("富途{}后的实时订阅对账失败：{}", reconnected ? "重连" : "连上", e.toString());
-            }
-          });
-    }
+    // The cache is a ConcurrentHashMap: clearing it needs no monitor. Everything that does is
+    // handed to our own thread, so the 2-thread futu-scheduler is never blocked for tens of seconds
+    // (heartbeats that cannot be scheduled get the connection judged dead).
+    cache.clear();
+    worker.execute(
+        () -> {
+          boolean wanted;
+          synchronized (this) {
+            subscribed.clear(); // a new connection carries no subscriptions
+            wanted = subscriptionsWanted;
+          }
+          // Reconcile only when subscriptions are wanted: always on an auto-subscribe instance, and
+          // on any other instance only if it had subscribed before (manual reconcile, pool
+          // following). A dev instance that never subscribed must stay off the quota it shares
+          // with production.
+          if (!props.autoSubscribe() && !wanted) {
+            return;
+          }
+          try {
+            Result r = reconcile();
+            log.info("富途{}，实时订阅对账：{}", reconnected ? "重连" : "连上", r);
+          } catch (RuntimeException e) {
+            log.warn("富途{}后的实时订阅对账失败：{}", reconnected ? "重连" : "连上", e.toString());
+          }
+        });
   }
 
   @Override
@@ -392,15 +399,20 @@ public class QuoteSubscriptionService
     if (broker != Broker.FUTU) {
       return;
     }
-    synchronized (this) {
-      subscribed.clear();
-    }
+    // Not on the listener thread: the monitor may be held by a reconciliation or a pause (see
+    // worker)
+    worker.execute(
+        () -> {
+          synchronized (this) {
+            subscribed.clear();
+          }
+        });
   }
 
   /**
-   * Waits for the reconciliations queued on {@link #worker} to finish. <b>Tests only</b>: the
-   * reconciliation after connect / reconnect is asynchronous, so a test asserting the subscription
-   * result must wait for it first, or it races.
+   * Waits for the tasks queued on {@link #worker} to finish. <b>Tests only</b>: the clearing on
+   * disconnect and the reconciliation after connect / reconnect are asynchronous, so a test
+   * asserting the subscription result must wait for them first, or it races.
    */
   void awaitReconcile() {
     try {
