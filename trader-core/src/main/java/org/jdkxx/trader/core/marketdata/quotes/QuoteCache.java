@@ -18,10 +18,14 @@ import org.jdkxx.trader.domain.Quote;
  * and the stream takes "what changed since the previous frame" by version.
  *
  * <p>Concurrency: written by the gateway's quote listener, read by the SSE stream thread and REST
- * threads. The version is incremented before the map entry is replaced, so a reader can observe
- * {@link #currentVersion()} ahead of the entry carrying it; a reader that advances its cursor to
- * that version may skip the quote until the instrument's next update. The per-second buckets are
- * approximate (reset and increment are not atomic together).
+ * threads. {@link #accept} puts the entry first and only then publishes its version, so once a
+ * reader sees {@link #currentVersion()} = v every entry up to v is already in the map; a reader
+ * that takes the version before scanning never moves its cursor past a quote it did not see (it may
+ * see a newer entry early and send it twice, which is harmless). Before the 2026-10-31 review the
+ * version was bumped before the put and the stream could skip a quote until the instrument's next
+ * update. accept is synchronized so that version allocation and publication stay in order even if
+ * more than one thread ever writes. The per-second buckets are approximate (reset and increment are
+ * not atomic together).
  */
 public class QuoteCache {
 
@@ -34,9 +38,10 @@ public class QuoteCache {
 
   public record Versioned(Quote quote, long version) {}
 
-  public void accept(Quote q) {
-    long v = version.incrementAndGet();
+  public synchronized void accept(Quote q) {
+    long v = version.get() + 1;
     quotes.put(q.instrument(), new Versioned(q, v));
+    version.set(v);
     pushes.incrementAndGet();
     Instant now = q.receivedAt();
     lastPushAt = now;

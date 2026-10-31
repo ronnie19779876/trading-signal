@@ -69,8 +69,11 @@ public class QuoteStreamService implements AutoCloseable {
     clients.add(c);
     try {
       sink.status(status.get());
+      // Version before the scan (see QuoteCache): a quote put after it is either in this frame or
+      // sent again by the next tick, never skipped
+      long version = cache.currentVersion();
       List<Quote> all = cache.all();
-      c.version = cache.currentVersion();
+      c.version = version;
       if (!all.isEmpty()) {
         sink.quotes(all);
       }
@@ -90,6 +93,7 @@ public class QuoteStreamService implements AutoCloseable {
 
   void tick() {
     long now = System.currentTimeMillis();
+    // Must be read before changedSince scans (see QuoteCache)
     long current = cache.currentVersion();
     Object st = null;
     for (Client c : clients) {
