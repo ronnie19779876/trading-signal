@@ -89,9 +89,9 @@ public final class EvidenceVerifier {
   }
 
   /**
-   * Resolves a path of the form a.b[0].c; returns null on an out-of-range index or a type mismatch.
-   * Every character of the path must be consumed by a segment or a single separating dot, otherwise
-   * the path is rejected.
+   * Resolves a path of the form a.b[0].c; returns null on an out-of-range index (including one too
+   * large for an int) or a type mismatch. Every character of the path must be consumed by a segment
+   * or a single separating dot, otherwise the path is rejected.
    */
   static JsonNode resolve(JsonNode root, String path) {
     JsonNode cur = root;
@@ -109,7 +109,14 @@ public final class EvidenceVerifier {
       if (m.group(1) != null) {
         cur = cur.isObject() ? cur.get(m.group(1)) : null;
       } else {
-        int i = Integer.parseInt(m.group(2));
+        // a hallucinated index too large for an int is simply out of range; before 3.5.2 the
+        // NumberFormatException escaped and the whole paid call was recorded as INVALID
+        int i;
+        try {
+          i = Integer.parseInt(m.group(2));
+        } catch (NumberFormatException e) {
+          return null;
+        }
         cur = cur.isArray() && i < cur.size() ? cur.get(i) : null;
       }
     }

@@ -99,6 +99,43 @@ class VetoRuleTest {
     assertThat(d.verifiedBear()).isEqualTo(2);
   }
 
+  /**
+   * The "at least 2 verified bearish items" gate counts distinct input fields, not list entries:
+   * before 3.5.2 the model citing one field twice (or with a different case / padded index) passed
+   * the gate on a single data point (found in the 2026-10-31 review).
+   */
+  @Test
+  void 同一字段重复引用只算一条证据() {
+    for (List<Evidence> bear :
+        List.of(
+            List.of(TWO_GOOD.get(0), TWO_GOOD.get(0)),
+            List.of(
+                TWO_GOOD.get(0), new Evidence(" valuation.peStaticPercentile5y ", "96.4", "再说一遍")),
+            List.of(
+                TWO_GOOD.get(1),
+                new Evidence("financials.quarters[00].revenueYoy", "-3.5", "同一季")))) {
+      VetoJudgment j = judgment(Stance.BEARISH, Confidence.HIGH, bear, "x");
+      VetoRule.Decision d = VetoRule.decide(j, EvidenceVerifier.check(INPUT, j));
+      assertThat(d.verdict()).as(bear.toString()).isEqualTo(VetoRule.Verdict.ALLOW);
+      assertThat(d.verifiedBear()).as(bear.toString()).isEqualTo(1);
+    }
+  }
+
+  /**
+   * A hallucinated index too large for an int used to throw NumberFormatException out of the
+   * verifier, so the whole paid call was recorded as INVALID; it is just an unresolvable path.
+   */
+  @Test
+  void 超大下标判为找不到而不是抛异常() {
+    assertThat(
+            EvidenceVerifier.checkOne(
+                    INPUT,
+                    EvidenceVerifier.Side.BEAR,
+                    new Evidence("financials.quarters[99999999999].revenueYoy", "1", ""))
+                .verified())
+        .isFalse();
+  }
+
   /** Guard: missing any single veto condition on its own must prevent a veto. */
   @Test
   void 任一条件不满足都放行() {
