@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -136,10 +137,9 @@ public class UniverseSyncService {
   /**
    * Syncs one index by set difference. <b>Compute the exit set and pass the guard first, then
    * act</b>: when blocked, not a single constituent row of the index changes; there is no partial
-   * application (a half-old, half-new state is harder to investigate than no sync at all). Note
-   * that the instrument rows are upserted before the guard runs (the set difference needs their
-   * ids), so a blocked sync may still have inserted new instrument rows or updated names;
-   * constituent membership is what stays untouched. The add / close loop is not wrapped in a
+   * application (a half-old, half-new state is harder to investigate than no sync at all). The
+   * guard works on a read-only lookup of the instrument rows; they are upserted only after it
+   * passes, so a blocked sync writes nothing at all. The add / close loop is not wrapped in a
    * transaction.
    *
    * <p>Why the guard is needed: {@code apply} is a pure set difference, so whatever the source
@@ -154,16 +154,22 @@ public class UniverseSyncService {
   IndexResult apply(
       IndexCode index, List<ConstituentEntry> entries, String sourceName, boolean force) {
     LocalDate today = LocalDate.now(zone);
-    Map<Long, ConstituentEntry> wanted = new LinkedHashMap<>();
+    // Read-only pass for the guard: upserting every source entry first meant a blocked sync still
+    // inserted instrument rows for the new symbols (found in the 2026-10-31 review). A symbol
+    // without a row cannot be a current member, so find() is enough to compute the exits.
+    Set<Instrument> fetched = new LinkedHashSet<>();
+    Set<Long> knownIds = new HashSet<>();
     for (ConstituentEntry e : entries) {
-      long id = instruments.upsert(Instrument.us(e.symbol()), e.name());
-      wanted.putIfAbsent(id, e);
+      Instrument instrument = Instrument.us(e.symbol());
+      if (fetched.add(instrument)) {
+        instruments.find(instrument).ifPresent(r -> knownIds.add(r.id()));
+      }
     }
     Map<Long, ConstituentRow> current = new HashMap<>();
     for (ConstituentRow r : constituents.current(index)) {
       current.put(r.instrumentId(), r);
     }
-    List<Long> leaving = current.keySet().stream().filter(id -> !wanted.containsKey(id)).toList();
+    List<Long> leaving = current.keySet().stream().filter(id -> !knownIds.contains(id)).toList();
     int limit = removalLimit(current.size());
     if (!force && leaving.size() > limit) {
       String why =
@@ -176,11 +182,16 @@ public class UniverseSyncService {
               + "，来源 "
               + sourceName
               + " 只给了 "
-              + wanted.size()
+              + fetched.size()
               + "）：整个指数跳过，未做任何改动。"
               + "确认来源无误后用 force=true 放行";
       log.warn("{} 成分股同步被守护挡下：{}", index, why);
-      return new IndexResult(index, wanted.size(), 0, 0, current.size(), why);
+      return new IndexResult(index, fetched.size(), 0, 0, current.size(), why);
+    }
+    Map<Long, ConstituentEntry> wanted = new LinkedHashMap<>();
+    for (ConstituentEntry e : entries) {
+      long id = instruments.upsert(Instrument.us(e.symbol()), e.name());
+      wanted.putIfAbsent(id, e);
     }
     int added = 0;
     int unchanged = 0;

@@ -12,15 +12,21 @@ import static org.mockito.Mockito.when;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import org.jdkxx.trader.core.marketdata.MarketDataProperties;
 import org.jdkxx.trader.core.marketdata.TestProperties;
 import org.jdkxx.trader.domain.IndexCode;
 import org.jdkxx.trader.domain.Instrument;
+import org.jdkxx.trader.domain.Market;
+import org.jdkxx.trader.domain.SecurityType;
 import org.jdkxx.trader.gateway.MarketDataGateway;
 import org.jdkxx.trader.storage.marketdata.ConstituentRow;
 import org.jdkxx.trader.storage.marketdata.IndexConstituentRepository;
 import org.jdkxx.trader.storage.marketdata.InstrumentRepository;
+import org.jdkxx.trader.storage.marketdata.InstrumentRow;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -42,7 +48,32 @@ class UniverseSyncGuardTest {
   private final IndexConstituentRepository constituents = mock(IndexConstituentRepository.class);
   private final MarketDataProperties props = TestProperties.defaults();
 
+  /** Symbols that already have an instrument row (filled by existing()). */
+  private final Set<String> known = new HashSet<>();
+
   private UniverseSyncService service() {
+    // The guard runs on a read-only lookup (find); only symbols with a row can be current members
+    when(instruments.find(any(Instrument.class)))
+        .thenAnswer(
+            inv -> {
+              String symbol = ((Instrument) inv.getArgument(0)).symbol();
+              return known.contains(symbol)
+                  ? Optional.of(
+                      new InstrumentRow(
+                          symbol.hashCode(),
+                          Market.US,
+                          symbol,
+                          symbol,
+                          null,
+                          SecurityType.STOCK,
+                          1,
+                          null,
+                          false,
+                          null,
+                          1L,
+                          "RESOLVED"))
+                  : Optional.empty();
+            });
     when(instruments.upsert(
             any(Instrument.class),
             // use any(), not anyString(): the CSV rows' name is null and anyString() does not match
@@ -61,10 +92,11 @@ class UniverseSyncGuardTest {
   }
 
   /**
-   * Current members: the symbol's hashCode is the id, consistent with the upsert double in
+   * Current members: the symbol's hashCode is the id, consistent with the find / upsert doubles in
    * service().
    */
   private void existing(IndexCode index, List<String> symbols) {
+    known.addAll(symbols);
     List<ConstituentRow> rows = new ArrayList<>();
     for (String s : symbols) {
       rows.add(
@@ -131,6 +163,26 @@ class UniverseSyncGuardTest {
     verify(constituents, never()).add(any(), anyLong(), any(), any(), any(), any());
   }
 
+  /**
+   * A blocked sync must not write instrument rows either (found in the 2026-10-31 review): the
+   * upsert used to run for every source entry before the guard, so a blocked sync still inserted
+   * the new symbols, which the static-info resolution then picked up as PENDING.
+   */
+  @Test
+  void 被挡下时也不写入标的行() {
+    UniverseSyncService s = service();
+    existing(IndexCode.SP500, symbols("S", 503));
+    List<String> fetched = new ArrayList<>(symbols("S", 60));
+    fetched.add("NEWCO");
+    fetched.add("NEWCO2");
+
+    UniverseSyncService.IndexResult r =
+        s.apply(IndexCode.SP500, entries(IndexCode.SP500, fetched), "WIKI", false);
+
+    assertThat(r.error()).isNotNull().contains("退出 443").contains("只给了 62");
+    verify(instruments, never()).upsert(any(), any());
+  }
+
   @Test
   void force_放行大批退出() {
     UniverseSyncService s = service();
@@ -160,6 +212,8 @@ class UniverseSyncGuardTest {
     assertThat(r.error()).isNull();
     assertThat(r.removed()).isEqualTo(2);
     assertThat(r.added()).isEqualTo(1);
+    // once the guard passes, every source entry is upserted (fills a missing name, inserts NEWA)
+    verify(instruments, times(502)).upsert(any(), any());
   }
 
   /**
