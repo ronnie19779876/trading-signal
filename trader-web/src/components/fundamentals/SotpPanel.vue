@@ -5,7 +5,7 @@ import {
   SCENARIOS, SCENARIO_LABEL, valuationApi,
   type ModelRequest, type SavedModel, type Scenario, type Segment, type SotpBasis, type SotpResult,
 } from '../../api/valuation'
-import { big, errMsg, num, numMax } from '../../lib/format'
+import { big, errMsg, num, numMax, todayEt } from '../../lib/format'
 
 /**
  * Sum-of-the-parts valuation (SOTP): value a company business line by business line.
@@ -52,7 +52,8 @@ function resetForm() {
   const b = basis.value
   form.value = {
     name: '',
-    asOf: b?.priceDate ?? new Date().toISOString().slice(0, 10),
+    // US Eastern today: toISOString() is the UTC date, a day ahead every US evening (found in the 2026-10-31 review)
+    asOf: b?.priceDate ?? todayEt(),
     targetYear: new Date().getFullYear() + 4,
     discountPct: 10,
     targetShares: b?.shares.outstanding ?? 0,

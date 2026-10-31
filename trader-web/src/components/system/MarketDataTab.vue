@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAutoRefresh } from '../../composables/useAutoRefresh'
-import { errMsg, num, timeEt } from '../../lib/format'
+import { daysAgoEt, errMsg, num, timeEt, todayEt } from '../../lib/format'
 import {
   addToPool, getBars, getCoverage, getPool, removeFromPool, type Adjust, type CoverageView, type DailyBar, type InstrumentView,
 } from '../../api/marketdata'
@@ -24,18 +24,13 @@ const newSymbol = ref('')
 const newRole = ref<'POOL' | 'BENCHMARK'>('POOL')
 
 const barSymbol = ref('AAPL')
-const barFrom = ref(daysAgo(90))
-const barTo = ref(today())
+// US Eastern dates like the rest of the app; the browser's local date runs a day ahead of the market
+// every evening in Asia (found in the 2026-10-31 review).
+const barFrom = ref(daysAgoEt(90))
+const barTo = ref(todayEt())
 const barAdjust = ref<Adjust>('none')
 const bars = ref<DailyBar[]>([])
 const barsLoading = ref(false)
-
-function today(): string {
-  return new Date().toLocaleDateString('en-CA')
-}
-function daysAgo(n: number): string {
-  return new Date(Date.now() - n * 86_400_000).toLocaleDateString('en-CA')
-}
 
 // ---- live quotes (SSE) ----
 const quotes = ref<Map<string, Quote>>(new Map())
