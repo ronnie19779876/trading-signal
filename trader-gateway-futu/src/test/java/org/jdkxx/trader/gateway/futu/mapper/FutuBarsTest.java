@@ -1,6 +1,7 @@
 package org.jdkxx.trader.gateway.futu.mapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.futu.openapi.pb.QotCommon;
 import java.math.BigDecimal;
@@ -41,5 +42,41 @@ class FutuBarsTest {
     assertThat(b.turnoverRate().toPlainString()).isEqualTo("0.00232");
     assertThat(b.changeRate().toPlainString()).isEqualTo("-0.052287");
     assertThat(b.blank()).isFalse();
+  }
+
+  @Test
+  void 必填价格不是有限数时报错并带标的与日期_可空字段置空() {
+    // Found in the 2026-10-31 review: BigDecimal.valueOf(NaN) throws a bare NumberFormatException
+    // that names neither the symbol nor the date
+    QotCommon.KLine nanClose =
+        QotCommon.KLine.newBuilder()
+            .setTime("2026-09-02 00:00:00")
+            .setIsBlank(false)
+            .setOpenPrice(1)
+            .setHighPrice(1)
+            .setLowPrice(1)
+            .setClosePrice(Double.NaN)
+            .build();
+    assertThatThrownBy(() -> FutuBars.toDailyBar(Instrument.us("AAPL"), nanClose))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("AAPL")
+        .hasMessageContaining("2026-09-02")
+        .hasMessageContaining("close");
+
+    QotCommon.KLine nanOptional =
+        nanClose.toBuilder()
+            .setClosePrice(1)
+            .setLastClosePrice(Double.POSITIVE_INFINITY)
+            .setTurnover(Double.NaN)
+            .setTurnoverRate(Double.NaN)
+            .setChangeRate(Double.NaN)
+            .setPe(Double.NEGATIVE_INFINITY)
+            .build();
+    DailyBar b = FutuBars.toDailyBar(Instrument.us("AAPL"), nanOptional);
+    assertThat(b.lastClose()).isNull();
+    assertThat(b.turnover()).isNull();
+    assertThat(b.turnoverRate()).isNull();
+    assertThat(b.changeRate()).isNull();
+    assertThat(b.pe()).isNull();
   }
 }

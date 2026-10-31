@@ -1,6 +1,7 @@
 package org.jdkxx.trader.gateway.futu.mapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.futu.openapi.pb.QotCommon;
 import java.time.Instant;
@@ -104,5 +105,34 @@ class FutuQuotesTest {
     assertThat(FutuQuotes.session(null, et.withHour(22))).isEqualTo(MarketSession.CLOSED);
     assertThat(FutuQuotes.session(null, et.plusDays(2).withHour(10)))
         .isEqualTo(MarketSession.CLOSED); // Saturday
+  }
+
+  @Test
+  void 现价不是有限数时报错并带标的_可空字段置空() {
+    QotCommon.BasicQot nanCur = preMarketSample().toBuilder().setCurPrice(Double.NaN).build();
+    assertThatThrownBy(() -> FutuQuotes.toQuote(nanCur, MarketSession.RTH, Instant.EPOCH))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("TSLA")
+        .hasMessageContaining("2026-09-02");
+
+    QotCommon.BasicQot nanOptional =
+        preMarketSample().toBuilder()
+            .setLastClosePrice(Double.NaN)
+            .setTurnover(Double.NaN)
+            .setOpenPrice(Double.NaN)
+            .setPreMarket(
+                QotCommon.PreAfterMarketData.newBuilder()
+                    .setPrice(Double.NaN)
+                    .setChangeVal(Double.NaN)
+                    .setChangeRate(Double.NaN))
+            .build();
+    Quote q = FutuQuotes.toQuote(nanOptional, MarketSession.RTH, Instant.EPOCH);
+    assertThat(q.price()).isEqualByComparingTo("357.01");
+    assertThat(q.lastClose()).isNull();
+    assertThat(q.change()).isNull();
+    assertThat(q.turnover()).isNull();
+    assertThat(q.open()).isNull();
+    assertThat(q.preMarket().price()).isNull();
+    assertThat(q.preMarket().change()).isNull();
   }
 }

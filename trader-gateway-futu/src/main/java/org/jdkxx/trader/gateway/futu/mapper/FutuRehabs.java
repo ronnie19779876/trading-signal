@@ -1,7 +1,6 @@
 package org.jdkxx.trader.gateway.futu.mapper;
 
 import com.futu.openapi.pb.QotCommon;
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,17 +22,18 @@ public final class FutuRehabs {
   public static List<RehabFactor> toFactors(Instrument instrument, List<QotCommon.Rehab> rehabs) {
     List<RehabFactor> out = new ArrayList<>(rehabs.size());
     for (QotCommon.Rehab r : rehabs) {
+      LocalDate exDate = LocalDate.parse(r.getTime().substring(0, 10));
       out.add(
           new RehabFactor(
               instrument,
-              LocalDate.parse(r.getTime().substring(0, 10)),
-              factor(r.getFwdFactorA()),
-              factor(r.getFwdFactorB()),
-              factor(r.getBwdFactorA()),
-              factor(r.getBwdFactorB()),
+              exDate,
+              FutuNumbers.required(r.getFwdFactorA(), 10, "fwdFactorA", instrument, exDate),
+              FutuNumbers.required(r.getFwdFactorB(), 10, "fwdFactorB", instrument, exDate),
+              FutuNumbers.required(r.getBwdFactorA(), 10, "bwdFactorA", instrument, exDate),
+              FutuNumbers.required(r.getBwdFactorB(), 10, "bwdFactorB", instrument, exDate),
               r.getCompanyActFlag(),
-              r.hasDividend() ? factor(r.getDividend()) : null,
-              r.hasSpDividend() ? factor(r.getSpDividend()) : null,
+              r.hasDividend() ? FutuNumbers.orNull(r.getDividend(), 10) : null,
+              r.hasSpDividend() ? FutuNumbers.orNull(r.getSpDividend(), 10) : null,
               r.hasSplitBase() ? r.getSplitBase() : 0,
               r.hasSplitErt() ? r.getSplitErt() : 0,
               r.hasJoinBase() ? r.getJoinBase() : 0,
@@ -44,9 +44,5 @@ public final class FutuRehabs {
               r.hasTransferErt() ? r.getTransferErt() : 0));
     }
     return out;
-  }
-
-  static BigDecimal factor(double v) {
-    return BigDecimal.valueOf(v).setScale(10, java.math.RoundingMode.HALF_UP).stripTrailingZeros();
   }
 }

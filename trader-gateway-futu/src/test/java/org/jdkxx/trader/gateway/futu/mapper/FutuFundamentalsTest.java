@@ -246,4 +246,33 @@ class FutuFundamentalsTest {
     assertThat(FutuFundamentals.statementType(FinancialStatement.MAIN_INDEX))
         .isEqualTo(QotCommon.FinancialStatementsType.FinancialStatementsType_MainIndex_VALUE);
   }
+
+  @Test
+  void 财报数值不是有限数时该项置空_不让整份报表作废() {
+    // Found in the 2026-10-31 review: a NaN yoy (e.g. growth from a zero base) made
+    // BigDecimal.valueOf throw and the whole statement request failed
+    QotGetFinancialsStatements.S2C s2c =
+        QotGetFinancialsStatements.S2C
+            .newBuilder()
+            .addReportList(
+                QotGetFinancialsStatements.FinancialReport.newBuilder()
+                    .setDateTimeStr("2024-07-31")
+                    .setFiscalYear(2024)
+                    .addItemList(
+                        QotGetFinancialsStatements.FinancialItem.newBuilder()
+                            .setFieldId(1)
+                            .setData(3.0e10)
+                            .setYoy(Double.NaN)
+                            .setQoq(Double.POSITIVE_INFINITY)))
+            .build();
+
+    var item =
+        FutuFundamentals.toReports(Instrument.us("NVDA"), FinancialStatement.INCOME, s2c)
+            .getFirst()
+            .items()
+            .getFirst();
+    assertThat(item.value()).isEqualByComparingTo("3.0e10");
+    assertThat(item.yoy()).isNull();
+    assertThat(item.qoq()).isNull();
+  }
 }

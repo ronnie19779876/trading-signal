@@ -58,7 +58,8 @@ public final class FutuFundamentals {
               ? Instant.ofEpochSecond((long) b.getUpdateTimestamp())
               : Instant.now();
       BigDecimal turnoverRate = b.hasTurnoverRate() ? dec(b.getTurnoverRate()) : null;
-      BigDecimal lastPrice = b.getCurPrice() > 0 ? dec(b.getCurPrice()) : null;
+      BigDecimal lastPrice =
+          Double.isFinite(b.getCurPrice()) && b.getCurPrice() > 0 ? dec(b.getCurPrice()) : null;
 
       if (s.hasEquityExData()) {
         QotGetSecuritySnapshot.EquitySnapshotExData e = s.getEquityExData();
@@ -215,12 +216,14 @@ public final class FutuFundamentals {
         : null;
   }
 
+  // Every valuation and statement value is nullable downstream, so a non-finite value (e.g. a
+  // yoy growth from a zero base) becomes null for that one field instead of failing the reply
   private static BigDecimal dec(double v) {
-    return BigDecimal.valueOf(v);
+    return FutuNumbers.orNull(v);
   }
 
   private static BigDecimal dec(boolean present, double v) {
-    return present ? BigDecimal.valueOf(v) : null;
+    return present ? FutuNumbers.orNull(v) : null;
   }
 
   private static String emptyToNull(String s) {

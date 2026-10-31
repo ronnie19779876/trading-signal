@@ -30,7 +30,8 @@ public final class FutuQuotes {
     Instrument instrument =
         new Instrument(
             FutuSecurities.market(q.getSecurity().getMarket()), q.getSecurity().getCode());
-    BigDecimal cur = price(q.getCurPrice());
+    BigDecimal cur =
+        FutuNumbers.required(q.getCurPrice(), 6, "curPrice", instrument, q.getUpdateTime());
     BigDecimal lastClose = q.hasLastClosePrice() ? price(q.getLastClosePrice()) : null;
     Quote.SessionQuote pre = q.hasPreMarket() ? session(q.getPreMarket()) : null;
     Quote.SessionQuote after = q.hasAfterMarket() ? session(q.getAfterMarket()) : null;
@@ -75,9 +76,7 @@ public final class FutuQuotes {
         lastClose,
         referenceClose,
         q.getVolume(),
-        q.hasTurnover()
-            ? BigDecimal.valueOf(q.getTurnover()).setScale(2, RoundingMode.HALF_UP)
-            : null,
+        turnover(q),
         pre,
         after,
         overnight,
@@ -90,11 +89,7 @@ public final class FutuQuotes {
     return new Quote.SessionQuote(
         price(d.getPrice()),
         d.hasChangeVal() ? price(d.getChangeVal()) : null,
-        d.hasChangeRate()
-            ? BigDecimal.valueOf(d.getChangeRate())
-                .setScale(4, RoundingMode.HALF_UP)
-                .stripTrailingZeros()
-            : null,
+        d.hasChangeRate() ? FutuNumbers.orNull(d.getChangeRate(), 4) : null,
         d.hasVolume() ? d.getVolume() : 0);
   }
 
@@ -109,8 +104,14 @@ public final class FutuQuotes {
     }
   }
 
+  /** Nullable price: a non-finite value becomes null (curPrice is required, see toQuote). */
   static BigDecimal price(double v) {
-    return BigDecimal.valueOf(v).setScale(6, RoundingMode.HALF_UP).stripTrailingZeros();
+    return FutuNumbers.orNull(v, 6);
+  }
+
+  private static BigDecimal turnover(QotCommon.BasicQot q) {
+    BigDecimal t = q.hasTurnover() ? FutuNumbers.orNull(q.getTurnover()) : null;
+    return t == null ? null : t.setScale(2, RoundingMode.HALF_UP);
   }
 
   /**

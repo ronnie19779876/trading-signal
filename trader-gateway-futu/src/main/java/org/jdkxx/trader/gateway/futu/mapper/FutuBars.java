@@ -25,33 +25,25 @@ public final class FutuBars {
   }
 
   public static DailyBar toDailyBar(Instrument instrument, QotCommon.KLine k) {
+    LocalDate date = tradeDate(k.getTime());
+    BigDecimal turnover = k.hasTurnover() ? FutuNumbers.orNull(k.getTurnover()) : null;
     return new DailyBar(
         instrument,
-        tradeDate(k.getTime()),
-        price(k.getOpenPrice()),
-        price(k.getHighPrice()),
-        price(k.getLowPrice()),
-        price(k.getClosePrice()),
-        k.hasLastClosePrice() ? price(k.getLastClosePrice()) : null,
+        date,
+        FutuNumbers.required(k.getOpenPrice(), 6, "open", instrument, date),
+        FutuNumbers.required(k.getHighPrice(), 6, "high", instrument, date),
+        FutuNumbers.required(k.getLowPrice(), 6, "low", instrument, date),
+        FutuNumbers.required(k.getClosePrice(), 6, "close", instrument, date),
+        k.hasLastClosePrice() ? FutuNumbers.orNull(k.getLastClosePrice(), 6) : null,
         k.getVolume(),
-        k.hasTurnover()
-            ? BigDecimal.valueOf(k.getTurnover()).setScale(4, java.math.RoundingMode.HALF_UP)
-            : null,
-        k.hasTurnoverRate() ? rate(k.getTurnoverRate()) : null,
-        k.hasChangeRate() ? rate(k.getChangeRate()) : null,
-        k.hasPe() ? rate(k.getPe()) : null,
+        turnover == null ? null : turnover.setScale(4, java.math.RoundingMode.HALF_UP),
+        k.hasTurnoverRate() ? FutuNumbers.orNull(k.getTurnoverRate(), 6) : null,
+        k.hasChangeRate() ? FutuNumbers.orNull(k.getChangeRate(), 6) : null,
+        k.hasPe() ? FutuNumbers.orNull(k.getPe(), 6) : null,
         k.getIsBlank());
   }
 
   static LocalDate tradeDate(String time) {
     return LocalDate.parse(time.length() >= 10 ? time.substring(0, 10) : time);
-  }
-
-  static BigDecimal price(double v) {
-    return BigDecimal.valueOf(v).setScale(6, java.math.RoundingMode.HALF_UP).stripTrailingZeros();
-  }
-
-  static BigDecimal rate(double v) {
-    return BigDecimal.valueOf(v).setScale(6, java.math.RoundingMode.HALF_UP).stripTrailingZeros();
   }
 }
