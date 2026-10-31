@@ -3,6 +3,7 @@ package org.jdkxx.trader.storage.environment;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.configuration.Configuration;
 import org.jdkxx.trader.common.env.AppEnvironment;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.flyway.FlywayMigrationStrategy;
@@ -17,18 +18,22 @@ import org.springframework.stereotype.Component;
  * for Flyway initialization, so the guard is guaranteed to touch the database before any business
  * code does. A failed check throws, startup aborts, and <b>not a single migration has run</b>.
  *
- * <p>Caveat: the guard only runs because Flyway runs. With Flyway auto-configuration excluded or
- * {@code spring.flyway.enabled=false}, this strategy is never invoked and nothing checks the marker
- * or the standby state.
+ * <p>The guard only runs because Flyway runs. With Flyway auto-configuration excluded or {@code
+ * spring.flyway.enabled=false} this strategy is never invoked and nothing would check the marker or
+ * the standby state, so {@link #afterSingletonsInstantiated()} refuses startup when the guard did
+ * not run (found in the 2026-10-31 review; before that this was only a documented caveat).
  *
  * <p>Only wired when {@code trader.storage.enabled=true}; {@code trader.environment} is then
  * mandatory.
  */
 @Component
 @ConditionalOnProperty(name = "trader.storage.enabled", havingValue = "true")
-public class EnvironmentGuard implements FlywayMigrationStrategy {
+public class EnvironmentGuard implements FlywayMigrationStrategy, SmartInitializingSingleton {
 
   private final AppEnvironment declared;
+
+  /** Set once the checks passed and migration ran; Flyway migrates during singleton creation. */
+  private volatile boolean ran;
 
   public EnvironmentGuard(@Value("${trader.environment:}") String declared) {
     try {
@@ -60,6 +65,19 @@ public class EnvironmentGuard implements FlywayMigrationStrategy {
     migration.run();
     if (decision == EnvironmentCheck.Decision.STAMP_AFTER_MIGRATION) {
       EnvironmentCheck.stampFresh(store, declared);
+    }
+    ran = true;
+  }
+
+  /**
+   * Called after every non-lazy singleton exists, i.e. after FlywayMigrationInitializer (which
+   * Spring Boot keeps eager even under lazy initialization) has run the migration strategy.
+   */
+  @Override
+  public void afterSingletonsInstantiated() {
+    if (!ran) {
+      throw new IllegalStateException(
+          "trader.storage.enabled=true 但 Flyway 未运行，环境守卫与备库检查不会执行，拒绝启动");
     }
   }
 

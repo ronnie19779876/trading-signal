@@ -1,11 +1,14 @@
 package org.jdkxx.trader.storage.environment;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.InitializingBean;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 /**
  * Order of the guard: verify first, then migrate. Before 2.0.2 it migrated first and verified
@@ -65,5 +68,65 @@ class EnvironmentGuardTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("只读热备");
     assertThat(calls).isEmpty();
+  }
+
+  /**
+   * Found in the 2026-10-31 review: the marker and standby checks only run inside Flyway's
+   * migration strategy, so storage enabled with Flyway excluded (or spring.flyway.enabled=false)
+   * started with no environment check at all. The guard now refuses startup when it never ran.
+   */
+  @Test
+  void Flyway没运行时拒绝启动() {
+    assertThatThrownBy(() -> new EnvironmentGuard("DEV").afterSingletonsInstantiated())
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Flyway 未运行");
+  }
+
+  @Test
+  void 守卫跑过之后正常启动() {
+    EnvironmentGuard guard = new EnvironmentGuard("DEV");
+    guard.guard(new EnvironmentCheckTest.FakeStore("DEV", true, calls), migration);
+
+    assertThatCode(guard::afterSingletonsInstantiated).doesNotThrowAnyException();
+  }
+
+  /** Wired by the container, not only called by hand: a context without Flyway fails to start. */
+  @Test
+  void 容器里没有Flyway时启动失败() {
+    new ApplicationContextRunner()
+        .withPropertyValues("trader.storage.enabled=true", "trader.environment=DEV")
+        .withUserConfiguration(EnvironmentGuard.class)
+        .run(
+            ctx ->
+                assertThat(ctx)
+                    .hasFailed()
+                    .getFailure()
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Flyway 未运行"));
+  }
+
+  /**
+   * Stand-in for Spring Boot's FlywayMigrationInitializer (an InitializingBean that calls the
+   * strategy while singletons are being created): the guard's check comes afterwards and passes.
+   */
+  static class FakeMigrationInitializer implements InitializingBean {
+    private final EnvironmentGuard guard;
+
+    FakeMigrationInitializer(EnvironmentGuard guard) {
+      this.guard = guard;
+    }
+
+    @Override
+    public void afterPropertiesSet() {
+      guard.guard(new EnvironmentCheckTest.FakeStore("DEV", true), () -> {});
+    }
+  }
+
+  @Test
+  void 容器里Flyway先跑过时正常启动() {
+    new ApplicationContextRunner()
+        .withPropertyValues("trader.storage.enabled=true", "trader.environment=DEV")
+        .withUserConfiguration(EnvironmentGuard.class, FakeMigrationInitializer.class)
+        .run(ctx -> assertThat(ctx).hasNotFailed());
   }
 }
