@@ -2837,6 +2837,261 @@
       ]
     },
     {
+      "name": "量化选股·历史检验（3.6.0）",
+      "item": [
+        {
+          "name": "预登记规格",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/selection/backtest/specs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "selection",
+                "backtest",
+                "specs"
+              ]
+            },
+            "description": "F1、F1A~F1E 与四个诊断规格的参数，以及训练段 / 留出段各跑过几次。只读。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"含 F1\", () => pm.expect(body.map(s => s.spec.version)).to.include(\"F1\"));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "历次检验",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/selection/backtest/runs?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "selection",
+                "backtest",
+                "runs"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "从新到旧，不含正文。只读。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"是数组\", () => pm.expect(body).to.be.an(\"array\"));",
+                  "if (body.length) pm.environment.set(\"backtestRunId\", body[0].id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "一次检验的报告",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Trader-Client",
+                "value": "postman"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/selection/backtest/runs/{{backtestRunId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "selection",
+                "backtest",
+                "runs",
+                "{{backtestRunId}}"
+              ]
+            },
+            "description": "report.criteria 是 §30.8 三条判据，只在留出段上算数。不存在 404。"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 或 404\", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "⚠ 写操作（改状态或触发跑批，别对生产整组跑）",
+          "item": [
+            {
+              "name": "训练段检验（异步）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/selection/backtest?spec=F1A&from=2018-01-02&to=2022-12-30",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "selection",
+                    "backtest"
+                  ],
+                  "query": [
+                    {
+                      "key": "spec",
+                      "value": "F1A"
+                    },
+                    {
+                      "key": "from",
+                      "value": "2018-01-02"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2022-12-30"
+                    }
+                  ]
+                },
+                "description": "只出报告、不写评分表。to 必须早于 2023-01-01；出场日落进留出段的样本自动丢掉。⚠ 会写一行检验记录。留出段（final=true）故意不放进集合：一次点击就会被计为一次动用，要用时手工加参数。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                      "const body = pm.response.json();",
+                      "pm.test(\"返回 jobId\", () => pm.expect(body.jobId).to.be.a(\"number\"));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            },
+            {
+              "name": "区间触及留出段但没带 final（应 400）",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Trader-Client",
+                    "value": "postman"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/selection/backtest?spec=F1&from=2018-01-02&to=2023-06-30",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "selection",
+                    "backtest"
+                  ],
+                  "query": [
+                    {
+                      "key": "spec",
+                      "value": "F1"
+                    },
+                    {
+                      "key": "from",
+                      "value": "2018-01-02"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2023-06-30"
+                    }
+                  ]
+                },
+                "description": "反例：守住留出段。不入队。"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"400\", () => pm.response.to.have.status(400));"
+                    ]
+                  }
+                }
+              ],
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "量化选股·模拟交易（3.4.0）",
       "item": [
         {

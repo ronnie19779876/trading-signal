@@ -23,6 +23,9 @@ public final class SelectionJobs {
   /** Simulated-trading recompute (also run once inside the daily job) */
   public static final String SIM_UPDATE = "SELECTION_SIM";
 
+  /** Historical test run (§30), report only */
+  public static final String BACKTEST = "SELECTION_BACKTEST";
+
   /** Simulated-trading weekly report */
   public static final String SIM_WEEKLY = "SELECTION_SIM_WEEKLY";
 

@@ -64,6 +64,15 @@ public class SelectionDataLoader {
 
   /** Loads every input needed to score each day in [from, to]. */
   public SelectionDataset load(LocalDate from, LocalDate to) {
+    return load(from, to, to);
+  }
+
+  /**
+   * As {@link #load(LocalDate, LocalDate)}, with prices loaded through {@code pricesTo} (the
+   * historical test needs bars past the last scoring day for forward returns, §30.3). Scoring on a
+   * day d still only looks at data on or before d.
+   */
+  public SelectionDataset load(LocalDate from, LocalDate to, LocalDate pricesTo) {
     List<InstrumentRow> rows = targets.all();
     Map<Long, InstrumentRow> byId = new LinkedHashMap<>();
     rows.forEach(r -> byId.put(r.id(), r));
@@ -93,7 +102,7 @@ public class SelectionDataLoader {
       // the IBKR segment, and IBKR bars are not cut off at `to`. This is not look-ahead - momentum
       // only uses prices on or before t, the stitching ratio is a constant scale factor, and
       // unadjusted prices are reconstructed from the real split events.
-      LocalDate barsTo = to;
+      LocalDate barsTo = pricesTo.isAfter(to) ? pricesTo : to;
       for (Long id : chunk.keySet()) {
         List<SplitAdjustedBar> ib = ibkr.getOrDefault(id, List.of());
         if (!ib.isEmpty() && ib.getLast().tradeDate().isAfter(barsTo)) {

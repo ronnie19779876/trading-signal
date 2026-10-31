@@ -13,6 +13,7 @@ import org.jdkxx.trader.domain.selection.AdjustedPrices;
 import org.jdkxx.trader.domain.selection.Exclusion;
 import org.jdkxx.trader.domain.selection.FundamentalMetrics;
 import org.jdkxx.trader.domain.selection.Metric;
+import org.jdkxx.trader.domain.selection.ModelSpec;
 import org.jdkxx.trader.domain.selection.QuarterFacts;
 import org.jdkxx.trader.domain.selection.StockInputs;
 import org.jdkxx.trader.storage.marketdata.InstrumentRow;
@@ -26,20 +27,20 @@ import org.jdkxx.trader.storage.marketdata.InstrumentRow;
  */
 public final class SelectionDataset {
 
-  /** Minimum share price (unadjusted, §25.3 rule 4) */
-  static final double PRICE_MIN = 10;
-
-  /** Minimum number of announced quarterly reports (§25.3 rule 5) */
-  static final int MIN_QUARTERS = 8;
-
   /**
-   * How many calendar days a price / valuation may lag t and still count as "available that day"
-   * (about 5 trading days)
+   * How many calendar days a price / valuation may lag t for F1 (about 5 trading days); the loader
+   * reaches back this far for valuations
    */
-  static final int STALE_DAYS = 7;
+  static final int STALE_DAYS = ModelSpec.F1.staleDays();
 
-  /** Momentum look-backs in trading days: 3, 6 and 12 months */
-  static final int[] MOMENTUM_DAYS = {63, 126, 252};
+  /** Momentum windows in trading days: {look-back, skip} (skip = most recent bars left out) */
+  static final Map<Metric, int[]> MOMENTUM_WINDOWS =
+      new EnumMap<>(
+          Map.of(
+              Metric.MOMENTUM_3M, new int[] {63, 0},
+              Metric.MOMENTUM_6M, new int[] {126, 0},
+              Metric.MOMENTUM_12M, new int[] {252, 0},
+              Metric.MOMENTUM_12_1, new int[] {252, 21}));
 
   static final String COMMON = "COMMON";
   private static final Set<Metric> FINANCIAL_NOT_APPLICABLE =
@@ -52,14 +53,14 @@ public final class SelectionDataset {
 
     /**
      * Index of the latest row on or before t, or -1 when there is none or it is older than
-     * STALE_DAYS.
+     * staleDays.
      */
-    int indexAt(LocalDate t) {
+    int indexAt(LocalDate t, int staleDays) {
       int i = Arrays.binarySearch(dates, t);
       if (i < 0) {
         i = -i - 2; // binarySearch miss: -(insertion point) - 1, so this is the index just before t
       }
-      return i < 0 || ChronoUnit.DAYS.between(dates[i], t) > STALE_DAYS ? -1 : i;
+      return i < 0 || ChronoUnit.DAYS.between(dates[i], t) > staleDays ? -1 : i;
     }
   }
 
@@ -87,18 +88,30 @@ public final class SelectionDataset {
   }
 
   List<StockInputs> inputsOn(LocalDate t) {
+    return inputsOn(t, ModelSpec.F1);
+  }
+
+  List<StockInputs> inputsOn(LocalDate t, ModelSpec spec) {
     List<StockInputs> out = new ArrayList<>(stocks.size());
     for (Stock s : stocks) {
-      out.add(inputs(s, t));
+      out.add(inputs(s, t, spec));
     }
     return out;
   }
 
   static StockInputs inputs(Stock s, LocalDate t) {
+    return inputs(s, t, ModelSpec.F1);
+  }
+
+  /**
+   * One instrument's inputs on t under {@code spec}: only the spec's metrics are kept (so the
+   * fingerprint of F1 is unchanged), and the exclusion thresholds come from the spec.
+   */
+  static StockInputs inputs(Stock s, LocalDate t, ModelSpec spec) {
     Map<Metric, Double> m = new EnumMap<>(Metric.class);
     m.putAll(FundamentalMetrics.compute(s.quarters(), t));
 
-    int v = s.valuations().indexAt(t);
+    int v = s.valuations().indexAt(t, spec.staleDays());
     if (v >= 0) {
       double pe = s.valuations().pe()[v];
       double pb = s.valuations().pb()[v];
@@ -115,20 +128,20 @@ public final class SelectionDataset {
     }
 
     AdjustedPrices p = s.prices();
-    int idx = p.valid() ? p.indexAt(t, STALE_DAYS) : -1;
+    int idx = p.valid() ? p.indexAt(t, spec.staleDays()) : -1;
     if (idx >= 0) {
-      Metric[] mom = {Metric.MOMENTUM_3M, Metric.MOMENTUM_6M, Metric.MOMENTUM_12M};
-      for (int i = 0; i < mom.length; i++) {
-        double r = p.returnOver(idx, MOMENTUM_DAYS[i]);
+      for (Map.Entry<Metric, int[]> w : MOMENTUM_WINDOWS.entrySet()) {
+        double r = p.returnBetween(idx, w.getValue()[0], w.getValue()[1]);
         if (Double.isFinite(r)) {
-          m.put(mom[i], r);
+          m.put(w.getKey(), r);
         }
       }
     }
+    m.keySet().retainAll(spec.metrics());
 
     // Gross margin and FCF margin do not apply to banks / insurers (their statement templates have
     // no such lines)
-    Set<Metric> applicable = EnumSet.allOf(Metric.class);
+    Set<Metric> applicable = EnumSet.copyOf(spec.metrics());
     QuarterFacts latest = latestAvailable(s.quarters(), t);
     if (latest != null && latest.template().financial()) {
       applicable.removeAll(FINANCIAL_NOT_APPLICABLE);
@@ -152,13 +165,13 @@ public final class SelectionDataset {
       detail = "价格序列作废：" + p.problem();
     } else if (idx < 0) {
       ex = Exclusion.NO_PRICE;
-      detail = "截至当天 " + STALE_DAYS + " 天内没有收盘价";
-    } else if (p.rawClose(idx) < PRICE_MIN) {
+      detail = "截至当天 " + spec.staleDays() + " 天内没有收盘价";
+    } else if (p.rawClose(idx) < spec.priceMin()) {
       ex = Exclusion.PRICE_BELOW_MIN;
-      detail = "不复权收盘 " + Math.round(p.rawClose(idx) * 100) / 100.0 + " < " + PRICE_MIN;
-    } else if (known < MIN_QUARTERS) {
+      detail = "不复权收盘 " + Math.round(p.rawClose(idx) * 100) / 100.0 + " < " + spec.priceMin();
+    } else if (known < spec.minQuarters()) {
       ex = Exclusion.INSUFFICIENT_HISTORY;
-      detail = "已公告季报 " + known + " 季，不足 " + MIN_QUARTERS;
+      detail = "已公告季报 " + known + " 季，不足 " + spec.minQuarters();
     }
     return new StockInputs(s.row().id(), s.row().symbol(), s.sector(), ex, detail, m, applicable);
   }

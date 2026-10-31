@@ -3,11 +3,13 @@ package org.jdkxx.trader.core.selection;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import org.jdkxx.trader.core.marketdata.audit.BarAuditService;
 import org.jdkxx.trader.core.marketdata.jobs.JobService;
 import org.jdkxx.trader.domain.selection.SelectionModel;
 import org.jdkxx.trader.storage.marketdata.InstrumentRow;
+import org.jdkxx.trader.storage.selection.SelectionBacktestRunRepository;
 import org.jdkxx.trader.storage.selection.SelectionPriceSeamRepository;
 import org.jdkxx.trader.storage.selection.SelectionScoreRepository;
 import org.jdkxx.trader.storage.selection.SelectionSimRepository;
@@ -29,6 +31,7 @@ public class SelectionFacade {
   private final SelectionAuditService audit;
   private final SelectionScoreRepository scores;
   private final SelectionSimService sim;
+  private final SelectionBacktestService backtest;
 
   public SelectionFacade(
       JobService jobs,
@@ -40,7 +43,8 @@ public class SelectionFacade {
       SelectionDailyService daily,
       SelectionAuditService audit,
       SelectionScoreRepository scores,
-      SelectionSimService sim) {
+      SelectionSimService sim,
+      SelectionBacktestService backtest) {
     this.jobs = jobs;
     this.targets = targets;
     this.backfill = backfill;
@@ -51,6 +55,7 @@ public class SelectionFacade {
     this.audit = audit;
     this.scores = scores;
     this.sim = sim;
+    this.backtest = backtest;
   }
 
   public long daily(String trigger, LocalDate date) {
@@ -178,6 +183,31 @@ public class SelectionFacade {
 
   public long simWeekly(String trigger, LocalDate weekEnd, boolean force) {
     return jobs.submit(SelectionJobs.SIM_WEEKLY, trigger, ctx -> sim.weekly(weekEnd, force, ctx));
+  }
+
+  // ---- historical test (§30): report only, never writes selection_score
+
+  /**
+   * Submits a historical-test run; the request is validated first so a bad spec or a range that
+   * reaches the holdout without final=true fails immediately and nothing is queued.
+   */
+  public long backtest(
+      String trigger, String spec, LocalDate from, LocalDate to, boolean finalRun) {
+    backtest.validate(spec, from, to, finalRun);
+    return jobs.submit(
+        SelectionJobs.BACKTEST, trigger, ctx -> backtest.run(spec, from, to, finalRun, ctx));
+  }
+
+  public List<Map<String, Object>> backtestSpecs() {
+    return backtest.specs();
+  }
+
+  public List<SelectionBacktestRunRepository.RunSummary> backtestRuns(int limit) {
+    return backtest.list(limit);
+  }
+
+  public SelectionBacktestRunRepository.Run backtestRun(long id) {
+    return backtest.find(id).orElseThrow(() -> new NoSuchElementException("没有这次检验：" + id));
   }
 
   private LocalDate cutoff() {

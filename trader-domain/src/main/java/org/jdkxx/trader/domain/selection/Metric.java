@@ -26,7 +26,12 @@ public enum Metric {
   /** Return over 126 trading days */
   MOMENTUM_6M(Factor.MOMENTUM),
   /** Return over 252 trading days */
-  MOMENTUM_12M(Factor.MOMENTUM);
+  MOMENTUM_12M(Factor.MOMENTUM),
+  /**
+   * Return from 252 to 21 trading days back ("12 minus 1"); only used by historical-test variants
+   * (§30.7), never by F1
+   */
+  MOMENTUM_12_1(Factor.MOMENTUM);
 
   private final Factor factor;
 

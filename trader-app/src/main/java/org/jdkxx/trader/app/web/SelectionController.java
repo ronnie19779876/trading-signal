@@ -12,6 +12,7 @@ import org.jdkxx.trader.core.selection.BackfillPart;
 import org.jdkxx.trader.core.selection.SelectionFacade;
 import org.jdkxx.trader.core.selection.SelectionInputsService;
 import org.jdkxx.trader.core.selection.SelectionSimService;
+import org.jdkxx.trader.storage.selection.SelectionBacktestRunRepository;
 import org.jdkxx.trader.storage.selection.SelectionPriceSeamRepository;
 import org.jdkxx.trader.storage.selection.SelectionScoreRepository;
 import org.jdkxx.trader.storage.selection.SelectionSimRepository;
@@ -145,6 +146,51 @@ public class SelectionController {
   public Map<String, Object> daily(
       @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
     return Map.of("jobId", facade.daily("MANUAL", date));
+  }
+
+  // ---------------------------------------------------------------- historical test (§30)
+
+  /**
+   * Historical test run (async, report only): spec is a pre-registered name; a range reaching the
+   * holdout (2023-01-01 onwards) needs final=true and is counted as a holdout use.
+   */
+  @PostMapping("/backtest")
+  public Map<String, Object> backtest(
+      @RequestParam(defaultValue = "F1") String spec,
+      @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+      @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+      @RequestParam(name = "final", defaultValue = "false") boolean finalRun) {
+    return Map.of(
+        "jobId",
+        facade.backtest("MANUAL", spec.trim().toUpperCase(Locale.ROOT), from, to, finalRun));
+  }
+
+  /** Pre-registered specs with their parameters and how often each was run per segment. */
+  @GetMapping("/backtest/specs")
+  public List<Map<String, Object>> backtestSpecs() {
+    return facade.backtestSpecs();
+  }
+
+  /** Runs, newest first (without the report body); 50 by default. */
+  @GetMapping("/backtest/runs")
+  public List<SelectionBacktestRunRepository.RunSummary> backtestRuns(
+      @RequestParam(defaultValue = "50") int limit) {
+    return facade.backtestRuns(limit);
+  }
+
+  /** One run: the stored spec and report, returned as JSON objects. */
+  public record BacktestRunView(
+      SelectionBacktestRunRepository.RunSummary run, JsonNode spec, JsonNode report) {}
+
+  @GetMapping("/backtest/runs/{id}")
+  public BacktestRunView backtestRun(@PathVariable long id) {
+    SelectionBacktestRunRepository.Run r = facade.backtestRun(id);
+    try {
+      return new BacktestRunView(
+          r.summary(), json.readTree(r.specDetail()), json.readTree(r.result()));
+    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+      throw new IllegalStateException("检验报告解析失败：" + e.getOriginalMessage());
+    }
   }
 
   // ---------------------------------------------------------------- simulated trading (§26)

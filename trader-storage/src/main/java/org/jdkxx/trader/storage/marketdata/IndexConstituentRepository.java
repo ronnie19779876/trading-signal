@@ -2,7 +2,9 @@ package org.jdkxx.trader.storage.marketdata;
 
 import java.sql.Date;
 import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.jdkxx.trader.domain.IndexCode;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -114,6 +116,38 @@ public class IndexConstituentRepository {
         subIndustry,
         index.name(),
         instrumentId);
+  }
+
+  /**
+   * Records the index's own "date added" on the current membership (V20, §30.5). A null date does
+   * nothing, so a source that stops giving dates never wipes one already stored.
+   */
+  public void setAddedOn(IndexCode index, long instrumentId, LocalDate addedOn) {
+    if (addedOn == null) {
+      return;
+    }
+    jdbc.update(
+        "UPDATE index_constituent SET added_on = ? WHERE index_code = ? AND instrument_id = ? AND until IS NULL",
+        Date.valueOf(addedOn),
+        index.name(),
+        instrumentId);
+  }
+
+  /**
+   * Earliest index "date added" per instrument over its current memberships (either index);
+   * instruments without any date are absent. Used by the point-in-time universe of the historical
+   * test (§30.5).
+   */
+  public Map<Long, LocalDate> addedOn() {
+    Map<Long, LocalDate> out = new HashMap<>();
+    jdbc.query(
+        """
+        SELECT instrument_id, min(added_on) AS added_on FROM index_constituent
+        WHERE until IS NULL AND added_on IS NOT NULL GROUP BY instrument_id""",
+        rs -> {
+          out.put(rs.getLong("instrument_id"), rs.getDate("added_on").toLocalDate());
+        });
+    return out;
   }
 
   /** Ends the current membership; the row is kept as history. */

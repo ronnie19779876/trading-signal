@@ -8,42 +8,40 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Quant selection scoring model F1 (ARCHITECTURE §25.4). Pure function: the same input always
- * yields the same result.
+ * Quant selection scoring model (ARCHITECTURE §25.4); parameters come from a {@link ModelSpec}, and
+ * production uses {@link ModelSpec#F1}. Pure function: the same input always yields the same
+ * result.
  *
  * <ol>
- *   <li>a sector group with fewer than {@value #MIN_SECTOR_SIZE} eligible instruments is marked
- *       {@link Exclusion#SECTOR_TOO_SMALL} as a whole;
+ *   <li>a sector group with fewer than {@code minSectorSize} eligible instruments is marked {@link
+ *       Exclusion#SECTOR_TOO_SMALL} as a whole;
  *   <li>metric percentile: rank among eligible instruments of the same sector that have a value for
  *       the metric, (rank − 1) ÷ (n − 1) × 100 with ties getting the average rank (ascending, so
- *       higher values get higher percentiles); with n &lt; {@value #MIN_METRIC_N} the metric is
- *       void for that sector;
+ *       higher values get higher percentiles); with n &lt; {@code minMetricN} the metric is void
+ *       for that sector;
  *   <li>factor score: average of the percentiles of the metrics that have values, provided at least
  *       half of the applicable metrics have one;
- *   <li>composite score: equal-weighted average of the four factors; rated only when all four
+ *   <li>composite score: equal-weighted average of the spec's factors; rated only when all of them
  *       exist;
- *   <li>rating: forced distribution on the composite, top 10% / 10~30% / 30~70% / 70~90% / bottom
- *       10% (set by the user on 2026-10-10). Equal composites are ordered by instrument id so the
- *       result is deterministic.
+ *   <li>rating: forced distribution on the composite over the spec's rating scope (F1: all rated
+ *       instruments, top 10% / 10~30% / 30~70% / 70~90% / bottom 10%, set by the user on
+ *       2026-10-10). Equal composites are ordered by instrument id so the result is deterministic.
  * </ol>
  *
- * Parameters are fixed in code per model version; changing a parameter means a new model version.
+ * Changing a parameter of the production model means a new model version.
  */
 public final class SelectionModel {
 
   public static final String VERSION = "F1";
-  public static final int MIN_SECTOR_SIZE = 8;
-  public static final int MIN_METRIC_N = 5;
-
-  /**
-   * Rating cut points: a position share (0 = best) below these values gives STRONG_BUY, BUY, HOLD,
-   * SELL in turn; the rest is STRONG_SELL
-   */
-  static final double[] CUTS = {0.10, 0.30, 0.70, 0.90};
 
   private SelectionModel() {}
 
+  /** Scores with the production model F1. */
   public static List<StockScore> score(List<StockInputs> inputs) {
+    return score(inputs, ModelSpec.F1);
+  }
+
+  public static List<StockScore> score(List<StockInputs> inputs, ModelSpec spec) {
     Map<String, Integer> sectorSize = new HashMap<>();
     for (StockInputs s : inputs) {
       if (s.exclusion() == null) {
@@ -57,11 +55,11 @@ public final class SelectionModel {
       if (s.exclusion() != null) {
         exclusion.put(s.instrumentId(), s.exclusion());
         detail.put(s.instrumentId(), s.exclusionDetail());
-      } else if (sectorSize.get(s.sector()) < MIN_SECTOR_SIZE) {
+      } else if (sectorSize.get(s.sector()) < spec.minSectorSize()) {
         exclusion.put(s.instrumentId(), Exclusion.SECTOR_TOO_SMALL);
         detail.put(
             s.instrumentId(),
-            s.sector() + " 合格 " + sectorSize.get(s.sector()) + " 只，不足 " + MIN_SECTOR_SIZE);
+            s.sector() + " 合格 " + sectorSize.get(s.sector()) + " 只，不足 " + spec.minSectorSize());
       } else {
         eligible.add(s);
       }
@@ -73,6 +71,9 @@ public final class SelectionModel {
     eligible.forEach(s -> bySector.computeIfAbsent(s.sector(), k -> new ArrayList<>()).add(s));
     for (List<StockInputs> group : bySector.values()) {
       for (Metric m : Metric.values()) {
+        if (!spec.uses(m)) {
+          continue;
+        }
         List<StockInputs> has = new ArrayList<>();
         for (StockInputs s : group) {
           Double v = s.metrics().get(m);
@@ -81,7 +82,7 @@ public final class SelectionModel {
           }
         }
         int n = has.size();
-        if (n < MIN_METRIC_N) {
+        if (n < spec.minMetricN()) {
           continue;
         }
         has.sort(Comparator.comparingDouble(s -> s.metrics().get(m)));
@@ -108,11 +109,14 @@ public final class SelectionModel {
       Map<Metric, Double> p = pct.get(s.instrumentId());
       Map<Factor, Double> fs = new EnumMap<>(Factor.class);
       for (Factor f : Factor.values()) {
+        if (!spec.factors().contains(f)) {
+          continue;
+        }
         int applicable = 0;
         double sum = 0;
         int present = 0;
         for (Metric m : Metric.values()) {
-          if (m.factor() != f || !s.applicable().contains(m)) {
+          if (m.factor() != f || !spec.uses(m) || !s.applicable().contains(m)) {
             continue;
           }
           applicable++;
@@ -127,31 +131,31 @@ public final class SelectionModel {
         }
       }
       factors.put(s.instrumentId(), fs);
-      if (fs.size() == Factor.values().length) {
+      if (fs.size() == spec.factors().size()) {
         composite.put(
             s.instrumentId(),
             fs.values().stream().mapToDouble(Double::doubleValue).average().orElseThrow());
       }
     }
 
-    List<Long> ranked = new ArrayList<>(composite.keySet());
-    ranked.sort(Comparator.<Long>comparingDouble(id -> -composite.get(id)).thenComparing(id -> id));
     Map<Long, Rating> rating = new HashMap<>();
     Map<Long, Double> compositePct = new HashMap<>();
-    int total = ranked.size();
-    for (int i = 0; i < total; i++) {
-      long id = ranked.get(i);
-      double position = (double) i / total;
-      rating.put(
-          id,
-          position < CUTS[0]
-              ? Rating.STRONG_BUY
-              : position < CUTS[1]
-                  ? Rating.BUY
-                  : position < CUTS[2]
-                      ? Rating.HOLD
-                      : position < CUTS[3] ? Rating.SELL : Rating.STRONG_SELL);
-      compositePct.put(id, total == 1 ? 100.0 : (double) (total - 1 - i) / (total - 1) * 100);
+    Map<String, List<Long>> groups = new HashMap<>();
+    Map<Long, String> sectorOf = new HashMap<>();
+    eligible.forEach(s -> sectorOf.put(s.instrumentId(), s.sector()));
+    for (Long id : composite.keySet()) {
+      String key = spec.ratingScope() == ModelSpec.RatingScope.SECTOR ? sectorOf.get(id) : "";
+      groups.computeIfAbsent(key, k -> new ArrayList<>()).add(id);
+    }
+    for (List<Long> ranked : groups.values()) {
+      ranked.sort(
+          Comparator.<Long>comparingDouble(id -> -composite.get(id)).thenComparing(id -> id));
+      int total = ranked.size();
+      for (int i = 0; i < total; i++) {
+        long id = ranked.get(i);
+        rating.put(id, spec.rating((double) i / total));
+        compositePct.put(id, total == 1 ? 100.0 : (double) (total - 1 - i) / (total - 1) * 100);
+      }
     }
 
     List<StockScore> out = new ArrayList<>(inputs.size());

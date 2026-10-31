@@ -113,4 +113,66 @@ class AdjustedPricesTest {
     assertThat(p.indexAt(D0.minusDays(1), 7)).isEqualTo(-1);
     assertThat(Double.isNaN(p.returnOver(0, 1))).isTrue();
   }
+
+  private static RehabFactor dividend(LocalDate ex, double cash, long flag, int base, int ert) {
+    return new RehabFactor(
+        X,
+        ex,
+        BigDecimal.ONE,
+        BigDecimal.ZERO,
+        BigDecimal.ONE,
+        BigDecimal.ZERO,
+        flag,
+        BigDecimal.valueOf(cash),
+        null,
+        base,
+        ert);
+  }
+
+  /**
+   * Ex-dividend 2 on a 100 stock that opens the ex-date at 98: total return 0, price return -2%.
+   */
+  @Test
+  void 总收益把现金分红再投入() {
+    List<DailyBar> futu = List.of(bar(D0, 100), bar(D0.plusDays(1), 98), bar(D0.plusDays(2), 99));
+    AdjustedPrices p =
+        AdjustedPrices.build(
+            futu, List.of(dividend(D0.plusDays(1), 2, RehabFactor.ACT_DIVIDEND, 0, 0)), List.of());
+
+    assertThat(p.priceReturn(0, 1)).isCloseTo(-0.02, within(1e-12));
+    assertThat(p.totalReturn(0, 1)).isCloseTo(0.0, within(1e-12));
+    assertThat(p.totalReturn(0, 2)).isCloseTo(99.0 / 98 - 1, within(1e-12));
+  }
+
+  /**
+   * Split 1:2 and a 1.00 dividend (post-split basis) on the same day: 100 → 49.5 is a 1% total gain
+   * ((49.5 + 1) ÷ 50).
+   */
+  @Test
+  void 同日拆股与分红按拆后口径() {
+    List<DailyBar> futu = List.of(bar(D0, 100), bar(D0.plusDays(1), 49.5));
+    AdjustedPrices p =
+        AdjustedPrices.build(
+            futu,
+            List.of(
+                dividend(
+                    D0.plusDays(1), 1, RehabFactor.ACT_SPLIT | RehabFactor.ACT_DIVIDEND, 1, 2)),
+            List.of());
+
+    assertThat(p.priceReturn(0, 1)).isCloseTo(-0.01, within(1e-12));
+    assertThat(p.totalReturn(0, 1)).isCloseTo(0.01, within(1e-12));
+  }
+
+  @Test
+  void 跳过最近几根的动能窗口() {
+    List<DailyBar> futu = new ArrayList<>();
+    for (int i = 0; i < 5; i++) {
+      futu.add(bar(D0.plusDays(i), 100 + 10 * i));
+    }
+    AdjustedPrices p = AdjustedPrices.build(futu, List.of(), List.of());
+
+    assertThat(p.returnBetween(4, 4, 1)).isCloseTo(130.0 / 100 - 1, within(1e-12));
+    assertThat(p.returnBetween(4, 4, 0)).isEqualTo(p.returnOver(4, 4));
+    assertThat(Double.isNaN(p.returnBetween(4, 5, 1))).isTrue();
+  }
 }

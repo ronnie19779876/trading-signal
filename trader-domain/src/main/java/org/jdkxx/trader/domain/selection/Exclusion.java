@@ -13,5 +13,10 @@ public enum Exclusion {
   /** No usable close as of the day (not yet listed, or suspended for too long) */
   NO_PRICE,
   /** Fewer than 8 quarterly reports announced as of the day */
-  INSUFFICIENT_HISTORY
+  INSUFFICIENT_HISTORY,
+  /**
+   * Not yet an index member on the day, or no index "date added" known; only the historical test's
+   * point-in-time universe produces it (§30.5), production scoring never does
+   */
+  NOT_INDEX_MEMBER
 }

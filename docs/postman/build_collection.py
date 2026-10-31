@@ -344,6 +344,30 @@ ENDPOINTS = [
         ],
     },
     {
+        "folder": "量化选股·历史检验（3.6.0）",
+        "items": [
+            {"name": "预登记规格", "method": "GET", "path": "/api/selection/backtest/specs",
+             "desc": "F1、F1A~F1E 与四个诊断规格的参数，以及训练段 / 留出段各跑过几次。只读。",
+             "tests": T_200 + T_JSON + ['pm.test("含 F1", () => pm.expect(body.map(s => s.spec.version)).to.include("F1"));']},
+            {"name": "训练段检验（异步）", "method": "POST", "path": "/api/selection/backtest",
+             "query": [{"key": "spec", "value": "F1A"}, {"key": "from", "value": "2018-01-02"}, {"key": "to", "value": "2022-12-30"}],
+             "desc": "只出报告、不写评分表。to 必须早于 2023-01-01；出场日落进留出段的样本自动丢掉。⚠ 会写一行检验记录。"
+                     "留出段（final=true）故意不放进集合：一次点击就会被计为一次动用，要用时手工加参数。",
+             "tests": T_200 + T_JSON + ['pm.test("返回 jobId", () => pm.expect(body.jobId).to.be.a("number"));']},
+            {"name": "区间触及留出段但没带 final（应 400）", "method": "POST", "path": "/api/selection/backtest",
+             "query": [{"key": "spec", "value": "F1"}, {"key": "from", "value": "2018-01-02"}, {"key": "to", "value": "2023-06-30"}],
+             "desc": "反例：守住留出段。不入队。",
+             "tests": ['pm.test("400", () => pm.response.to.have.status(400));']},
+            {"name": "历次检验", "method": "GET", "path": "/api/selection/backtest/runs", "query": [{"key": "limit", "value": "50"}],
+             "desc": "从新到旧，不含正文。只读。",
+             "tests": T_200 + T_JSON + ['pm.test("是数组", () => pm.expect(body).to.be.an("array"));',
+                                        'if (body.length) pm.environment.set("backtestRunId", body[0].id);']},
+            {"name": "一次检验的报告", "method": "GET", "path": "/api/selection/backtest/runs/{{backtestRunId}}",
+             "desc": "report.criteria 是 §30.8 三条判据，只在留出段上算数。不存在 404。",
+             "tests": ['pm.test("200 或 404", () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));']},
+        ],
+    },
+    {
         "folder": "量化选股·模拟交易（3.4.0）",
         "items": [
             {"name": "模拟账户概况", "method": "GET", "path": "/api/selection/sim",
@@ -619,6 +643,7 @@ def build_environment(name, base_url, symbol):
             {"key": "sotpModelId", "value": "1" if name == "dev" else "", "enabled": True},
             # Likewise no default simulated-trade id: closing a position takes it as a parameter
             {"key": "simTradeId", "value": "1" if name == "dev" else "", "enabled": True},
+            {"key": "backtestRunId", "value": "1", "enabled": True},
         ],
         "_postman_variable_scope": "environment",
     }

@@ -204,6 +204,7 @@ public class UniverseSyncService {
         constituents.add(index, w.getKey(), e.sector(), e.subIndustry(), today, sourceName);
         added++;
       }
+      constituents.setAddedOn(index, w.getKey(), e.addedDate());
     }
     for (Long id : leaving) {
       constituents.close(index, id, today);

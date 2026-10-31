@@ -1,10 +1,12 @@
 package org.jdkxx.trader.domain.selection;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.TreeMap;
 import org.jdkxx.trader.domain.DailyBar;
 import org.jdkxx.trader.domain.RehabFactor;
@@ -18,6 +20,12 @@ import org.jdkxx.trader.domain.RehabFactor;
  * prepended, so later splits never require re-fetching it. The series also carries the day's
  * <b>unadjusted price</b> (for the "price &gt;= 10 USD" rule): the original value for the Futu
  * segment, and the adjusted price divided by the share-count factor for the IBKR segment.
+ *
+ * <p>A <b>total-return index</b> is built alongside for the historical test (§30.3): on each
+ * ex-date the cash dividend (regular plus special, in the share basis of that day, converted to the
+ * adjusted basis) is reinvested at the close, i.e. the day's growth is (adjusted close + dividend)
+ * ÷ previous adjusted close. Spin-offs are not compensated (the price drop stands). Scoring never
+ * uses it.
  *
  * <p>An independent implementation that does not reference the entry signal's structural basis. An
  * event with a share-count bit but no ratio, or a capitalization issue (never verified),
@@ -34,17 +42,21 @@ public final class AdjustedPrices {
   private final LocalDate[] dates;
   private final double[] adjusted;
   private final double[] raw;
+  private final double[] total;
   private final String problem;
 
-  private AdjustedPrices(LocalDate[] dates, double[] adjusted, double[] raw, String problem) {
+  private AdjustedPrices(
+      LocalDate[] dates, double[] adjusted, double[] raw, double[] total, String problem) {
     this.dates = dates;
     this.adjusted = adjusted;
     this.raw = raw;
+    this.total = total;
     this.problem = problem;
   }
 
   public static AdjustedPrices invalid(String problem) {
-    return new AdjustedPrices(new LocalDate[0], new double[0], new double[0], problem);
+    return new AdjustedPrices(
+        new LocalDate[0], new double[0], new double[0], new double[0], problem);
   }
 
   /**
@@ -57,7 +69,12 @@ public final class AdjustedPrices {
   public static AdjustedPrices build(
       List<DailyBar> futu, List<RehabFactor> factors, List<SplitAdjustedBar> ibkr) {
     List<double[]> events = new ArrayList<>(); // [exDate epochDay, priceFactor = 1 / share ratio]
+    TreeMap<LocalDate, Double> dividends = new TreeMap<>(); // exDate -> cash per share, that day
     for (RehabFactor f : factors) {
+      double cash = positive(f.dividend()) + positive(f.spDividend());
+      if (cash > 0) {
+        dividends.merge(f.exDate(), cash, Double::sum);
+      }
       if ((f.companyActFlag() & SHARE_EVENTS) == 0) {
         continue;
       }
@@ -120,7 +137,26 @@ public final class AdjustedPrices {
       a[i] = v[0];
       r[i] = v[1];
     }
-    return new AdjustedPrices(d, a, r, null);
+    double[] t = new double[d.length];
+    for (int i = 0; i < d.length; i++) {
+      if (i == 0) {
+        t[i] = a[i];
+        continue;
+      }
+      // Dividends going ex after the previous bar, up to and including this one; the amount is in
+      // that day's share basis, so it is scaled by that day's factor like the price
+      double cash = 0;
+      for (Map.Entry<LocalDate, Double> e :
+          dividends.subMap(d[i - 1], false, d[i], true).entrySet()) {
+        cash += e.getValue() * factor(events, e.getKey());
+      }
+      t[i] = t[i - 1] * (a[i] + cash) / a[i - 1];
+    }
+    return new AdjustedPrices(d, a, r, t, null);
+  }
+
+  private static double positive(BigDecimal v) {
+    return v == null || v.signum() <= 0 ? 0 : v.doubleValue();
   }
 
   /**
@@ -175,9 +211,31 @@ public final class AdjustedPrices {
 
   /** Return over the k trading days (bars) ending at index i; NaN if the series is too short. */
   public double returnOver(int i, int k) {
-    if (i - k < 0) {
+    return returnBetween(i, k, 0);
+  }
+
+  /**
+   * Price return from {@code lookback} bars before i to {@code skip} bars before i (skip = 0 is
+   * {@link #returnOver}); NaN if the series is too short.
+   */
+  public double returnBetween(int i, int lookback, int skip) {
+    if (i - lookback < 0 || skip >= lookback) {
       return Double.NaN;
     }
-    return adjusted[i] / adjusted[i - k] - 1;
+    return adjusted[i - skip] / adjusted[i - lookback] - 1;
+  }
+
+  public LocalDate date(int i) {
+    return dates[i];
+  }
+
+  /** Split-adjusted price return from bar {@code from} to bar {@code to}. */
+  public double priceReturn(int from, int to) {
+    return adjusted[to] / adjusted[from] - 1;
+  }
+
+  /** Total return (cash dividends reinvested) from bar {@code from} to bar {@code to}. */
+  public double totalReturn(int from, int to) {
+    return total[to] / total[from] - 1;
   }
 }
