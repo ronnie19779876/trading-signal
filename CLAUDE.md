@@ -215,7 +215,7 @@ storage → common ；ai → common
 
 **第 7 期「量化选股·历史检验」3.6.0 开发中（分支 `feat/selection-backtest`，ARCHITECTURE §30，用户 10-31 认可）**：只出报告；变体只能在 `ModelSpecs` 预登记；
 留出段 2023-01-01 起，动用须 `final=true` 并计数（开发库已用 1 次：F1 全期基线）。7.1 已在开发库验收：**F1 训练段 63 天 IC −0.045（t −2.33），显著反向**，全期接近 0。
-7.2（F1A~F1E 训练段比较）未开始。生产未部署。
+7.2 已做（§30.14）：F1A~F1E 训练段 IC 全为负（最好 F1D −0.014），按事先规则无候选、留出段未动用；结论是在现有四因子结构里调参找不到正向版本。生产未部署。
 
 每一期的设计决策、实测结论与已知边界都在
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 10~26 章，交付清单在 [CHANGELOG.md](CHANGELOG.md)。
