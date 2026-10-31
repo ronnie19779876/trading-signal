@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## 3.5.2（未发布）
+## 3.5.2（2026-11-01 发布）
 
 - 全项目审查（2026-10-31）：代码注释全部改为英文、Java 按 Google Java Style（google-java-format 1.28.0）格式化，
   去注释后与改动前零代码差异（仅 `TransactionalWriteGuardTest` 的正则改为 2 空格缩进）；审查发现的前五项按用户 10-31 认可的方案修复：
