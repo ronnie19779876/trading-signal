@@ -41,7 +41,7 @@ resolve_jdk21() {
 require_jdk21() {
     local home
     home="$(resolve_jdk21)" || {
-        echo '未找到 JDK 21。已依次探测：$JDK21_HOME、$JAVA_HOME、/usr/libexec/java_home -v 21、~/Java/jdk-21*.jdk、常见 Linux 路径、PATH 上的 java' >&2
+        echo '未找到 JDK 21。已依次探测：${JDK21_HOME}、${JAVA_HOME}、/usr/libexec/java_home -v 21、~/Java/jdk-21*.jdk、常见 Linux 路径、PATH 上的 java' >&2
         echo '  指定位置：JDK21_HOME=/路径/到/JDK21 <脚本>' >&2
         exit 1
     }

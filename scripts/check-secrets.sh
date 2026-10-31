@@ -73,7 +73,7 @@ for entry in "${patterns[@]}"; do
     # A broken pattern must be reported, not treated as "no hits" (grep exits 2 on an invalid regex)
     printf '' | grep -E -- "$pattern" >/dev/null 2>&1
     if [[ $? -eq 2 ]]; then
-        echo "❌ 扫描模式非法（$label）：$pattern" >&2
+        echo "❌ 扫描模式非法（${label}）：$pattern" >&2
         exit 2
     fi
     while IFS= read -r line; do

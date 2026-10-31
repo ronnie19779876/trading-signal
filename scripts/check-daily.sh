@@ -48,7 +48,7 @@ fetch() {
     rm -f "$tmp"; return 1
   fi
   if [[ "$code" != "200" && "$code" != "$alsoOk" ]]; then
-    echo "❌ $title 报错 HTTP $code：$url"
+    echo "❌ $title 报错 HTTP ${code}：$url"
     sed -n '1,5p' "$tmp" | sed 's/^/       /'
     FAILED=1
     rm -f "$tmp"; return 1

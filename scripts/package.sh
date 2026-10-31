@@ -13,7 +13,7 @@ MVN="$(mvn_cmd)"
 
 VERSION="$(grep -oE '<revision>[^<]+' pom.xml | sed 's/.*>//')"
 if [[ "$VERSION" == *-SNAPSHOT && "${1:-}" != "--allow-snapshot" ]]; then
-    echo "❌ 版本是 $VERSION：部署到生产的必须是正式版（发布流程见 README「版本规则」）；本机试打包加 --allow-snapshot" >&2
+    echo "❌ 版本是 ${VERSION}：部署到生产的必须是正式版（发布流程见 README「版本规则」）；本机试打包加 --allow-snapshot" >&2
     exit 1
 fi
 STAMP="$(date +%Y%m%d-%H%M)"

@@ -40,7 +40,7 @@ start() {
     if is_running; then echo "已在运行，pid $(cat "$PID_FILE")"; return 0; fi
     local java; java="$(java_bin)"
     local ver; ver="$("$java" -version 2>&1 | head -1)"
-    [[ "$ver" == *'"21.'* ]] || { echo "需要 JDK 21，当前：$ver（可在 config/trader.env 里 export JAVA_HOME）" >&2; exit 1; }
+    [[ "$ver" == *'"21.'* ]] || { echo "需要 JDK 21，当前：${ver}（可在 config/trader.env 里 export JAVA_HOME）" >&2; exit 1; }
     echo "启动 trading-signal（:$(app_port)）..."
     nohup "$java" ${JAVA_OPTS:-} \
         -DsocksNonProxyHosts='localhost|127.*|[::1]' \
@@ -61,14 +61,14 @@ start() {
 stop() {
     if ! is_running; then echo "未在运行"; rm -f "$PID_FILE"; return 0; fi
     local pid; pid="$(cat "$PID_FILE")"
-    echo "停止 trading-signal（pid $pid）—— 调用 /actuator/shutdown ..."
+    echo "停止 trading-signal（pid ${pid}）—— 调用 /actuator/shutdown ..."
     # X-Trader-Client: since 2.0.2 the server answers 403 to write requests without this header
     curl -s -X POST -H 'X-Trader-Client: script' "http://127.0.0.1:$(app_port)/actuator/shutdown" >/dev/null || true
     for ((i = 0; i < STOP_TIMEOUT; i++)); do
         kill -0 "$pid" 2>/dev/null || { rm -f "$PID_FILE"; echo "已停止"; return 0; }
         sleep 1
     done
-    echo "超过 ${STOP_TIMEOUT}s 仍未退出（pid $pid）。脚本不强杀；请查看日志后自行处置" >&2
+    echo "超过 ${STOP_TIMEOUT}s 仍未退出（pid ${pid}）。脚本不强杀；请查看日志后自行处置" >&2
     exit 1
 }
 
