@@ -34,13 +34,18 @@ start() {
 }
 
 stop() {
-    local port url code
+    local port url code pid port_closed=false
     port="$(app_port)"
     [[ -n "$port" ]] || { echo "从 $CONFIG_YML 解析不出端口" >&2; exit 1; }
     url="http://127.0.0.1:$port/actuator/shutdown"
-    echo "停止开发实例（:${port}）—— 调用 $url ..."
+    # The HTTP port closes before the @PreDestroy hooks (gateway disconnects, pool shutdown) have run,
+    # so a closed port is not a stopped instance: until 3.5.2 "已停止" was printed while the JVM was
+    # still shutting down, and a rebuild or restart right after it raced the old process (found in the
+    # 2026-10-31 review). Remember the listening PID now, while the port still points at it, and wait
+    # for that process to be gone. Only observed, never signalled.
+    pid="$(lsof -nP -t -iTCP:"${port}" -sTCP:LISTEN 2>/dev/null | head -1 || true)"
+    echo "停止开发实例（:${port}${pid:+，pid ${pid}}）—— 调用 $url ..."
     # X-Trader-Client: the server answers 403 to write requests without this header (LocalRequestGuardFilter).
-    # "Stopped" below means the HTTP port is closed, which happens before @PreDestroy hooks finish running.
     code="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'X-Trader-Client: script' "$url" || true)"
     case "$code" in
         000) echo "没有实例在监听 :$port"; exit 0 ;;
@@ -48,10 +53,18 @@ stop() {
         *) echo "关停请求没被接受（HTTP ${code}）：确认外置配置开了 shutdown 端点" >&2; exit 1 ;;
     esac
     for ((i = 0; i < STOP_TIMEOUT; i++)); do
-        curl -s "http://127.0.0.1:$port/actuator/health" >/dev/null 2>&1 || { echo "已停止"; exit 0; }
+        if $port_closed || ! curl -s "http://127.0.0.1:$port/actuator/health" >/dev/null 2>&1; then
+            port_closed=true
+            if [[ -z "${pid}" ]]; then echo "已停止（端口已关；没取到进程号，未确认进程退出）"; exit 0; fi
+            ps -p "${pid}" >/dev/null 2>&1 || { echo "已停止"; exit 0; }
+        fi
         sleep 1
     done
-    echo "超过 ${STOP_TIMEOUT}s 端口仍开着，请自行检查" >&2
+    if $port_closed; then
+        echo "超过 ${STOP_TIMEOUT}s：端口已关但进程 ${pid} 未退出，请看日志后自行处置" >&2
+    else
+        echo "超过 ${STOP_TIMEOUT}s 端口仍开着，请自行检查" >&2
+    fi
     exit 1
 }
 
