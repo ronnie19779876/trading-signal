@@ -301,7 +301,7 @@ GitHub 客户端默认只推提交，漏推会导致事后无法 checkout 到发
 - 本机偶发 `Could not resolve hostname`（macOS 系统解析器坏了，`host` 命令却能解）：
   用 `host <主机名>` 取到地址后按地址连，或重启 mDNSResponder。隧道已建立的连接不受影响。
 
-systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `WorkingDirectory`、`PIDFile`、`ExecStart` 路径改成 `~/trading-signal`（软链）后 `sudo cp` 到 `/etc/systemd/system/`，`daemon-reload`、`enable --now`。之后只用 systemctl 管理。
+systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `WorkingDirectory`、`PIDFile`、`ExecStart` 路径改成 `~/trading-signal`（软链）后 `sudo cp` 到 `/etc/systemd/system/`，`daemon-reload`、`enable --now`。之后只用 systemctl 管理。3.5.2 起单元带启动次数上限（15 分钟内 3 次），起不来时停在 failed 而不是每 15 秒重启一次；查清原因后 `sudo systemctl reset-failed trading-signal && sudo systemctl start trading-signal`。升级到 3.5.2 时若用了这个单元，要重新 `cp` 并 `daemon-reload`。
 
 首轮数据装载（生产空库）：`POST /api/universe/sync` → `POST /api/bars/refresh/universe?count=1000` → `POST /api/bars/rehab/refresh?all=true` → 逐只 `POST /api/pool/{symbol}?role=POOL|BENCHMARK`（HOLDING 由 `POST /api/account/holdings/sync?apply=true` 按盈透持仓生成） → `POST /api/bars/backfill` → `GET /api/bars/audit`。
 
@@ -366,7 +366,7 @@ shanghai_port=<SSH 端口>
 
 5. 在主库上（`sudo -u postgres psql`）：`CREATE ROLE replicator WITH REPLICATION LOGIN;`、`\password replicator`、`GRANT pg_monitor TO trader;`、
    `SELECT pg_create_physical_replication_slot('replica', true);`、`ALTER SYSTEM SET wal_compression = 'zstd';`、`ALTER SYSTEM SET max_slot_wal_keep_size = '20GB';`、`SELECT pg_reload_conf();`（都不用重启）。
-6. 两边 `./scripts/replica/install-node.sh vps`、`./scripts/replica/install-node.sh shanghai`（核对主机指纹、装看门狗与备份、按角色开关隧道）。
+6. 两边 `./scripts/replica/install-node.sh vps`、`./scripts/replica/install-node.sh shanghai`（核对主机指纹、装看门狗与备份、按角色开关隧道）。3.5.2 改了每日备份（转储与目录只给本用户可读）与写入 known_hosts 的方式，升级后两边各重跑一次；旧的 0644 转储随 7 天轮换自然淘汰。
 7. 备库那边首次全量同步：`./scripts/replica/reseed.sh <备库>`（或照 §27 的命令手工做）。
 
 **日常**：`./scripts/replica/status.sh` 看两边角色、复制是否 streaming、落后多少、复制槽压着多少 WAL。看门狗日志 `journalctl --user -u pg-replica-watchdog`；隧道 `systemctl --user status pg-replica-tunnel`。
@@ -386,6 +386,7 @@ shanghai_port=<SSH 端口>
 避开美东交易日 17:30～22:30 的跑批与周六 06:30～10:00 的周作业。
 
 **主库宕机**（主库那台连不上、短时间回不来）：`./scripts/replica/promote.sh <备库>` → 在它上面启动应用 → 网关与本机隧道照上面做。
+3.5.2 起 `promote.sh` 对旧主库的判定更严：连得上而查询失败时再看 `systemctl is-active` 的 PG 状态，**PG 还在运行、或判断不了（SSH 时通时断、应用状态查不到）就拒绝提升**，免得两边都是主库。要继续，先在旧主库上 `sudo systemctl stop` PG，或等它彻底连不上。
 会丢掉宕机前还没传过去的写入（链路正常时几秒）。原主库回来后**不要启动它的应用**，`./scripts/replica/reseed.sh <原主库>` 重建成备库。
 
 **备份**：两边 crontab 每天 12:00（北京）跑 `~/pg-replica/bin/backup.sh`，只在主库那边导出 db_trader、db_trader_dev 到 `~/db-backup/daily/`，各留 7 份，日志 `backup.log`。
@@ -459,7 +460,7 @@ shanghai_port=<SSH 端口>
 4. `GET /api/signals/audit` 信号审计：当天评估是否存在（美东 19:00 前只提示）、覆盖是否完整、未平仓纸面账本是否算到当天为关键项；过期跳过超过 2%、缺日与公司行动口径失败、信号与重算结论不一致（多半是 K 线被订正，信号保留）、最近一次评估作业为提示项。缺评估时 22:00 补偿检查会补跑；手工补跑 `POST /api/signals/evaluate?date=`（过去的日期产生的信号记 BACKFILL）。
 5. `GET /actuator/health` 运行健康：`jobs` 组件在任一定时作业 FAILED / SKIPPED / 逾期（`overdue` 每日增量、`catchupOverdue` 补偿检查、`accountSnapshotOverdue` 账户快照、`signalEvaluationOverdue` 信号评估）时降级，`gateways` 在网关掉线时降级。
 
-`ok=false` 时看 `checks` 里失败项与样本；退出码 0 全通过 / 1 有关键项失败、某段接口报错或健康降级 / 2 有接口连不上。**一段出问题不掐掉后面几段**：某个审计接口 500 会原样打出状态码与错误正文，其余四段照跑（3.1.2 修；此前用 `curl -sf`，HTTP 500 与连不上同一个非零码，500 被打成"接口不可达"并当场 `exit 2`，后面一条都不跑。健康接口在系统 DOWN 时返回 503，同样被误报成"健康接口不可达"）。假日（如劳工节）不带参数跑会自动审计上一个交易日；显式传休市日则回"当天休市"并判通过。
+`ok=false` 时看 `checks` 里失败项与样本；退出码 0 全通过 / 1 有关键项失败、某段接口报错或健康降级 / 2 有接口连不上。**一段出问题不掐掉后面几段**：某个审计接口 500 会原样打出状态码与错误正文，其余四段照跑（3.1.2 修；此前用 `curl -sf`，HTTP 500 与连不上同一个非零码，500 被打成"接口不可达"并当场 `exit 2`，后面一条都不跑。健康接口另按正文顶层 `status` 判定——项目自定义了 `http-mapping`，系统 DOWN 时也回 200，3.5.2 前这里误写成 503）。假日（如劳工节）不带参数跑会自动审计上一个交易日；显式传休市日则回"当天休市"并判通过。
 
 固定节奏（北京时间）：
 

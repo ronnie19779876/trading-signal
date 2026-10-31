@@ -100,7 +100,7 @@
 | `GET /api/bars/calendar?from&to` | 交易日列表（默认最近一年）。`source=FUTU` 券商给的，`DERIVED` 从日 K 线反推 |
 | `GET /api/bars/gaps?from&to&limit` | 对照交易日历深扫缺口（默认全历史）。**前收连续性检查查不出这类问题**：券商缺数时它自己的前收与缺口自洽 |
 | `POST /api/bars/cleanup/phantom?apply=false` | 幽灵 K 线订正：落在交易日历之外的 K 线（券商在美股假日给过脏数据）。默认只试跑列清单，`apply=true` 才真删。**只删试跑列出来的那些**，一次最多 200 条：`found` 是总数、`listed`（= `bars` 长度）是本次列出也是本次最多会删的条数、`deleted` 只可能是 0 或 `listed`、`remaining` 是删完还剩多少；`found > listed` 时再跑一轮。3.1.2 前三处口径不一：审计按 20 封顶报条数、试跑按 200 封顶列清单、删除却按条件全删 |
-| `GET /api/bars/audit?date=` | 日线数据审计（默认最近应有收盘 K 的交易日）：传入的日期若在日历里是休市日，只回一条 `calendar` 检查并判通过；completeness / sanity / continuity / universeSize / resolveDowngrade 为关键项，rehab / syncErrors / incrementJob / calendarCoverage / historyGaps / phantomBars / unsettledBars / gateway 为提示项；`ok` = 关键项全过。`unsettledBars`：收盘落定（美东 16:15）前写入的当天 K 线，可能是盘中价，下一次增量自动重拉覆盖。**`completeness` 的 detail 不管绿不绿都给出分母算式**（3.1.4 改）：`应采 E = 名义 N（成分股 c + 池与持仓另加 p）− 降级 d − 查不到标的行 x；实采 A`，`summary` 对应 `nominalTargets` / `constituentTargets` / `poolExtraTargets` / `downgradedTargets` / `targets`（= 应采）/ `withBarOnDate`（= 实采）。分母悄悄变小是本项目踩过三次的坑（成分股被误删、标的被降级、当天停牌），三次都是**分子分母一起少一、检查照样全绿**，所以算式必须一直摆在明面上。`resolveDowngrade`（3.1.4 加）：名义目标里有多少只**采不了**（非 RESOLVED 或已退市），连同代码一起点名，`summary` 另给 `collectableTargets`；低于名义规模的 95% 判失败。**3.4.0 起** completeness、复权因子新鲜度、同步错误的分母按 `date` 当天有效的成分股（事后新进的不算缺，事后退出的那天仍算） |
+| `GET /api/bars/audit?date=` | 日线数据审计（默认最近应有收盘 K 的交易日）：传入的日期若在日历里是休市日，只回一条 `calendar` 检查并判通过；completeness / sanity / continuity / universeSize / resolveDowngrade 为关键项，rehab / syncErrors / incrementJob / calendarCoverage / historyGaps / phantomBars / unsettledBars / gateway 为提示项；`ok` = 关键项全过。`unsettledBars`：收盘落定（美东 16:15）前写入的当天 K 线，可能是盘中价，下一次增量自动重拉覆盖。**`completeness` 的 detail 不管绿不绿都给出分母算式**（3.1.4 改）：`应采 E = 名义 N（成分股 c + 池与持仓另加 p）− 降级 d − 查不到标的行 x；实采 A`，`summary` 对应 `nominalTargets` / `constituentTargets` / `poolExtraTargets` / `downgradedTargets` / `targets`（= 应采）/ `withBarOnDate`（= 实采）。分母悄悄变小是本项目踩过三次的坑（成分股被误删、标的被降级、当天停牌），三次都是**分子分母一起少一、检查照样全绿**，所以算式必须一直摆在明面上。`resolveDowngrade`（3.1.4 加）：名义目标里有多少只**采不了**（非 RESOLVED 或已退市），连同代码一起点名，`summary` 另给 `collectableTargets`；低于名义规模的 95% 判失败。**3.4.0 起** completeness、复权因子新鲜度、同步错误的分母按 `date` 当天有效的成分股（事后新进的不算缺，事后退出的那天仍算）。**3.5.2 起** continuity / historyGaps / unsettledBars 的 `count`、detail 与 `summary`（`recentGapDays`、`unsettledBars`）是总数，`samples` 只是样本（至多 20 条） |
 | `GET /api/bars/coverage` | 行数/标的数/最早最新、全量/池/持仓规模、已覆盖数、复权因子覆盖数、未解析数、错误数、历史额度、运行中的作业 |
 | `GET /api/bars/quota` | 历史额度（7 天滚动） |
 | `GET /api/jobs?limit=` / `GET /api/jobs/{id}` / `POST /api/jobs/cancel` | 作业记录与取消（在下一批边界停下） |
@@ -245,7 +245,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | `GET /api/selection/scores?date=&sector=&rating=` | 某天全表（默认最近一个评分日），按合成分从高到低、未评级的排后面。每行：板块、`exclusion`（SECURITY_TYPE / NO_SECTOR / SECTOR_TOO_SMALL / PRICE_BELOW_MIN / NO_PRICE / INSUFFICIENT_HISTORY）与说明、四个因子分、合成分、合成分百分位、`rating`（STRONG_BUY / BUY / HOLD / SELL / STRONG_SELL，强制分布 10/20/40/20/10）、`sbStreak`（连续 STRONG_BUY 的交易日数）、`metrics`（JSON：`{指标: [原值, 板块内百分位]}`）、`fingerprint`（输入指纹） |
 | `GET /api/selection/days?limit=` | 最近的评分日，从新到旧（默认 60 个，上限 5000）；前端日期选择与「与上一个评分日对比」用 |
 | `GET /api/selection/scores/{symbol}?from=&to=` | 单只历史，默认最近一年；不在范围内的代码 404 |
-| `GET /api/selection/audit?date=` | 量化选股审计（统一审计结构，`check-daily.sh` 第六段）：关键项 `scored`（当天有评分）、`ratedShare`（可评级 ≥ 范围 80%）、`valuationFresh`（当天有估值 ≥ 90%）；附评级分布、排除原因、各板块评级只数、接缝通过数、已知偏差 3.4.6 起另有非关键项 `financialsComplete`（季报到齐：公告后 45 天内未齐的续取个数；超过 45 天仍缺的逐只列出缺哪几类报表）。 |
+| `GET /api/selection/audit?date=` | 量化选股审计（统一审计结构，`check-daily.sh` 第六段）：关键项 `scored`（当天有评分）、`ratedShare`（可评级 ≥ 当天评分只数的 80%）、`valuationFresh`（当天评分的标的有估值 ≥ 90%；3.5.2 起分母是当天实际评分的集合，不再是今天的范围）；附评级分布、排除原因、各板块评级只数、接缝通过数、已知偏差 3.4.6 起另有非关键项 `financialsComplete`（季报到齐：公告后 45 天内未齐的续取个数；超过 45 天仍缺的逐只列出缺哪几类报表）。 |
 | `POST /api/selection/score?date=` | 重算某一天（异步作业 `SELECTION_SCORE`，只打分）。不是交易日或还没收盘落定的日子 400 |
 | `POST /api/selection/replay?from=&to=` | 历史重放（异步 `SELECTION_REPLAY`）：逐个交易日打分落库，`sbStreak` 按日期顺序接续，只到已收盘落定的那天 |
 | `POST /api/selection/daily?date=` | 每日作业（异步 `SELECTION_DAILY`）：估值快照续接 → 近 6 天发了财报的补取最近 4 季季报与近 3 个月估值 → 打分 → 模拟交易重算；定时任务美东 18:30，22:30 评分缺失或模拟交易没算到当天时补跑 |
@@ -280,7 +280,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 
 报价里有三个价格字段，别混用：`price` 是按时段取的有效价，`rthPrice` 是常规时段价（盘前盘后冻结在上个收盘），
 `lastClose` 是券商给的"昨收"。**盘前盘后 `lastClose` 不随时段推进**，仍是上一个常规时段的前收，
-拿它算涨跌会与 `changeRate` 对不上；要展示基准价用 `referenceClose`（常规时段等于 `lastClose`，盘前盘后等于 `rthPrice`）。
+拿它算涨跌会与 `changeRate` 对不上；要展示基准价用 `referenceClose`（常规时段等于 `lastClose`，盘前盘后等于 `rthPrice`；3.5.2 起盘前 / 夜盘还没有成交时等于冻结的 `curPrice`、涨跌为 0，与券商一致）。
 
 | 接口 | 说明 |
 | --- | --- |
