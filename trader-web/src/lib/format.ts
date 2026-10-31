@@ -27,12 +27,15 @@ export function numMax(v: number | null | undefined, digits = 2): string {
 export const money = (v: number | null | undefined): string => num(v, 2)
 
 /**
- * Money with an explicit sign (+1,234.00 / -56.00). The sign is decided on the unrounded value, so a value such
- * as -0.004 renders as "-0.00".
+ * Sign follows the value as displayed, not the raw value: a sign picked from the raw value showed -0.004 as
+ * "-0.00" and 0.004 as "+0.00" (found in the 2026-10-31 review). Only the text changes; the colour from
+ * {@link trend} still follows the raw value.
  */
+const SIGNED_2: Intl.NumberFormatOptions = { minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero' }
+
+/** Money with an explicit sign (+1,234.00 / -56.00; a value that rounds to zero shows 0.00 without a sign). */
 export function signed(v: number | null | undefined): string {
-  if (v === null || v === undefined) return DASH
-  return (v > 0 ? '+' : '') + money(v)
+  return v === null || v === undefined ? DASH : v.toLocaleString(undefined, SIGNED_2)
 }
 
 /** Ratio -> percentage (0.0435 -> "4.35%"). */
@@ -40,9 +43,12 @@ export function pct(ratio: number | null | undefined, digits = 2): string {
   return ratio === null || ratio === undefined ? DASH : (ratio * 100).toFixed(digits) + '%'
 }
 
-/** R multiple (+1.63R / -0.42R). */
+/**
+ * R multiple (+1.63R / -0.42R; a value that rounds to zero shows 0.00R). en-US without grouping, so the text matches
+ * the previous toFixed(2).
+ */
 export function signedR(v: number | null | undefined): string {
-  return v === null || v === undefined ? DASH : (v > 0 ? '+' : '') + v.toFixed(2) + 'R'
+  return v === null || v === undefined ? DASH : v.toLocaleString('en-US', { ...SIGNED_2, useGrouping: false }) + 'R'
 }
 
 /** Large numbers such as market cap are shown in Chinese units of 1e8 / 1e12 so they are readable. */
