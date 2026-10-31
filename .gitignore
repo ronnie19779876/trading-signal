@@ -21,6 +21,13 @@ sdk/tws-api/IBJts/
 .DS_Store
 .claude/settings.local.json
 .claude/launch.json
+# Editor swap and backup copies: a copy of a secret file (deploy/config/trader.env~, .trader.env.swp)
+# does not match that file's own ignore rule. check-secrets.sh also rejects them when force-added.
+*.swp
+*.swo
+*~
+*.bak
+*.orig
 
 # ---- secret configuration: passwords, gateway address/port/client-id, trading-password MD5, API keys; never committed ----
 config/secrets.yml

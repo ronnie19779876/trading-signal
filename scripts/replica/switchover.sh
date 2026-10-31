@@ -129,6 +129,6 @@ cat <<EOF
 
 ✅ 数据库已切到 ${TARGET}，应用已在 ${TARGET} 启动。还要人工做：
   1. 网关：在 ${OLD} 退出 IB Gateway、停 OpenD（盈透同一用户名只能一个会话，富途会互踢行情）；在 ${TARGET} 登录 IB Gateway、启 OpenD。
-  2. 本机隧道改指 ${TARGET}（8093 / 5432 / 4001 / 11111）。
+  2. 本机隧道改指 ${TARGET}（8093 / 5432 / 两家网关端口）。
   3. ./scripts/replica/status.sh 确认；./scripts/check-daily.sh 在下一次收盘后照常跑。
 EOF

@@ -7,8 +7,8 @@
 # the variable name (unbound variable).
 #
 # Host details live only in the local ~/.config/trading-signal/replica.env (never in the repository):
-#   vps_ssh=admin@<address>           vps_port=22
-#   shanghai_ssh=devops@<address>     shanghai_port=2022
+#   vps_ssh=admin@<address>           vps_port=<port>
+#   shanghai_ssh=devops@<address>     shanghai_port=<port>
 # The tunnel between the two servers uses the same entries: the standby connects to the primary using the
 # other node's *_ssh / *_port.
 

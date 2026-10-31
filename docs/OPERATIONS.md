@@ -19,15 +19,15 @@
 autossh -M 0 -f -N \
   -o "ServerAliveInterval=30" -o "ServerAliveCountMax=3" -o "ExitOnForwardFailure=yes" \
   -p <ssh端口> \
-  -L 11111:localhost:11111 -L 4001:localhost:4001 -L 5432:localhost:5432 \
+  -L <OpenD端口>:localhost:<OpenD端口> -L <IB端口>:localhost:<IB端口> -L 5432:localhost:5432 \
   -L 8093:localhost:8093 \
   <用户>@<主机>
 ```
 
 | 转发 | 用途 |
 | --- | --- |
-| 11111 | OpenD（富途行情 / 交易） |
-| 4001 | IB Gateway 实盘端口 |
+| `<OpenD端口>` | OpenD（富途行情 / 交易；OpenD 的 API 端口，`trader.env` 里的 `TRADER_FUTU_PORT`） |
+| `<IB端口>` | IB Gateway 实盘 API 端口（`trader.env` 里的 `TRADER_IBKR_PORT`） |
 | 5432 | PostgreSQL（`db_trader_dev` / `db_trader`） |
 | 8093 | 本项目生产实例（Postman、`check-daily.sh`、前端联调） |
 
@@ -38,7 +38,7 @@ autossh -M 0 -f -N \
 **检查**：
 
 ```bash
-pgrep -fl autossh; for p in 11111 4001 5432 8093; do nc -z localhost $p && echo "$p 通" || echo "$p 不通"; done
+pgrep -fl autossh; for p in <OpenD端口> <IB端口> 5432 8093; do nc -z localhost $p && echo "$p 通" || echo "$p 不通"; done
 curl -s --max-time 5 http://127.0.0.1:8093/api/system/info      # 应回 environment=PROD
 ```
 
@@ -66,8 +66,8 @@ pkill autossh          # 停；随后按上面的命令重起
 | --- | --- | --- | --- |
 | trading-signal | 3.4.7 | `bin/trader.sh` | 127.0.0.1:8093 |
 | PostgreSQL | 18.6（PGDG） | systemd `postgresql` | 127.0.0.1 / ::1 :5432 |
-| 富途 OpenD | 10.10.7008 | systemd `futu-opend` | 127.0.0.1:11111，Telnet 127.0.0.1:22222 |
-| IB Gateway | 10.51（latest 通道） | VNC 桌面里手工启动，每日自动重启 | 4001（应只听回环，见 ④） |
+| 富途 OpenD | 10.10.7008 | systemd `futu-opend` | 127.0.0.1:<OpenD端口>，Telnet 127.0.0.1:<Telnet端口> |
+| IB Gateway | 10.51（latest 通道） | VNC 桌面里手工启动，每日自动重启 | `<IB端口>`（应只听回环，见 ④） |
 | JDK | 21 | `JAVA_HOME` 指向 | — |
 | 桌面 / VNC | Xfce + TigerVNC `:1` | systemd `vncserver@1` | 5901（应只听回环，见 ③） |
 
@@ -138,8 +138,8 @@ ln -sfn ~/Futu_OpenD_10.10.7008_Ubuntu18.04/Futu_OpenD_10.10.7008_Ubuntu18.04 ~/
 ```
 
 包名的 Ubuntu18.04 只是构建名，24.04 上正常。目录里必须有 `FutuOpenD.xml` 与 `Appdata.dat`。10.10 起 XML **不再放账号密码**；生效项：
-`ip=127.0.0.1`、`api_port=11111`、`lang=chs`、`log_level=info`、`push_proto_type=0`、`auto_hold_quote_right=1`、
-**`telnet_ip=127.0.0.1` + `telnet_port=22222`（必须配：服务以 `-console=0` 运行没有控制台，验证码与重登只能走 Telnet）**；不配 RSA 与 WebSocket。XML `chmod 600`。
+`ip=127.0.0.1`、`api_port=<OpenD端口>`、`lang=chs`、`log_level=info`、`push_proto_type=0`、`auto_hold_quote_right=1`、
+**`telnet_ip=127.0.0.1` + `telnet_port=<Telnet端口>`（必须配：服务以 `-console=0` 运行没有控制台，验证码与重登只能走 Telnet）**；不配 RSA 与 WebSocket。XML `chmod 600`。
 
 首次在前台 `cd ~/OpenD && ./FutuOpenD` 交互登录：输入账号、密码，**选记住密码**；新设备触发设备锁就输 `req_phone_verify_code`，收到短信后
 `input_phone_verify_code -code=<验证码>`；看到"登录成功"后输入 `exit`。**不要把旧机器的 `~/.com.futunn.FutuOpenD` 整个拷过来**：
@@ -169,10 +169,10 @@ WantedBy=multi-user.target
 `sudo systemctl daemon-reload && sudo systemctl enable --now futu-opend`；验证 OpenD 日志 `~/.com.futunn.FutuOpenD/Log/GTWLog_*.log` 有「记住密码登录」「登录成功」，
 再 `sudo reboot` 一次确认无人值守自动登录。
 
-Telnet 运维（回复是 UTF-8，不要转码；**在 OpenD 里 `exit` 是退出 OpenD 程序**；Telnet 无鉴权，22222 不得对外也不进隧道）：
+Telnet 运维（回复是 UTF-8，不要转码；**在 OpenD 里 `exit` 是退出 OpenD 程序**；Telnet 无鉴权，Telnet 端口不得对外也不进隧道）：
 
 ```bash
-(printf 'show_sub_info\r\n'; sleep 3) | nc -w 5 127.0.0.1 22222    # 生产正常时约 19 只 Basic
+(printf 'show_sub_info\r\n'; sleep 3) | nc -w 5 127.0.0.1 <Telnet端口>    # 生产正常时约 19 只 Basic
 ```
 
 常用：`show_sub_info`、`ping`（到连接点时延）、`request_highest_quote_right`、`req_phone_verify_code` / `input_phone_verify_code`、`relogin`（每小时 10 次）、`close_api_conn`（不带参数关全部）。
@@ -185,7 +185,7 @@ Telnet 运维（回复是 UTF-8，不要转码；**在 OpenD 里 `exit` 是退�
 
 - **同一用户名同时只能一个会话**：换机先在旧机器 File → Exit，再在新机器登录。换出口 IP 后首次登录可能多一道安全校验。
 - API 设置：Enable ActiveX and Socket Clients；端口与 `TRADER_IBKR_PORT` 一致；Trusted IPs `127.0.0.1`；**勾选 Allow connections from localhost only**
-  （2026-10-11 现场 `*:4001` 对所有地址监听，待改）；只读与 Master client ID 照旧环境。
+  （2026-10-11 现场 `*:<IB端口>` 对所有地址监听，待改）；只读与 Master client ID 照旧环境。
 - Lock and Exit：**Auto restart，15:45**（北京时间，美东 03:45 / 冬令时 02:45）。不开自动重启时网关改为每日自动登出、每天都要人工重登。
 - **网关时区只认 `~/Jts/jts.ini` 的 `[Logon] TimeZone=`，不跟系统走**。新装是 `Africa/Abidjan`（格林尼治），15:45 可能按格林尼治执行＝美东 11:45 盘中。
   改法：网关 File → Exit（退出时会回写 jts.ini，必须先退再改），然后——**jts.ini 是 CRLF**，`$` 前有 `\r`：
@@ -346,9 +346,9 @@ systemd（需要 sudo，可选）：`systemd/trading-signal.service` 里把 `Wor
 
 ```
 vps_ssh=admin@<VPS 地址>
-vps_port=22
+vps_port=<SSH 端口>
 shanghai_ssh=devops@<上海地址>
-shanghai_port=2022
+shanghai_port=<SSH 端口>
 ```
 
 **一次性准备**（要 sudo 或改安全配置，由人执行；2026-10-19 已做完）：
