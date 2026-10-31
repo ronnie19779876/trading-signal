@@ -17,9 +17,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntFunction;
 import java.util.function.ToIntFunction;
 import org.jdkxx.trader.domain.DailyBar;
 import org.jdkxx.trader.domain.Instrument;
+import org.jdkxx.trader.gateway.GatewayException;
 import org.jdkxx.trader.gateway.futu.QotCalls;
 import org.jdkxx.trader.gateway.futu.mapper.FutuSecurities;
 import org.jdkxx.trader.shaded.futu.protobuf.ByteString;
@@ -151,5 +153,55 @@ class FutuMarketDataTest {
     FutuMarketData.requireSameSecurity(AAPL, true, got, "getKL");
     FutuMarketData.requireSameSecurity(
         AAPL, false, QotCommon.Security.getDefaultInstance(), "getKL");
+  }
+
+  /** Every page returns one bar and a next key; {@code key} picks the key for page n. */
+  private QotCalls endlessPaging(IntFunction<String> key, AtomicInteger pages) {
+    return new QotCalls() {
+      @Override
+      public <R> CompletableFuture<R> call(
+          String limitName, String what, Class<R> type, ToIntFunction<FTAPI_Conn_Qot> send) {
+        int n = pages.getAndIncrement();
+        QotRequestHistoryKL.S2C s2c =
+            QotRequestHistoryKL.S2C
+                .newBuilder()
+                .setSecurity(FutuSecurities.of(AAPL))
+                .addKlList(kline("2026-09-10"))
+                .setNextReqKey(ByteString.copyFromUtf8(key.apply(n)))
+                .buildPartial();
+        return replyOnDispatch(
+            type,
+            QotRequestHistoryKL.Response.newBuilder().setRetType(0).setS2C(s2c).buildPartial());
+      }
+    };
+  }
+
+  @Test
+  void 历史K线翻页键原样重复时失败_不无限翻页() {
+    // Found in the 2026-10-31 review: a broker that keeps returning the same next key (and a bar)
+    // made historyPage recurse forever, holding the pager thread and the rate limiter
+    AtomicInteger pages = new AtomicInteger();
+    CompletableFuture<List<DailyBar>> f =
+        new FutuMarketData(endlessPaging(n -> "next", pages), pager)
+            .historyDailyBars(AAPL, LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 11));
+
+    assertThatThrownBy(() -> f.get(5, TimeUnit.SECONDS))
+        .hasCauseInstanceOf(GatewayException.class)
+        .hasMessageContaining("翻页键");
+    assertThat(pages.get()).isEqualTo(2);
+  }
+
+  @Test
+  void 历史K线翻页超过上限时失败() {
+    // 11 days fit in one page of 1000: the cap is ceil(11 / 1000) + 5 = 6 pages
+    AtomicInteger pages = new AtomicInteger();
+    CompletableFuture<List<DailyBar>> f =
+        new FutuMarketData(endlessPaging(n -> "next-" + n, pages), pager)
+            .historyDailyBars(AAPL, LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 11));
+
+    assertThatThrownBy(() -> f.get(5, TimeUnit.SECONDS))
+        .hasCauseInstanceOf(GatewayException.class)
+        .hasMessageContaining("上限");
+    assertThat(pages.get()).isEqualTo(6);
   }
 }

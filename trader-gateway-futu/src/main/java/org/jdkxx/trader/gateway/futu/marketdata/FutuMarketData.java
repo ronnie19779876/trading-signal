@@ -18,12 +18,14 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.domain.CompanyProfile;
 import org.jdkxx.trader.domain.DailyBar;
 import org.jdkxx.trader.domain.FinancialReport;
@@ -40,6 +42,7 @@ import org.jdkxx.trader.domain.selection.EarningsEvent;
 import org.jdkxx.trader.domain.selection.ValuationMetric;
 import org.jdkxx.trader.domain.selection.ValuationPoint;
 import org.jdkxx.trader.domain.selection.ValuationRange;
+import org.jdkxx.trader.gateway.GatewayException;
 import org.jdkxx.trader.gateway.futu.QotCalls;
 import org.jdkxx.trader.gateway.futu.mapper.FutuBars;
 import org.jdkxx.trader.gateway.futu.mapper.FutuFundamentals;
@@ -138,13 +141,24 @@ public final class FutuMarketData {
   public CompletableFuture<List<DailyBar>> historyDailyBars(
       Instrument instrument, LocalDate from, LocalDate to, int rehabType) {
     List<DailyBar> acc = new ArrayList<>();
-    return historyPage(instrument, from, to, rehabType, null, acc);
+    return historyPage(instrument, from, to, rehabType, null, 1, maxHistoryPages(from, to), acc);
+  }
+
+  /**
+   * Upper bound on pages for [from, to]: one page per HISTORY_PAGE calendar days (trading days are
+   * fewer, so this already over-counts) plus slack. Found in the 2026-10-31 review: nothing bounded
+   * the recursion, so a broker that kept answering "next" would page forever on the pager thread.
+   */
+  static int maxHistoryPages(LocalDate from, LocalDate to) {
+    long days = Math.max(0, ChronoUnit.DAYS.between(from, to) + 1);
+    return (int) Math.min(Integer.MAX_VALUE, (days + HISTORY_PAGE - 1) / HISTORY_PAGE + 5);
   }
 
   /**
    * One page, then recursively the next. {@code acc} is only touched on the pager thread (one page
    * at a time), so it needs no synchronisation. Paging stops when the broker returns no next key or
-   * an empty page.
+   * an empty page; it fails when the next key repeats the one just sent (the broker would return
+   * the same page again) or when more than {@code maxPages} pages arrive.
    */
   private CompletableFuture<List<DailyBar>> historyPage(
       Instrument instrument,
@@ -152,6 +166,8 @@ public final class FutuMarketData {
       LocalDate to,
       int rehabType,
       org.jdkxx.trader.shaded.futu.protobuf.ByteString nextKey,
+      int pageNo,
+      int maxPages,
       List<DailyBar> acc) {
     QotRequestHistoryKL.C2S.Builder c2s =
         QotRequestHistoryKL.C2S
@@ -187,8 +203,35 @@ public final class FutuMarketData {
               if (rsp.getS2C().hasNextReqKey()
                   && !rsp.getS2C().getNextReqKey().isEmpty()
                   && rsp.getS2C().getKlListCount() > 0) {
+                var next = rsp.getS2C().getNextReqKey();
+                if (next.equals(nextKey)) {
+                  throw new GatewayException(
+                      Broker.FUTU,
+                      0,
+                      "requestHistoryKL "
+                          + instrument.symbol()
+                          + " 第 "
+                          + pageNo
+                          + " 页返回的翻页键与上一页相同，停止翻页",
+                      false);
+                }
+                if (pageNo >= maxPages) {
+                  throw new GatewayException(
+                      Broker.FUTU,
+                      0,
+                      "requestHistoryKL "
+                          + instrument.symbol()
+                          + " 翻页超过上限 "
+                          + maxPages
+                          + " 页（"
+                          + from
+                          + " ~ "
+                          + to
+                          + "），停止翻页",
+                      false);
+                }
                 return historyPage(
-                    instrument, from, to, rehabType, rsp.getS2C().getNextReqKey(), acc);
+                    instrument, from, to, rehabType, next, pageNo + 1, maxPages, acc);
               }
               return CompletableFuture.completedFuture(List.copyOf(acc));
             },
