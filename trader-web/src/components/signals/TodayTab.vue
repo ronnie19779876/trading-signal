@@ -32,8 +32,12 @@ const picked = ref<EvaluationRow | null>(null)
 const signalDrawer = ref(false)
 const pickedSignal = ref<number | null>(null)
 
+// The date can change while a request is in flight; only the latest request may write, or an older day's
+// evaluations show under the newer date (found in the 2026-10-31 review).
+let seq = 0
 async function load() {
   if (!props.date) return
+  const mine = ++seq
   loading.value = true
   error.value = null
   try {
@@ -43,14 +47,16 @@ async function load() {
       signalsApi.evaluations({ date: props.date, scope: 'all' }),
       signalsApi.list({ from: props.date, to: props.date, scope: 'all' }),
     ])
+    if (mine !== seq) return
     rows.value = e
     signals.value = s
   } catch (e) {
+    if (mine !== seq) return
     error.value = errMsg(e)
     rows.value = []
     signals.value = []
   } finally {
-    loading.value = false
+    if (mine === seq) loading.value = false
   }
 }
 watch(() => props.date, load, { immediate: true })

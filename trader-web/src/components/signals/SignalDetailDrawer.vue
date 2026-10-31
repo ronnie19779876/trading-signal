@@ -33,16 +33,24 @@ const evaluation = computed<SentinelEvaluation | null>(
 )
 const baseTrack = computed(() => detail.value?.tracks.find((t) => t.variant === 'BASE') ?? null)
 
+// Opening another signal while this one is loading can let the older signal's detail or AI opinion (fetched
+// in up to three chained steps) land last; only the latest load may write, checked after each await
+// (found in the 2026-10-31 review).
+let seq = 0
 async function load() {
   if (props.signalId === null) return
+  const mine = ++seq
   loading.value = true
   error.value = null
   ai.value = null
   absent.value = null
   try {
-    detail.value = await signalsApi.detail(props.signalId)
-    const sig = detail.value.signal
+    const d = await signalsApi.detail(props.signalId)
+    if (mine !== seq) return
+    detail.value = d
+    const sig = d.signal
     const linked = sig.aiAnalysisId ? await aiApi.find(sig.aiAnalysisId) : null
+    if (mine !== seq) return
     if (linked?.status === 'OK') {
       ai.value = linked
     } else {
@@ -52,13 +60,14 @@ async function load() {
       // budget could therefore never get an opinion from the UI.
       absent.value = linked
       const list = await aiApi.list({ symbol: sig.symbol, status: 'OK', from: sig.tradeDate, to: iso(new Date()), limit: 50 })
+      if (mine !== seq) return
       ai.value = list.find((a) => a.tradeDate === sig.tradeDate) ?? null
     }
     if (!ai.value) await loadUsage()
   } catch (e) {
-    error.value = errMsg(e)
+    if (mine === seq) error.value = errMsg(e)
   } finally {
-    loading.value = false
+    if (mine === seq) loading.value = false
   }
 }
 
@@ -111,8 +120,11 @@ async function analyze() {
     return
   }
   analyzing.value = true
+  const target = s.value
   try {
-    const r = await aiApi.analyze(s.value.symbol, s.value.tradeDate)
+    const r = await aiApi.analyze(target.symbol, target.tradeDate)
+    // The call takes 15~30 s; if another signal was opened meanwhile, don't show this opinion under it.
+    if (s.value?.id !== target.id) return
     if (r.status === 'OK') ai.value = r
     else ElMessage.warning(`没有结论：${r.error ?? r.status}`)
   } catch (e) {

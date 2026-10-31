@@ -25,24 +25,33 @@ const error = ref<string | null>(null)
 
 const quick = computed(() => props.universe.filter((u) => u.role === 'HOLDING' || u.role === 'POOL'))
 
+// Clicking another symbol while a replay is running can let the older replay (or its chart, fetched in a
+// second step) land last; only the latest run may write, checked after each await (found in the 2026-10-31 review).
+let seq = 0
 async function run() {
   if (!symbol.value.trim()) return
+  const mine = ++seq
   loading.value = true
   error.value = null
   try {
     const s = symbol.value.trim().toUpperCase()
     symbol.value = s
-    replay.value = await signalsApi.replay(s, { from: range.value[0], to: range.value[1], stopAtr: stopAtr.value, half: half.value })
+    const r = await signalsApi.replay(s, { from: range.value[0], to: range.value[1], stopAtr: stopAtr.value, half: half.value })
+    if (mine !== seq) return
+    replay.value = r
     // the chart covers at most 3 years, with the price scale adjusted back to the end of the range
-    const chartFrom = new Date(replay.value.to).getTime() - 3 * 365 * 86_400_000 > new Date(replay.value.from).getTime()
-      ? iso(new Date(new Date(replay.value.to).getTime() - 3 * 365 * 86_400_000 + 86_400_000)) : replay.value.from
-    bars.value = await signalsApi.bars(s, { from: chartFrom, to: replay.value.to, asOf: replay.value.to })
+    const chartFrom = new Date(r.to).getTime() - 3 * 365 * 86_400_000 > new Date(r.from).getTime()
+      ? iso(new Date(new Date(r.to).getTime() - 3 * 365 * 86_400_000 + 86_400_000)) : r.from
+    const b = await signalsApi.bars(s, { from: chartFrom, to: r.to, asOf: r.to })
+    if (mine !== seq) return
+    bars.value = b
   } catch (e) {
+    if (mine !== seq) return
     error.value = errMsg(e)
     replay.value = null
     bars.value = []
   } finally {
-    loading.value = false
+    if (mine === seq) loading.value = false
   }
 }
 

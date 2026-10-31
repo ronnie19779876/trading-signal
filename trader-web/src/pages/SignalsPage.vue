@@ -34,19 +34,24 @@ const todayTab = useTemplateRef<{ load: () => void }>('todayTab')
 const signalsTab = useTemplateRef<{ load: () => void }>('signalsTab')
 const ledgerTab = useTemplateRef<{ load: () => void }>('ledgerTab')
 
+// Picking dates in quick succession can let an older day's audit land last and show under the newer date;
+// only the latest request may write (found in the 2026-10-31 review).
+let seq = 0
 async function load() {
+  const mine = ++seq
   loading.value = true
   error.value = null
   try {
     const [a, u] = await Promise.all([signalsApi.audit(date.value ?? undefined), aiApi.usage(iso(new Date(Date.now() - 86_400_000)), iso(new Date()))])
+    if (mine !== seq) return
     audit.value = a
     if (!date.value) date.value = a.date
     settings.value = u.settings
     today.value = u.days[0] ?? null
   } catch (e) {
-    error.value = errMsg(e)
+    if (mine === seq) error.value = errMsg(e)
   } finally {
-    loading.value = false
+    if (mine === seq) loading.value = false
   }
 }
 

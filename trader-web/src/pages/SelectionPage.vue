@@ -85,23 +85,30 @@ async function simAdd(symbol: string) {
 }
 
 async function load() {
+  // Taken before the first await, and checked in catch/finally too: an older load that fails or finishes last
+  // must not overwrite the newer one's error or clear its spinner (found in the 2026-10-31 review).
+  const seq = ++loadSeq
   loading.value = true
   error.value = null
   try {
     if (!days.value.length) {
-      days.value = await selectionApi.days(5000)
-      if (!date.value) date.value = days.value[0] ?? null
+      const ds = await selectionApi.days(5000)
+      if (seq !== loadSeq) return
+      days.value = ds
+      if (!date.value) date.value = ds[0] ?? null
     }
     if (!date.value) {
       rows.value = []
       prev.value = null
-      audit.value = await selectionApi.audit()
+      prevLoading.value = false
+      const a = await selectionApi.audit()
+      if (seq !== loadSeq) return
+      audit.value = a
       return
     }
     // The previous score date is only used by "rating changes", so it is loaded separately and does not block the current
-    // day (dev database through the tunnel: 494 rows a day, about 360 kB). loadSeq discards responses from
-    // superseded loads, so a slow earlier date cannot overwrite a newer one.
-    const seq = ++loadSeq
+    // day (dev database through the tunnel: 494 rows a day, about 360 kB). loadSeq (taken at the top of load()) discards
+    // responses from superseded loads, so a slow earlier date cannot overwrite a newer one.
     const p = prevDate.value
     prev.value = null
     prevLoading.value = !!p
@@ -116,9 +123,9 @@ async function load() {
     rows.value = r
     audit.value = a
   } catch (e) {
-    error.value = errMsg(e)
+    if (seq === loadSeq) error.value = errMsg(e)
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 

@@ -75,21 +75,31 @@ const symbol = computed(() => props.row?.symbol ?? null)
 /** Daily bars and fundamentals exist only for instruments in the database */
 const known = computed(() => props.instrument !== null)
 
+// Opening another position while the drawer is still loading can let the previous symbol's bars or
+// fundamentals land last; only each loader's latest request may write (found in the 2026-10-31 review).
+let barsSeq = 0
+let fundSeq = 0
+
 async function loadBars(s: string) {
+  const mine = ++barsSeq
   loadingBars.value = true
   barsError.value = null
   try {
     // fetch 300 extra calendar days to warm up MA200 (about 200 trading days); the chart only shows the last year
-    bars.value = await getBars(s, daysAgoEt(365 + 300), isoEt(), 'forward')
+    const rows = await getBars(s, daysAgoEt(365 + 300), isoEt(), 'forward')
+    if (mine !== barsSeq) return
+    bars.value = rows
   } catch (e) {
+    if (mine !== barsSeq) return
     bars.value = []
     barsError.value = errMsg(e)
   } finally {
-    loadingBars.value = false
+    if (mine === barsSeq) loadingBars.value = false
   }
 }
 
 async function loadFundamentals(s: string) {
+  const mine = ++fundSeq
   loadingFund.value = true
   fundError.value = null
   try {
@@ -97,15 +107,17 @@ async function loadFundamentals(s: string) {
       fundamentalsApi.overview(s),
       fundamentalsApi.reports(s, 'main_index', 8).catch(() => [] as FinancialReport[]),
     ])
+    if (mine !== fundSeq) return
     overview.value = o
     reports.value = r
   } catch (e) {
+    if (mine !== fundSeq) return
     overview.value = null
     reports.value = []
     const status = (e as { response?: { status?: number } }).response?.status
     fundError.value = status === 404 ? null : errMsg(e)
   } finally {
-    loadingFund.value = false
+    if (mine === fundSeq) loadingFund.value = false
   }
 }
 
