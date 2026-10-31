@@ -26,12 +26,19 @@ PEER_PORT="$(ssh_port "${PEER}")"
 
 # Peer host key: what ssh-keyscan sees from the node must match the key already trusted in this machine's
 # known_hosts, otherwise nothing is written (protection against a man in the middle).
-# Note: the key appended to the node's known_hosts further down comes from a second ssh-keyscan, not from
-# the scan verified here, and an existing entry on the node is left as it is.
+# The scan is taken once: the very line whose fingerprint was verified is the one appended to the node's
+# known_hosts below. Until 3.5.2 the append ran a second ssh-keyscan, so what got trusted was never the
+# key that had been checked (found in the 2026-10-31 review). The line must be exactly one
+# "host ssh-ed25519 key" entry, so nothing else (a second key, shell text) can ride along.
+# An entry the node already has is kept; if it is wrong the tunnel (StrictHostKeyChecking=yes) refuses to
+# connect, which fails safe.
 if [[ "${PEER_PORT}" == 22 ]]; then KH="${PEER_HOST}"; else KH="[${PEER_HOST}]:${PEER_PORT}"; fi
 TRUSTED="$(ssh-keygen -F "${KH}" 2>/dev/null | grep -v '^#' | ssh-keygen -lf - 2>/dev/null | awk '$NF=="(ED25519)"{print $2}')"
 [[ -n "${TRUSTED}" ]] || die "本机 known_hosts 里没有 ${PEER} 的 ED25519 主机密钥，先从本机 ssh 登录一次 ${PEER}"
-SEEN="$(on "${NODE}" "ssh-keyscan -T 10 -p ${PEER_PORT} -t ed25519 ${PEER_HOST} 2>/dev/null" | ssh-keygen -lf - 2>/dev/null | awk '{print $2}')"
+SCAN="$(on "${NODE}" "ssh-keyscan -T 10 -p ${PEER_PORT} -t ed25519 ${PEER_HOST} 2>/dev/null" | grep -v '^#' || true)"
+KEYLINE_RE='^[^ ]+ ssh-ed25519 [A-Za-z0-9+/=]+$'
+[[ "${SCAN}" =~ ${KEYLINE_RE} ]] || die "${NODE} 扫到的 ${PEER} 主机密钥不是单独一行 ED25519（${SCAN:-无}），停止"
+SEEN="$(printf '%s\n' "${SCAN}" | ssh-keygen -lf - 2>/dev/null | awk '{print $2}')"
 [[ "${SEEN}" == "${TRUSTED}" ]] || die "${NODE} 看到的 ${PEER} 主机指纹（${SEEN:-无}）与本机信任的不一致，停止"
 say "${NODE} → ${PEER} 主机指纹一致"
 
@@ -48,7 +55,7 @@ PEER_USER=${PEER_USER}
 PEER_HOST=${PEER_HOST}
 PEER_PORT=${PEER_PORT}
 EOF
-on "${NODE}" "ssh-keygen -F '${KH}' >/dev/null || ssh-keyscan -T 10 -p ${PEER_PORT} -t ed25519 ${PEER_HOST} 2>/dev/null >> ~/.ssh/known_hosts"
+printf '%s\n' "${SCAN}" | on_in "${NODE}" "ssh-keygen -F '${KH}' >/dev/null || cat >> ~/.ssh/known_hosts"
 on "${NODE}" '(crontab -l 2>/dev/null | grep -v "# pg-replica-backup$"; echo "0 12 * * * \${HOME}/pg-replica/bin/backup.sh # pg-replica-backup") | crontab -'
 on "${NODE}" "systemctl --user daemon-reload && systemctl --user enable --now pg-replica-watchdog.timer >/dev/null 2>&1"
 say "${NODE} 已装：脚本、单元、peer.env、主机密钥、备份 crontab（每天 12:00）、看门狗定时器"
