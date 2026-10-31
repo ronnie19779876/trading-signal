@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -48,6 +49,7 @@ class SelectionSimServiceTest {
   private final DailyBarRepository bars = mock(DailyBarRepository.class);
   private final RehabFactorRepository rehabs = mock(RehabFactorRepository.class);
   private final TradingDayRepository days = mock(TradingDayRepository.class);
+  private final List<String> partials = new ArrayList<>();
   private final JobContext ctx =
       new JobContext() {
         public long id() {
@@ -56,7 +58,9 @@ class SelectionSimServiceTest {
 
         public void progress(String text) {}
 
-        public void partial(String reason) {}
+        public void partial(String reason) {
+          partials.add(reason);
+        }
 
         public boolean cancelled() {
           return false;
@@ -520,5 +524,194 @@ class SelectionSimServiceTest {
     assertThat(c.samples()).containsExactly("S2 #2 算到 （从未）");
     assertThat(c.detail()).contains("另有 1 笔待成交");
     assertThat(s.stale(d)).isTrue();
+  }
+
+  /** A copy of {@code t} that has been filled (and, when {@code exitDate} is set, closed). */
+  private static SimTradeRow filled(
+      SimTradeRow t,
+      String status,
+      LocalDate entryDate,
+      int shares,
+      LocalDate exitDate,
+      BigDecimal exitPrice,
+      LocalDate updatedThrough) {
+    return new SimTradeRow(
+        t.id(),
+        t.rulesVersion(),
+        t.instrumentId(),
+        t.symbol(),
+        t.modelVersion(),
+        t.scoreDate(),
+        t.scoreRank(),
+        t.rating(),
+        t.composite(),
+        t.requestedAt(),
+        t.setupClose(),
+        t.setupAtr(),
+        t.formulaStop(),
+        t.stop(),
+        t.stopLeg(),
+        t.resistance(),
+        t.plannedEntryDate(),
+        status,
+        entryDate,
+        BigDecimal.valueOf(100),
+        shares,
+        t.plusOneR(),
+        t.target(),
+        t.targetSource(),
+        t.touchedPlusOneR(),
+        t.targetHitDate(),
+        t.activeStop(),
+        t.chandelierActive(),
+        t.closeRequestedAt(),
+        t.plannedExitDate(),
+        t.closeKind(),
+        t.closeNote(),
+        exitDate,
+        exitPrice,
+        exitDate == null ? null : "STOP",
+        t.pnl(),
+        t.returnPct(),
+        t.rMultiple(),
+        t.mfeR(),
+        t.maeR(),
+        t.barsHeld(),
+        t.lastClose(),
+        t.lastCloseDate(),
+        t.unrealizedPnl(),
+        t.spyReturn(),
+        t.excessReturn(),
+        t.shadowStatus(),
+        t.shadowExitDate(),
+        t.shadowExitPrice(),
+        t.shadowExitReason(),
+        t.shadowPnl(),
+        t.shadowReturn(),
+        t.shadowLastClose(),
+        t.cancelReason(),
+        updatedThrough,
+        t.updatedAt());
+  }
+
+  private void everyDayIsATradingDay() {
+    when(days.between(eq(Market.US), any(), any()))
+        .thenAnswer(
+            inv -> {
+              LocalDate from = inv.getArgument(1);
+              LocalDate to = inv.getArgument(2);
+              List<LocalDate> out = new ArrayList<>();
+              for (LocalDate x = from; !x.isAfter(to); x = x.plusDays(1)) {
+                out.add(x);
+              }
+              return out;
+            });
+  }
+
+  /**
+   * Regression (found in the 2026-10-31 review): when only a pending trade was recomputed, daily
+   * equity was written from its entry date, skipping the days between the last equity row and that
+   * entry (a missed or failed run) for good. Equity exists up to D, nothing is held, the pending
+   * trade enters on D+2: D+1 must be filled in too.
+   */
+  @Test
+  void 逐日权益从上次写到的次日补起_不因只有待成交重算而留缺口() {
+    SimTradeRow closed =
+        filled(
+            pending(9, D.minusDays(29), Instant.parse("2026-07-01T22:00:00Z")),
+            "CLOSED",
+            D.minusDays(29),
+            100,
+            D,
+            BigDecimal.valueOf(110),
+            D);
+    SimTradeRow p = pending(1, D.plusDays(2), Instant.parse("2026-08-04T22:00:00Z"));
+    when(sim.unfinished()).thenReturn(List.of(p));
+    when(sim.filled()).thenReturn(List.of(closed));
+    InstrumentRow r = row(1, "S1");
+    when(instruments.findById(1L)).thenReturn(Optional.of(r));
+    List<DailyBar> series = new ArrayList<>(flat(r.instrument()));
+    series.add(bar(r.instrument(), D.plusDays(2), 100));
+    when(bars.find(eq(r.instrument()), eq(1L), any(), any())).thenReturn(series);
+    when(rehabs.find(any(), anyLong())).thenReturn(List.of());
+    when(instruments.find(any())).thenReturn(Optional.empty());
+    when(sim.equity(any(), any()))
+        .thenReturn(
+            List.of(
+                new SelectionSimRepository.EquityRow(
+                    D,
+                    BigDecimal.valueOf(501_000),
+                    BigDecimal.ZERO,
+                    BigDecimal.valueOf(501_000),
+                    0)));
+    everyDayIsATradingDay();
+
+    service(Instant.parse("2026-08-06T00:00:00Z")).update(D.plusDays(2), ctx);
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<SelectionSimRepository.EquityRow>> c = ArgumentCaptor.forClass(List.class);
+    verify(sim).upsertEquity(c.capture());
+    assertThat(c.getValue())
+        .extracting(SelectionSimRepository.EquityRow::tradeDate)
+        .containsExactly(D.plusDays(1), D.plusDays(2));
+    assertThat(partials).isEmpty();
+  }
+
+  /**
+   * Guard (found in the 2026-10-31 review): a trade already entered whose recompute comes back as
+   * "not entered" (entry-day bar gone) or "would not enter" (entry open now at or below the stop)
+   * means the bars were deleted or corrected. It used to hit a NullPointerException deep in the row
+   * builder; now it fails with an explicit message and the row stays as it was.
+   */
+  @Test
+  void 已入场的重算后变成未入场或不入场_明确报错且不改行() {
+    // #1: entered on D+1, but there is no bar from D+1 on any more
+    SimTradeRow gone =
+        filled(
+            pending(1, D.plusDays(1), Instant.parse("2026-08-03T22:00:00Z")),
+            "OPEN",
+            D.plusDays(1),
+            100,
+            null,
+            null,
+            D.plusDays(1));
+    // #2: entered on D+1, but the corrected entry-day open is below the stop (96)
+    SimTradeRow below =
+        filled(
+            pending(2, D.plusDays(1), Instant.parse("2026-08-03T22:05:00Z")),
+            "OPEN",
+            D.plusDays(1),
+            100,
+            null,
+            null,
+            D.plusDays(1));
+    when(sim.unfinished()).thenReturn(List.of(gone, below));
+    when(sim.filled()).thenReturn(List.of(gone, below));
+    InstrumentRow r1 = row(1, "S1");
+    InstrumentRow r2 = row(2, "S2");
+    when(instruments.findById(1L)).thenReturn(Optional.of(r1));
+    when(instruments.findById(2L)).thenReturn(Optional.of(r2));
+    List<DailyBar> s1 = new ArrayList<>(flat(r1.instrument()));
+    s1.removeIf(b -> b.tradeDate().isAfter(D));
+    when(bars.find(eq(r1.instrument()), eq(1L), any(), any())).thenReturn(s1);
+    List<DailyBar> s2 = new ArrayList<>(flat(r2.instrument()));
+    s2.removeIf(b -> b.tradeDate().isAfter(D));
+    s2.add(bar(r2.instrument(), D.plusDays(1), 90));
+    when(bars.find(eq(r2.instrument()), eq(2L), any(), any())).thenReturn(s2);
+    when(rehabs.find(any(), anyLong())).thenReturn(List.of());
+    when(instruments.find(any())).thenReturn(Optional.empty());
+    when(sim.equity(any(), any())).thenReturn(List.of());
+    everyDayIsATradingDay();
+
+    service(Instant.parse("2026-08-06T00:00:00Z")).update(D.plusDays(2), ctx);
+
+    assertThat(partials).hasSize(2);
+    assertThat(partials.get(0))
+        .startsWith("#1 S1 重算失败：已于 2026-08-04 入场，重算后变成未入场：")
+        .endsWith("（K 线被删或订正？需人工核对）");
+    assertThat(partials.get(1))
+        .startsWith("#2 S2 重算失败：已于 2026-08-04 入场，重算后变成不入场：开盘 90")
+        .endsWith("（K 线被删或订正？需人工核对）");
+    verify(sim, never()).update(any());
   }
 }

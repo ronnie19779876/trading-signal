@@ -580,6 +580,19 @@ public class SelectionSimService {
                   + fmt2(cash)
                   + "）");
           filled++;
+        } else if (actual.state() == SimPath.State.PENDING
+            || actual.state() == SimPath.State.CANCELLED) {
+          // A trade already entered cannot become "not entered" unless its bars were deleted or
+          // corrected; building a row from that path used to fail with a NullPointerException
+          // (found in the 2026-10-31 review). Fail loudly and leave the row as it is.
+          throw new IllegalStateException(
+              "已于 "
+                  + t.entryDate()
+                  + " 入场，重算后变成"
+                  + (actual.state() == SimPath.State.PENDING
+                      ? "未入场：计划入场日 " + t.plannedEntryDate() + " 起没有 K 线"
+                      : "不入场：" + actual.cancelReason())
+                  + "（K 线被删或订正？需人工核对）");
         }
         SimTradeRow next = build(t, actual, shadow, shares, spy, through);
         if (next.targetHitDate() != null && t.targetHitDate() == null) {
@@ -761,13 +774,17 @@ public class SelectionSimService {
             .orElseThrow();
     List<SelectionSimRepository.EquityRow> existing = sim.equity(first, through);
     // Trades recomputed today may change equity anywhere inside their holding period: rewrite from
-    // their earliest entry date; otherwise only fill in the days not written yet
+    // their earliest entry date. The days not written yet are always filled in as well: taking only
+    // the recomputed entry date left a permanent gap between the last row and a later entry (found
+    // in the 2026-10-31 review)
+    LocalDate resume = existing.isEmpty() ? first : existing.getLast().tradeDate().plusDays(1);
     LocalDate from =
         closes.keySet().stream()
             .map(fills::get)
             .map(SimLedger.Fill::entryDate)
+            .filter(d -> d.isBefore(resume))
             .min(LocalDate::compareTo)
-            .orElse(existing.isEmpty() ? first : existing.getLast().tradeDate().plusDays(1));
+            .orElse(resume);
     if (from.isBefore(first)) {
       from = first;
     }
