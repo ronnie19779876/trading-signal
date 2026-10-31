@@ -35,14 +35,15 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Dev vs production: the subscription quota belongs to the account, so the dev instance
  * (auto-subscribe=false) must not subscribe on its own. {@link #onPoolChanged} and {@link
- * #afterRefresh} enforce that; note that {@link #onConnected} with {@code reconnected=true}
- * reconciles regardless of auto-subscribe.
+ * #afterRefresh} enforce that, and since 3.5.2 so does {@link #onConnected}: on such an instance a
+ * (re)connect only restores subscriptions it had wanted before ({@code subscriptionsWanted}).
  *
- * <p>Locking: {@code subscribed}, {@code pausedByRefresh} and {@code resubscribeAfterRefresh} are
- * guarded by the object monitor. {@link #reconcile}, {@link #pause} and {@link #resume} hold the
- * monitor while they block on gateway futures (up to 30 s each) and, in {@code pause(true)}, while
- * sleeping until the youngest subscription is old enough. Anything else that takes the monitor (the
- * connect / disconnect callbacks, {@link #status}) waits for that long.
+ * <p>Locking: {@code subscribed}, {@code pausedByRefresh}, {@code resubscribeAfterRefresh} and
+ * {@code subscriptionsWanted} are guarded by the object monitor. {@link #reconcile}, {@link #pause}
+ * and {@link #resume} hold the monitor while they block on gateway futures (up to 30 s each) and,
+ * in {@code pause(true)}, while sleeping until the youngest subscription is old enough. Anything
+ * else that takes the monitor (the connect / disconnect callbacks, {@link #status}) waits for that
+ * long.
  */
 public class QuoteSubscriptionService
     implements GatewayListener, RotationRefresher.QuotaCoordinator {
@@ -81,6 +82,19 @@ public class QuoteSubscriptionService
    * subscriptions before the rotation.
    */
   private boolean resubscribeAfterRefresh;
+
+  /**
+   * Whether this instance wants real-time subscriptions even though {@code auto-subscribe} may be
+   * off: set when a reconciliation actually subscribes something, cleared when a reconciliation
+   * completes cleanly with nothing subscribed. Unlike {@link #subscribed} it survives a disconnect,
+   * which is the whole point: {@code onDisconnected} must clear the book (the broker dropped the
+   * subscriptions) but must not forget that they were wanted.
+   *
+   * <p>Before 3.5.2 {@code onConnected} reconciled on every reconnect, so a dev instance that had
+   * never subscribed picked up the whole pool on the account quota it shares with production after
+   * any tunnel blip (found in the 2026-10-31 review). Guarded by {@code this}.
+   */
+  private boolean subscriptionsWanted;
 
   private volatile Instant lastReconcileAt;
   private volatile String lastError;
@@ -199,6 +213,11 @@ public class QuoteSubscriptionService
     }
     lastReconcileAt = now;
     lastError = error;
+    if (added > 0) {
+      subscriptionsWanted = true;
+    } else if (error == null && subscribed.isEmpty()) {
+      subscriptionsWanted = false;
+    }
     if (added > 0 || removed > 0) {
       log.info(
           "实时订阅对账：期望 {}，已订 {}，新增 {}，反订阅 {}，延后 {}",
@@ -327,7 +346,8 @@ public class QuoteSubscriptionService
   public Result onPoolChanged() {
     boolean hasSubscriptions;
     synchronized (this) {
-      hasSubscriptions = !subscribed.isEmpty();
+      // a reconnect whose own reconciliation failed leaves the book empty but the intent set
+      hasSubscriptions = !subscribed.isEmpty() || subscriptionsWanted;
     }
     if (!props.autoSubscribe() && !hasSubscriptions) {
       log.info("标的池有变动；auto-subscribe=false 且当前没有订阅，不对账");
@@ -343,15 +363,18 @@ public class QuoteSubscriptionService
     if (broker != Broker.FUTU) {
       return;
     }
+    boolean wanted;
     synchronized (this) {
       subscribed.clear(); // a new connection carries no subscriptions
       cache.clear();
+      wanted = subscriptionsWanted;
     }
-    if (reconnected || props.autoSubscribe()) {
+    // Reconcile only when subscriptions are wanted: always on an auto-subscribe instance, and on
+    // any other instance only if it had subscribed before (manual reconcile, pool following). A dev
+    // instance that never subscribed must stay off the quota it shares with production.
+    if (props.autoSubscribe() || wanted) {
       // Hand off to our own thread: do not block the 2-thread futu-scheduler for tens of seconds,
       // or heartbeats cannot be scheduled and the connection is judged dead.
-      // Note: on reconnect this reconciles even with auto-subscribe=false and nothing subscribed
-      // before the disconnect (onDisconnected already cleared that information)
       worker.execute(
           () -> {
             try {

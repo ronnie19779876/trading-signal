@@ -278,6 +278,67 @@ class QuoteSubscriptionServiceTest {
     assertThat(s.status().subscribed()).isEqualTo(3);
   }
 
+  /**
+   * Before 3.5.2 any Futu reconnect reconciled, so a dev instance that had never subscribed picked
+   * up the whole pool on the shared account quota after its tunnel blipped, and from then on
+   * followed every pool change (found in the 2026-10-31 review).
+   */
+  @Test
+  void 不自动订阅且从没订阅过的_重连后不订阅() {
+    QuoteSubscriptionService s = service(true, false);
+    s.onConnected(Broker.FUTU, false);
+    s.awaitReconcile();
+    s.onDisconnected(Broker.FUTU, "断线");
+    s.onConnected(Broker.FUTU, true);
+    s.awaitReconcile();
+
+    assertThat(subs).isEmpty();
+    assertThat(s.status().subscribed()).isZero();
+    assertThat(s.onPoolChanged().error()).contains("auto-subscribe=false");
+    assertThat(subs).isEmpty();
+  }
+
+  @Test
+  void 不自动订阅但手工对账过的_重连后恢复订阅() {
+    QuoteSubscriptionService s = service(true, false);
+    s.reconcile();
+    assertThat(s.status().subscribed()).isEqualTo(2);
+
+    s.onDisconnected(Broker.FUTU, "断线");
+    s.onConnected(Broker.FUTU, true);
+    s.awaitReconcile();
+
+    assertThat(s.status().subscribed()).isEqualTo(2);
+    assertThat(subs).hasSize(2);
+  }
+
+  /**
+   * The intent survives a reconnect whose own reconciliation failed: the next reconnect (and pool
+   * changes in between) must still restore the subscriptions.
+   */
+  @Test
+  void 不自动订阅但手工对账过的_重连对账失败后下次重连仍恢复() {
+    QuoteSubscriptionService s = service(true, false);
+    s.reconcile();
+    s.onDisconnected(Broker.FUTU, "断线");
+    when(gateway.subscribeQuotes(anyList()))
+        .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("not connected")));
+    s.onConnected(Broker.FUTU, true);
+    s.awaitReconcile();
+    assertThat(s.status().subscribed()).isZero();
+
+    when(gateway.subscribeQuotes(anyList()))
+        .thenAnswer(
+            inv -> {
+              subs.add(List.copyOf(inv.getArgument(0)));
+              return CompletableFuture.completedFuture(null);
+            });
+    s.onDisconnected(Broker.FUTU, "断线");
+    s.onConnected(Broker.FUTU, true);
+    s.awaitReconcile();
+    assertThat(s.status().subscribed()).isEqualTo(2);
+  }
+
   @Test
   void 自动订阅的实例池变动照常对账() {
     QuoteSubscriptionService s = service(true, true);
