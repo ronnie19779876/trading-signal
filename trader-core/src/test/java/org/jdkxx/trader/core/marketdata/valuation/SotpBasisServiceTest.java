@@ -97,6 +97,66 @@ class SotpBasisServiceTest {
     assertThat(b.ttmNetIncome()).isEqualTo(4_000_000_000d);
   }
 
+  /**
+   * Futu can store one quarter as two rows with period ends a few days apart (HD, NVDA, TDY in the
+   * dev database). Before 3.5.2 the TTM summed both and so spanned only 3 real quarters.
+   */
+  @Test
+  void TTM去掉同一季的重复行() {
+    when(financials.find(any(), anyLong(), eq(FinancialStatement.INCOME), anyInt()))
+        .thenReturn(
+            List.of(
+                quarter(LocalDate.of(2026, 6, 29), "2026/Q2", 13e9, 1.3e9),
+                quarter(LocalDate.of(2026, 6, 25), "2026/Q2", 13e9, 1.3e9),
+                quarter(LocalDate.of(2026, 3, 31), "2026/Q1", 11e9, 1.1e9),
+                quarter(LocalDate.of(2025, 12, 31), "2025/Q4", 10e9, 1.0e9),
+                quarter(LocalDate.of(2025, 9, 30), "2025/Q3", 9e9, 0.9e9)));
+
+    SotpBasisService.Basis b = service.of("TSLA");
+
+    // 13 + 11 + 10 + 9; counting the duplicate Q2 row would give 13 + 13 + 11 + 10 = 47
+    assertThat(b.ttmRevenue()).isEqualTo(43e9);
+    assertThat(b.ttmNetIncome()).isEqualTo(4.3e9);
+  }
+
+  /**
+   * A missing quarter makes "the latest 4 rows" span more than a year (measured 2026-10-31 in the
+   * dev database: FERG, HONA, PSKY, SPCX); such a sum is not a trailing twelve months.
+   */
+  @Test
+  void TTM缺季时不给值() {
+    when(financials.find(any(), anyLong(), eq(FinancialStatement.INCOME), anyInt()))
+        .thenReturn(
+            List.of(
+                quarter(LocalDate.of(2026, 6, 29), "2026/Q2", 10e9, 1e9),
+                quarter(LocalDate.of(2026, 3, 30), "2026/Q1", 10e9, 1e9),
+                quarter(LocalDate.of(2025, 12, 30), "2025/Q4", 10e9, 1e9),
+                quarter(LocalDate.of(2025, 4, 29), "2025/Q1", 10e9, 1e9)));
+
+    SotpBasisService.Basis b = service.of("TSLA");
+
+    assertThat(b.ttmRevenue()).isNull();
+    assertThat(b.ttmNetIncome()).isNull();
+    assertThat(b.applicability().verdict()).isEqualTo("CAUTION");
+    assertThat(b.applicability().reasons()).anyMatch(r -> r.contains("取不到 TTM"));
+  }
+
+  /**
+   * 12-12-12-16-week fiscal years (COST, KR, PEP) have 84-day and 112-day quarters: still a TTM.
+   */
+  @Test
+  void TTM认十六周的季度() {
+    when(financials.find(any(), anyLong(), eq(FinancialStatement.INCOME), anyInt()))
+        .thenReturn(
+            List.of(
+                quarter(LocalDate.of(2026, 8, 30), "2026/Q4", 10e9, 1e9),
+                quarter(LocalDate.of(2026, 5, 10), "2026/Q3", 10e9, 1e9),
+                quarter(LocalDate.of(2026, 2, 15), "2026/Q2", 10e9, 1e9),
+                quarter(LocalDate.of(2025, 11, 23), "2026/Q1", 10e9, 1e9)));
+
+    assertThat(service.of("TSLA").ttmRevenue()).isEqualTo(40e9);
+  }
+
   @Test
   void 券商给的净利率是百分数_换成小数() {
     assertThat(service.of("TSLA").netMarginTtm()).isEqualTo(0.036731d);

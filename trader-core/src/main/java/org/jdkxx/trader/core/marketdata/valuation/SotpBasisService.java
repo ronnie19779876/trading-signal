@@ -3,11 +3,13 @@ package org.jdkxx.trader.core.marketdata.valuation;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import org.jdkxx.trader.core.marketdata.InstrumentDirectory;
 import org.jdkxx.trader.domain.FinancialReport;
 import org.jdkxx.trader.domain.FinancialStatement;
 import org.jdkxx.trader.domain.ValuationSnapshot;
+import org.jdkxx.trader.domain.selection.FundamentalMetrics;
 import org.jdkxx.trader.domain.valuation.SotpBasis;
 import org.jdkxx.trader.storage.marketdata.ConstituentRow;
 import org.jdkxx.trader.storage.marketdata.DailyBarRepository;
@@ -52,6 +54,12 @@ public class SotpBasisService {
   /** Look-back in years for the P/E baseline. */
   private static final int PE_LOOKBACK_YEARS = 5;
 
+  /**
+   * Income rows read for the TTM. Annual rows and duplicate quarter rows share the budget, so 8
+   * (before 3.5.2) could leave fewer than 4 distinct quarters; 12 covers about 2.5 fiscal years.
+   */
+  private static final int INCOME_ROWS = 12;
+
   private final InstrumentDirectory directory;
   private final DailyBarRepository bars;
   private final ValuationRepository valuations;
@@ -76,10 +84,10 @@ public class SotpBasisService {
    *
    * @param shares share count on all three bases, all given, no choice made for the user
    * @param netCash net cash breakdown
-   * @param ttmRevenue sum of revenue over the four most recent quarters; null when four quarters
-   *     are not available
+   * @param ttmRevenue sum of revenue over the four most recent quarters; null when there are not
+   *     four distinct consecutive quarters (see {@link #latestFourQuarters})
    * @param ttmNetIncome sum of net income to parent over the four most recent quarters; null when
-   *     four quarters are not available
+   *     there are not four distinct consecutive quarters
    * @param netMarginTtm net margin to parent (TTM) from the broker, as a <b>fraction</b>
    * @param peMedian median of the positive daily-bar P/E values over the last 5 years
    * @param applicability applicability verdict
@@ -145,14 +153,15 @@ public class SotpBasisService {
 
     ValuationSnapshot snap = latestSnapshot(row, id);
     List<FinancialReport> income =
-        financials.find(row.instrument(), id, FinancialStatement.INCOME, 8);
+        financials.find(row.instrument(), id, FinancialStatement.INCOME, INCOME_ROWS);
     List<FinancialReport> balance =
         financials.find(row.instrument(), id, FinancialStatement.BALANCE_SHEET, 1);
     List<FinancialReport> main =
         financials.find(row.instrument(), id, FinancialStatement.MAIN_INDEX, 1);
 
-    Double ttmRevenue = ttm(income, INCOME_REVENUE);
-    Double ttmNetIncome = ttm(income, INCOME_NET_TO_PARENT);
+    List<FinancialReport> lastFour = latestFourQuarters(income);
+    Double ttmRevenue = ttm(lastFour, INCOME_REVENUE);
+    Double ttmNetIncome = ttm(lastFour, INCOME_NET_TO_PARENT);
     Double netMargin = percentToRate(value(main, MAIN_NET_MARGIN));
     // peMedian ignores zero P/E rows (Futu reports 0 for loss periods and funds) and returns an
     // empty Optional when there is no positive value at all (SPY); see DailyBarRepository.peMedian
@@ -219,7 +228,11 @@ public class SotpBasisService {
       reasons.add("取不到财报，基金与指数没有分部利润可拆");
       return new Applicability("NOT_APPLICABLE", List.copyOf(reasons));
     }
-    if (ttmNetIncome != null && ttmNetIncome <= 0) {
+    if (ttmNetIncome == null) {
+      // since 3.5.2 a TTM with a missing or duplicate-only quarter is null instead of a wrong sum;
+      // say so, otherwise the panel shows a blank TTM next to "APPLICABLE"
+      reasons.add("最近四个季报不连续或缺数据项，取不到 TTM 净利，反推不给结论");
+    } else if (ttmNetIncome <= 0) {
       reasons.add("当前归母净利非正，本益比没有意义，反推不给结论");
     }
     if (peMedian == null) {
@@ -250,20 +263,45 @@ public class SotpBasisService {
   }
 
   /**
-   * Sum over the four most recent quarters. <b>The annual report and the Q4 report share the same
-   * period end</b>, so only periods whose text contains /Q are taken, and rows must not be
-   * de-duplicated by period end. Note that this takes the four latest quarter rows as they are: it
-   * neither drops a duplicate row of the same quarter nor checks that the four quarters are
-   * consecutive.
+   * The four most recent quarterly income rows, oldest first, or null when they do not form a
+   * trailing twelve months.
+   *
+   * <p><b>The annual report and the Q4 report share the same period end</b>, so only periods whose
+   * text contains /Q are taken (annual rows are filtered by label, not by date). Within the
+   * quarterly rows two problems are real and were handled for quant selection but not here before
+   * 3.5.2 (found in the 2026-10-31 review):
+   *
+   * <ul>
+   *   <li>one quarter stored as two rows with period ends a few days apart (HD, NVDA, TDY) or
+   *       during a fiscal-year change (GEN, COHR): {@link FundamentalMetrics#dedupe(List,
+   *       java.util.function.Function)} keeps only the later one;
+   *   <li>a missing quarter, which makes "the latest four rows" span more than a year (FERG, HONA,
+   *       PSKY, SPCX in the dev database on 2026-10-31): {@link
+   *       FundamentalMetrics#consecutive(List, java.util.function.Function)} rejects it, and the
+   *       TTM is reported as unavailable rather than wrong.
+   * </ul>
+   *
+   * Both rules are the selection model's own, so the two features never disagree on what a TTM is.
    */
-  private Double ttm(List<FinancialReport> income, long fieldId) {
+  static List<FinancialReport> latestFourQuarters(List<FinancialReport> income) {
     List<FinancialReport> quarters =
         income.stream()
             .filter(r -> r.periodText() != null && r.periodText().contains("/Q"))
-            .sorted((a, b) -> b.periodEnd().compareTo(a.periodEnd()))
-            .limit(4)
+            .sorted(Comparator.comparing(FinancialReport::periodEnd))
             .toList();
+    quarters = FundamentalMetrics.dedupe(quarters, FinancialReport::periodEnd);
     if (quarters.size() < 4) {
+      return null;
+    }
+    List<FinancialReport> lastFour = quarters.subList(quarters.size() - 4, quarters.size());
+    return FundamentalMetrics.consecutive(lastFour, FinancialReport::periodEnd) ? lastFour : null;
+  }
+
+  /**
+   * Sum of one income field over {@code quarters}; null when the quarters or any value is missing.
+   */
+  private Double ttm(List<FinancialReport> quarters, long fieldId) {
+    if (quarters == null) {
       return null;
     }
     double sum = 0;

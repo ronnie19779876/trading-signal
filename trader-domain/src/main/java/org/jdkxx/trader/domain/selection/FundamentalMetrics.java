@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 /**
  * Growth and profitability metrics (§25.4), using only the quarterly reports already announced on
@@ -44,10 +45,18 @@ public final class FundamentalMetrics {
    * period-end order.
    */
   public static List<QuarterFacts> dedupe(List<QuarterFacts> quarters) {
-    List<QuarterFacts> out = new ArrayList<>(quarters.size());
-    for (QuarterFacts q : quarters) {
+    return dedupe(quarters, QuarterFacts::periodEnd);
+  }
+
+  /**
+   * {@link #dedupe(List)} for any quarterly row type (since 3.5.2 also used by the SOTP basis, so
+   * both features apply the same rule). {@code quarters} must be in ascending period-end order.
+   */
+  public static <T> List<T> dedupe(List<T> quarters, Function<T, LocalDate> periodEnd) {
+    List<T> out = new ArrayList<>(quarters.size());
+    for (T q : quarters) {
       if (!out.isEmpty()
-          && ChronoUnit.DAYS.between(out.getLast().periodEnd(), q.periodEnd())
+          && ChronoUnit.DAYS.between(periodEnd.apply(out.getLast()), periodEnd.apply(q))
               < DUPLICATE_GAP_DAYS) {
         out.removeLast();
       }
@@ -130,8 +139,19 @@ public final class FundamentalMetrics {
    * quarter as a break and lost growth entirely for those names.
    */
   static boolean consecutive(List<QuarterFacts> qs, int from, int to) {
-    for (int i = from + 1; i < to; i++) {
-      long d = ChronoUnit.DAYS.between(qs.get(i - 1).periodEnd(), qs.get(i).periodEnd());
+    return consecutive(qs.subList(from, to), QuarterFacts::periodEnd);
+  }
+
+  /**
+   * Whether every pair of neighbouring period ends in {@code quarters} (ascending) is {@value
+   * #MIN_GAP_DAYS}~{@value #MAX_GAP_DAYS} days apart; see {@link #consecutive(List, int, int)} for
+   * why the range is that wide. Public since 3.5.2 for the SOTP basis.
+   */
+  public static <T> boolean consecutive(List<T> quarters, Function<T, LocalDate> periodEnd) {
+    for (int i = 1; i < quarters.size(); i++) {
+      long d =
+          ChronoUnit.DAYS.between(
+              periodEnd.apply(quarters.get(i - 1)), periodEnd.apply(quarters.get(i)));
       if (d < MIN_GAP_DAYS || d > MAX_GAP_DAYS) {
         return false;
       }
