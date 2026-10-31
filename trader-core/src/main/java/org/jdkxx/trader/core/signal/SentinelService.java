@@ -35,6 +35,15 @@ public class SentinelService {
   /** Replay range cap: pool and holdings have 20 years of daily bars. */
   static final int MAX_REPLAY_YEARS = 21;
 
+  /**
+   * Warm-up before the replay range, in cooldown windows. Live judges the edge against the previous
+   * trading day and reads the cooldown from the signals already stored; the replay used to start
+   * both from scratch, so a second consecutive passing day at the start of the range came out as a
+   * fresh SIGNAL (found in the 2026-10-31 review). Whether a day signals depends on the signals of
+   * the cooldown window before it, so the warm-up runs several windows to let that chain settle.
+   */
+  static final int WARMUP_COOLDOWNS = 4;
+
   private final InstrumentDirectory directory;
   private final DailyBarRepository bars;
   private final RehabFactorRepository rehabs;
@@ -136,7 +145,9 @@ public class SentinelService {
   /**
    * One replay day. The outcome follows the edge and cooldown rules (there are no historical AI
    * verdicts, so "no verdict does not block" applies); the only difference from the live batch is
-   * the AI veto layer.
+   * the AI veto layer. Like live, the first day's edge looks at the trading day before the range
+   * and its cooldown at signals before the range: both are warmed up on the trading days before
+   * {@code from} (see {@link #WARMUP_COOLDOWNS}).
    *
    * @param gates four-gate verdict letters in trend / location / trigger / risk order: P pass, F
    *     fail, U undecidable; null when not judged
@@ -199,7 +210,10 @@ public class SentinelService {
       throw new IllegalArgumentException("回放区间不能超过 " + MAX_REPLAY_YEARS + " 年");
     }
     InstrumentRow row = directory.require(symbol);
-    LocalDate loadFrom = start.minusDays(thresholds.windowCalendarDays());
+    int warmupDays = WARMUP_COOLDOWNS * thresholds.cooldownDays();
+    // Twice the warm-up length in calendar days always holds that many trading days; the bars go
+    // back one more data window so the first warm-up day is judged on a complete window
+    LocalDate loadFrom = start.minusDays(2L * warmupDays + thresholds.windowCalendarDays());
     // Paper trades run past the end of the replay range, so bars are fetched up to the settled date
     List<DailyBar> raw =
         bars.find(row.instrument(), row.id(), loadFrom, withTrades ? settled : end);
@@ -210,16 +224,19 @@ public class SentinelService {
     List<ReplayDay> out = new ArrayList<>();
     Map<String, Long> statusCounts = new LinkedHashMap<>();
     Map<String, Long> outcomeCounts = new LinkedHashMap<>();
-    // Edge and cooldown state start fresh at `start`: whatever happened before the range is not
-    // carried in
+    // Edge and cooldown state are warmed up on the last `warmupDays` trading days before `start`;
+    // those days are judged but produce no output, counts or paper trades
+    int firstInRange = 0;
+    while (firstInRange < calendarList.size() && calendarList.get(firstInRange).isBefore(start)) {
+      firstInRange++;
+    }
     boolean previousPassed = false;
     Integer sinceLastSignal = null;
     List<SentinelEvaluation> signals = new ArrayList<>();
     int lo = 0;
-    for (LocalDate asOf : calendarList) {
-      if (asOf.isBefore(start)) {
-        continue;
-      }
+    for (LocalDate asOf :
+        calendarList.subList(Math.max(0, firstInRange - warmupDays), calendarList.size())) {
+      boolean warmup = asOf.isBefore(start);
       // Hand only the bars inside the window to the judgement, so each day does not rescan the
       // whole history
       LocalDate windowStart = asOf.minusDays(thresholds.windowCalendarDays());
@@ -247,9 +264,14 @@ public class SentinelService {
               SignalSuppression.AiVerdict.ABSENT);
       if (outcome == SignalSuppression.Outcome.SIGNAL) {
         sinceLastSignal = 0;
-        signals.add(e);
+        if (!warmup) {
+          signals.add(e);
+        }
       }
       previousPassed = e.allPassed();
+      if (warmup) {
+        continue;
+      }
 
       GateResult risk =
           e.gates().stream().filter(g -> g.gate() == GateResult.Gate.RISK).findFirst().orElse(null);
