@@ -5,11 +5,18 @@
 # From then on manage it with systemctl only; do not call bin/trader.sh start/stop directly any more, or
 # systemd's view of the state no longer matches the real process.
 # Type=forking: trader.sh start launches the JVM in the background, writes the PID file, and returns once
-# /actuator/health reports UP (within its own 90 s, below TimeoutStartSec).
+# /actuator/health reports a top-level UP or DEGRADED (within its own 90 s, below TimeoutStartSec).
 [Unit]
 Description=trading-signal
 After=network-online.target postgresql.service
 Wants=network-online.target
+# Without a start limit Restart=on-failure retries forever: an instance that cannot start (bad config,
+# database down, a standby that the environment guard refuses) is relaunched every RestartSec, each time
+# re-running startup work and flooding the logs (found in the 2026-10-31 review). After 3 failed starts
+# within 15 minutes the unit stays failed. Once the cause is fixed, recovery needs
+#   sudo systemctl reset-failed trading-signal && sudo systemctl start trading-signal
+StartLimitIntervalSec=900
+StartLimitBurst=3
 
 [Service]
 Type=forking
