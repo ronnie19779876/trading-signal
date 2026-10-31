@@ -4,12 +4,13 @@ import vue from '@vitejs/plugin-vue'
 export default defineConfig({
   plugins: [vue()],
   build: {
-    // 产物直接进 jar 的静态目录：访问应用端口就是页面，同源、不需要 CORS。该目录已 gitignore。
+    // Build output goes straight into the jar's static directory: the app port serves the page, same origin, no CORS
+    // needed. The directory is gitignored.
     outDir: '../trader-app/src/main/resources/static',
     emptyOutDir: true,
   },
   server: {
-    // 端口分配：Vite 5174（5173 已被其它项目占用），接口转发到本机开发实例 8083
+    // Port allocation: Vite on 5174 (5173 is taken by another project); API calls are proxied to the local dev instance on 8083
     port: 5174,
     strictPort: true,
     proxy: {

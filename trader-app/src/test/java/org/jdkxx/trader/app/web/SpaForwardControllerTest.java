@@ -1,62 +1,70 @@
 package org.jdkxx.trader.app.web;
 
-import org.junit.jupiter.api.Test;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import org.junit.jupiter.api.Test;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+
 /**
- * 前端深链接回退：2.0.0 及以前直接打开 /account、/marketdata、/fundamentals 都是 404，从首页点进去才正常。
+ * Frontend deep-link fallback: up to and including 2.0.0, opening /account, /marketdata or
+ * /fundamentals directly was a 404; only clicking through from the home page worked.
  */
 class SpaForwardControllerTest {
 
-    private final MockMvc mvc = MockMvcBuilders.standaloneSetup(new SpaForwardController()).build();
+  private final MockMvc mvc = MockMvcBuilders.standaloneSetup(new SpaForwardController()).build();
 
-    @Test
-    void 前端深链接转发给首页() throws Exception {
-        for (String p : List.of("/account", "/marketdata", "/fundamentals")) {
-            mvc.perform(get(p)).andExpect(forwardedUrl("/index.html"));
-        }
+  @Test
+  void 前端深链接转发给首页() throws Exception {
+    for (String p : List.of("/account", "/marketdata", "/fundamentals")) {
+      mvc.perform(get(p)).andExpect(forwardedUrl("/index.html"));
     }
+  }
 
-    @Test
-    void 接口_actuator_错误页与静态文件不转发() throws Exception {
-        for (String p : List.of("/api", "/actuator", "/error", "/api/pool", "/actuator/health",
-                "/favicon.ico", "/index.html", "/assets/AccountPage-x.js")) {
-            mvc.perform(get(p)).andExpect(status().isNotFound());
-        }
+  @Test
+  void 接口_actuator_错误页与静态文件不转发() throws Exception {
+    for (String p :
+        List.of(
+            "/api",
+            "/actuator",
+            "/error",
+            "/api/pool",
+            "/actuator/health",
+            "/favicon.ico",
+            "/index.html",
+            "/assets/AccountPage-x.js")) {
+      mvc.perform(get(p)).andExpect(status().isNotFound());
     }
+  }
 
-    @Test
-    void 前端路由表里的路径都能深链接打开() throws Exception {
-        java.util.Optional<String> router = FrontendSources.read("router/index.ts");
-        if (router.isEmpty()) {
-            return;   // 整棵前端源码树都不在：单独构建后端
-        }
-        Matcher m = Pattern.compile("path:\\s*'([^']+)'").matcher(router.get());
-        List<String> paths = new ArrayList<>();
-        while (m.find()) {
-            paths.add(m.group(1));
-        }
-        assertThat(paths).as("没从 router/index.ts 里读到路由，测试需要跟着改").isNotEmpty();
-        assertThat(paths).as("前端要有兜底路由，否则打开不存在的路径是白屏而不是 404 页").anyMatch(p -> p.contains(":"));
-        for (String p : paths) {
-            if ("/".equals(p) || p.contains(":")) {
-                continue;   // 首页由静态资源的欢迎页提供；带 : 的是参数路由（兜底 404），不是深链接目标
-            }
-            assertThat(p).as("前端路由必须是单段、不含点的路径，否则深链接回退覆盖不到：%s", p).matches("/[^/.]+");
-            mvc.perform(get(p)).andExpect(forwardedUrl("/index.html"));
-        }
+  @Test
+  void 前端路由表里的路径都能深链接打开() throws Exception {
+    java.util.Optional<String> router = FrontendSources.read("router/index.ts");
+    if (router.isEmpty()) {
+      return; // the whole frontend source tree is absent: backend built on its own
     }
+    Matcher m = Pattern.compile("path:\\s*'([^']+)'").matcher(router.get());
+    List<String> paths = new ArrayList<>();
+    while (m.find()) {
+      paths.add(m.group(1));
+    }
+    assertThat(paths).as("没从 router/index.ts 里读到路由，测试需要跟着改").isNotEmpty();
+    assertThat(paths).as("前端要有兜底路由，否则打开不存在的路径是白屏而不是 404 页").anyMatch(p -> p.contains(":"));
+    for (String p : paths) {
+      if ("/".equals(p) || p.contains(":")) {
+        // the home page is served by the static welcome page; routes with : are parameter routes
+        // (catch-all 404), not deep-link targets
+        continue;
+      }
+      assertThat(p).as("前端路由必须是单段、不含点的路径，否则深链接回退覆盖不到：%s", p).matches("/[^/.]+");
+      mvc.perform(get(p)).andExpect(forwardedUrl("/index.html"));
+    }
+  }
 }

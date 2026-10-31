@@ -1,17 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  富途 OpenAPI Java SDK 的重定位版本（独立小工程，不在主 reactor 里）。
+  Relocated build of the Futu OpenAPI Java SDK (a small standalone project, not part of the main reactor).
 
-  为什么需要它：futu-api 的 protobuf 生成代码是 protoc 3.5.1 产物，盈透 TWS API 10.30 内置的生成代码要求
-  protobuf-java 4.x，两者不能共用平铺 classpath（实测 4.x 运行时下 com.futu.openapi.pb.Common 初始化即
-  NoSuchMethodError）。这里把 futu-api 与 protobuf-java 3.5.1 打成一个 jar，并把 com.google.protobuf
-  重定位到 org.jdkxx.trader.shaded.futu.protobuf，主工程只依赖本构件。
+  Why it is needed: futu-api's protobuf generated code was produced by protoc 3.5.1, while the generated code
+  bundled in IBKR TWS API 10.30 requires protobuf-java 4.x; the two cannot share one flat classpath
+  (measured: under the 4.x runtime, com.futu.openapi.pb.Common fails with NoSuchMethodError as soon as it is
+  initialized). This project packs futu-api and protobuf-java 3.5.1 into one jar and relocates
+  com.google.protobuf to org.jdkxx.trader.shaded.futu.protobuf; the main project depends only on this artifact.
 
-  为什么不做成 reactor 模块：IDEA 会把 reactor 模块当源码模块解析，IDE 里跑应用时 classpath 是未重定位的
-  原始 jar；独立安装的构件让 IDE 与 Maven 看到同一个 jar。
+  Why it is not a reactor module: IDEA resolves reactor modules as source modules, so when running the
+  application from the IDE the classpath would hold the original, unrelocated jar; a separately installed
+  artifact makes the IDE and Maven see the same jar.
 
-  安装（克隆仓库后一次性；升级 SDK 时改 futu-api.version 后重跑）：
-      ./scripts/install-sdks.sh            或            mvn -f sdk/futu-api-shaded/pom.xml install
+  Installation (once after cloning; when upgrading the SDK, change futu-api.version and re-run):
+      ./scripts/install-sdks.sh            or            mvn -f sdk/futu-api-shaded/pom.xml install
+  Keep <version> below and futu-api-shaded.version in the root pom in step with futu-api.version.
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -19,7 +22,7 @@
 
     <groupId>org.jdkxx.trader</groupId>
     <artifactId>futu-api-shaded</artifactId>
-    <!-- 与 futu-api 版本保持一致，主工程 pom 的 futu-api-shaded.version 引用它 -->
+    <!-- Kept equal to the futu-api version; referenced by futu-api-shaded.version in the main project's pom -->
     <version>10.10.7008</version>
     <packaging>jar</packaging>
     <name>futu-api-shaded</name>
@@ -39,8 +42,11 @@
             <version>${futu-api.version}</version>
         </dependency>
         <!--
-          futu-api 的传递依赖。必须在这里显式声明为直接依赖：shade 把 futu-api 打进 jar 后会把它从
-          dependency-reduced-pom 里删掉，它的传递依赖也随之消失，运行时就缺 bcprov（RSA 加密通道用）。
+          Transitive dependencies of futu-api. They must be declared here as direct dependencies: once shade
+          packs futu-api into the jar it removes it from the dependency-reduced pom, its transitive
+          dependencies disappear with it, and bcprov (used by the RSA-encrypted channel) is missing at runtime.
+          They are deliberately not shaded in (only futu-api and protobuf-java are), so they stay ordinary
+          dependencies of the installed artifact.
         -->
         <dependency>
             <groupId>org.bouncycastle</groupId>

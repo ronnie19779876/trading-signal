@@ -1,11 +1,11 @@
 import type { GatewayState, EventView } from '../api/gateways'
 import type { JobRun } from '../api/marketdata'
 
-/** 系统页用到的中文标签：作业、触发方式、作业状态、网关状态、连接事件。后端给的是英文常量。 */
+/** Chinese labels used by the system page: jobs, triggers, job status, gateway state, connection events. The backend sends English constants. */
 
 type TagType = 'primary' | 'success' | 'warning' | 'danger' | 'info'
 
-/** 作业类型（与后端 Jobs 常量一一对应）；不认识的原样显示 */
+/** Job types (one-to-one with the backend Jobs constants); unknown ones are shown as-is */
 export const JOB_LABEL: Record<string, string> = {
   DAILY_INCREMENT: '每日增量',
   VALUATION_SNAPSHOT: '估值快照',
@@ -48,7 +48,7 @@ export const EVENT_LABEL: Record<EventView['event'], { text: string; type: TagTy
   ERROR: { text: '出错', type: 'danger' },
 }
 
-/** "3 分钟前"这类相对时间；超过一天给天数。 */
+/** Relative time such as "3 minutes ago"; beyond a day it gives the number of days. Clamped at 0 for clock skew. */
 export function ago(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return '—'
   const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000))
@@ -58,7 +58,7 @@ export function ago(iso: string | null | undefined, now = Date.now()): string {
   return `${Math.floor(s / 86400)} 天前`
 }
 
-/** 作业耗时（秒 / 分）。 */
+/** Job duration (seconds / minutes). */
 export function duration(from: string, to: string | null): string {
   if (!to) return '—'
   const s = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 1000)

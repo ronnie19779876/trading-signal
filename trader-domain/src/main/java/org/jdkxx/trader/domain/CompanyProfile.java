@@ -2,6 +2,8 @@ package org.jdkxx.trader.domain;
 
 import java.util.Map;
 
-/** 公司简介。券商给的字段零散且随市场不同，按原样保留键值，交由上层决定怎么展示。 */
-public record CompanyProfile(Instrument instrument, Map<String, String> fields) {
-}
+/**
+ * Company profile. The broker's fields are scattered and differ by market, so the key/value pairs
+ * are kept as received and the upper layers decide how to display them.
+ */
+public record CompanyProfile(Instrument instrument, Map<String, String> fields) {}

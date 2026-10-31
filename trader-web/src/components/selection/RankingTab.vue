@@ -8,11 +8,14 @@ import RatingTag from './RatingTag.vue'
 import FactorBars from './FactorBars.vue'
 
 /**
- * 评分榜：当天全表。默认按合成分从高到低，可按板块、评级筛、按代码搜、换排序列。
- * 被排除的标的另起一段（默认收起），列出排除原因——它们不占板块名额、不参与排名。
+ * Ranking: the full table for the day. Sorted by composite score descending by default; can be filtered by sector
+ * and rating, searched by symbol, and re-sorted by another column. Missing values sort as -1 (last).
+ * Excluded instruments get their own section (collapsed by default) with the exclusion reason -- they take no sector
+ * slot and are not ranked.
  */
 /**
- * simTop：最新评分日合成分前 N 名的模拟交易状态（只在看的就是最新评分日时给）；给了才显示「模拟」列。
+ * simTop: simulated-trading status of the top N by composite score on the latest score date (only passed when the
+ * latest score date is the one being viewed); the "simulate" column is shown only when it is given.
  */
 const props = defineProps<{ rows: ScoreView[]; names: Map<string, string | null>; simTop?: SimCandidate[] | null }>()
 const emit = defineEmits<{ open: [row: ScoreView]; simAdd: [symbol: string] }>()
@@ -54,7 +57,7 @@ const filtered = computed(() => {
 })
 const { page, pageSize, paged, total } = usePager(filtered, 50, [sector, ratings, keyword, sortKey])
 
-/** 当天每档评级的只数（强制分布 10/20/40/20/10） */
+/** Number of instruments per rating tier that day (forced distribution 10/20/40/20/10) */
 const distribution = computed(() => RATINGS.map((r) => ({ rating: r, count: scored.value.filter((s) => s.rating === r).length })))
 const unrated = computed(() => scored.value.filter((r) => !r.rating).length)
 

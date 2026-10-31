@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 #
-# 收盘后巡检：日线审计 + 基本面审计 + 账户审计 + 信号审计 + 作业与网关健康。五段都只读，不触发任何跑批。
+# Post-close daily check: daily-bar audit + fundamentals audit + account audit + signal audit + selection
+# audit + job and gateway health. All six sections are read-only and trigger no batch job.
 #   ./scripts/check-daily.sh [baseUrl] [date]
-#   默认 baseUrl=http://127.0.0.1:8093（生产端口；本机开发实例用 8083），date 默认最近应有收盘 K 的交易日。
-#   建议美东 19:00 之后跑（账户快照 18:00、信号评估 18:10）；更早跑时当天缺快照或评估只提示，不判失败。
-# 退出码：0 全部通过；1 有关键项失败、接口报错或健康降级；2 有接口连不上。
+#   Default baseUrl=http://127.0.0.1:8093 (production port; the local dev instance uses 8083); date defaults
+#   to the latest trading day that should already have a closing daily bar.
+#   Best run after 19:00 US/Eastern (account snapshot 18:00, signal evaluation 18:10); when run earlier, a
+#   missing snapshot or evaluation for the day is only reported, not judged a failure.
+# Exit codes: 0 all passed; 1 a critical check failed, an endpoint returned an error, or health is degraded;
+# 2 an endpoint could not be reached.
 #
-# 为什么几段一起跑：此前脚本只调日线审计，基本面审计写好了却没人跑——
-# 而估值被跳过这类问题恰好只有基本面审计能发现。
-# 同理，**一段出问题不能掐掉后面几段**：3.1.1 前用的是 curl -sf + exit 2，
-# 而 -f 对 HTTP 500 也返回非零，于是「某个审计接口报 500」被打成「接口不可达」并当场退出，
-# 后面四段一条都不跑。现在把「连不上」与「接口报错」分开，两种都记下来接着往下跑。
+# Why the sections run together: the script used to call only the daily-bar audit, and the fundamentals
+# audit, although written, was never run -- yet problems such as skipped valuations are exactly what only
+# the fundamentals audit can catch.
+# Likewise, **one failing section must not kill the ones after it**: before 3.1.1 the script used
+# curl -sf + exit 2, and -f also returns non-zero for HTTP 500, so "an audit endpoint returned 500" was
+# reported as "endpoint unreachable" and the script exited on the spot, skipping the remaining four
+# sections. "Cannot connect" and "endpoint error" are now told apart; both are recorded and the run goes on.
 set -uo pipefail
 BASE="${1:-http://127.0.0.1:8093}"
 DATE="${2:-}"
@@ -21,11 +27,16 @@ FAILED=0
 UNREACHABLE=0
 FETCH_BODY=""
 
-# 取回一个 URL：正文放进全局 FETCH_BODY，成功返回 0，失败自己报错并返回非零。
-# 正文**不能**走 stdout 让调用方 $(fetch ...) 接——那是子 shell，里面对 FAILED / UNREACHABLE
-# 的赋值出不来，标志位会永远是 0（本次改动第一版就是这么写的）。
-# 不用 curl -f：它对 4xx/5xx 与连不上返回同一个非零码，区分不了「服务在但接口炸了」和「服务没起来」。
-# 第三个参数是额外可接受的状态码（健康接口降级时返回 503，正文仍是完整 JSON）。
+# Fetches one URL: the body goes into the global FETCH_BODY; returns 0 on success, otherwise reports the
+# error itself and returns non-zero.
+# The body must **not** go to stdout for the caller to capture with $(fetch ...): that is a subshell, and
+# the assignments to FAILED / UNREACHABLE made inside it never come back, so the flags would always stay 0
+# (the first version of this change was written exactly that way).
+# No curl -f: it returns the same non-zero code for 4xx/5xx and for "cannot connect", so it cannot tell
+# "the service is up but the endpoint blew up" from "the service is not running". Instead the status code
+# is taken with -w and the body with -o: code 000 means no connection.
+# The third argument is one extra acceptable status code (the health endpoint returns 503 when degraded,
+# and the body is still the complete JSON).
 fetch() {
   local title="$1" url="$2" alsoOk="${3:-}" tmp code
   FETCH_BODY=""
@@ -71,8 +82,8 @@ audit "账户审计"     "$BASE/api/account/audit$SUFFIX"
 audit "信号审计"     "$BASE/api/signals/audit$SUFFIX"
 audit "量化选股审计" "$BASE/api/selection/audit$SUFFIX"
 
-# 健康：作业跑批与网关。DEGRADED 也算问题——作业失败或被跳过就落在这里。
-# 降级时 actuator 返回 503，正文仍是完整 JSON，所以 503 照常解析。
+# Health: batch jobs and gateways. DEGRADED counts as a problem too -- a failed or skipped job shows up here.
+# When degraded, actuator returns 503 and the body is still the complete JSON, so a 503 is parsed as usual.
 if fetch "健康接口" "$BASE/actuator/health" 503; then
 printf '%s' "$FETCH_BODY" | python3 -c '
 import sys, json
@@ -90,6 +101,6 @@ sys.exit(0 if overall == "UP" else 1)
 ' || FAILED=1
 fi
 
-# 连不上比「跑了但没过」更值得单独区分，优先用 2。
+# "Cannot connect" deserves to be told apart from "ran but failed" more than anything else, so 2 wins.
 (( UNREACHABLE )) && exit 2
 exit $FAILED

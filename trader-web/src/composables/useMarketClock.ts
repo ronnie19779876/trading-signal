@@ -2,10 +2,14 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { getCalendar } from '../api/marketdata'
 
 /**
- * 美东时段与下次开盘。只决定页头那盏灯和刷新节奏，不参与任何数据计算。
+ * The US/Eastern trading session and the next open. It only drives the header indicator and polling cadence and
+ * never takes part in any data calculation.
  *
- * 交易日与半日取自交易日历（`trading_day.kind` = 1 为半日，13:00 收盘；实测 2025-07-03、11-28、12-24 均为 1）。
- * 日历取不到时退回"工作日都开市"，会把假日误显示为开市，但不影响任何数据。
+ * Trading days and half days come from the trading calendar (`trading_day.kind` = 1 is a half day closing at
+ * 13:00; verified that 2025-07-03, 11-28 and 12-24 are all 1). If the calendar cannot be loaded it falls back to
+ * "every weekday is open", which shows holidays as open but affects no data.
+ *
+ * All wall-clock math is done on US/Eastern parts produced by Intl, never on the browser's local time zone.
  */
 export type Session = 'PRE' | 'REGULAR' | 'AFTER' | 'CLOSED'
 
@@ -14,7 +18,8 @@ export const SESSION_LABEL: Record<Session, string> = { PRE: '盘前', REGULAR: 
 const ET = 'America/New_York'
 const WEEKDAY = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 
-// 模块级单例：日历只取一次（前后各几天够用），页头与各页共用。
+// Module-level singleton: the calendar is fetched once (a few days either side is enough) and shared by the
+// header and all pages.
 const days = ref<Map<string, number> | null>(null)
 let loading: Promise<void> | null = null
 
@@ -28,7 +33,7 @@ function loadCalendar() {
     })
     .catch(() => {
       days.value = null
-      loading = null // 下次再试
+      loading = null // try again next time
     })
   return loading
 }
@@ -40,6 +45,10 @@ interface EtParts {
   clock: string
 }
 
+/**
+ * Split an instant into US/Eastern calendar date, weekday and minutes since midnight. Intl does the time-zone and
+ * DST conversion; hourCycle h23 avoids the "24:00" that some engines produce for midnight with hour12: false.
+ */
 function etParts(t: Date): EtParts {
   const f = new Intl.DateTimeFormat('en-CA', {
     timeZone: ET, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -55,7 +64,10 @@ function etParts(t: Date): EtParts {
   }
 }
 
-/** 某天是否开市、是否半日。日历没有这天（超出范围或没取到）时按工作日推断。 */
+/**
+ * Whether a day is open and whether it is a half day. When the calendar is loaded, a date missing from it is a
+ * holiday; when it is not loaded at all, fall back to weekday-based inference.
+ */
 function dayKind(date: string, weekday: number): 'FULL' | 'HALF' | 'NONE' {
   const m = days.value
   if (m && m.size) {
@@ -65,6 +77,10 @@ function dayKind(date: string, weekday: number): 'FULL' | 'HALF' | 'NONE' {
   return weekday === 0 || weekday === 6 ? 'NONE' : 'FULL'
 }
 
+/**
+ * Calendar arithmetic on a plain YYYY-MM-DD date. Anchoring at 12:00 UTC keeps the result on the same calendar
+ * day whatever the browser's time zone and across DST changes, so the UTC date and weekday are the intended ones.
+ */
 function addDays(date: string, n: number): { date: string; weekday: number } {
   const d = new Date(date + 'T12:00:00Z')
   d.setUTCDate(d.getUTCDate() + n)
@@ -81,6 +97,8 @@ export function useMarketClock() {
   const today = computed(() => dayKind(et.value.date, et.value.weekday))
   const closeAt = computed(() => (today.value === 'HALF' ? 13 * 60 : 16 * 60))
 
+  // Sessions in US/Eastern minutes: pre-market 04:00-09:30, regular 09:30 until the close (13:00 on half days,
+  // otherwise 16:00), after-hours until 20:00; everything else, and non-trading days, is CLOSED.
   const session = computed<Session>(() => {
     if (today.value === 'NONE') return 'CLOSED'
     const m = et.value.minutes
@@ -90,7 +108,7 @@ export function useMarketClock() {
     return 'CLOSED'
   })
 
-  /** 下一次常规时段开盘："今天 09:30" / "周一 09:30"。 */
+  /** The next regular-session open: "today 09:30" / "Monday 09:30" (labels are Chinese). */
   const nextOpen = computed(() => {
     const { date, minutes } = et.value
     if (today.value !== 'NONE' && minutes < 9 * 60 + 30) return '今天 09:30'

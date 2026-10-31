@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""把 public/favicon.svg 的设计栅格化成多尺寸 favicon.ico（PIL 不认 SVG，这里按同样的参数重画）。
+"""Rasterize the design of public/favicon.svg into a multi-size favicon.ico (PIL cannot read SVG, so this
+redraws it with the same parameters).
 
     python3 scripts/make-favicon.py
 
-改了 SVG 的配色或字母，跟着改这里再重跑。"""
+If you change the SVG's colors or letters, change them here too and rerun."""
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-RED = (216, 30, 44, 255)          # #D81E2C，与 favicon.svg 一致
+RED = (216, 30, 44, 255)          # #D81E2C, same as favicon.svg
 WHITE = (255, 255, 255, 255)
 TEXT = "TS"
-FONT = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"   # 字重与 SVG 的 700 一致（09-19 用户嫌 Arial Black 太粗）
-CANVAS = 256                      # 先画大图再下采样，小尺寸边缘才干净
+FONT = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"   # weight matches the SVG's 700 (on 09-19 the user found Arial Black too heavy)
+CANVAS = 256                      # draw large, then downsample, so small sizes get clean edges
 OUT = Path(__file__).resolve().parent.parent / "public" / "favicon.ico"
 SIZES = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
 

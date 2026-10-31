@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useRoute } from 'vue-router'
 
-/** 菜单已定、页面还没做的占位（2026-09-19 菜单调整，逐页推进）。 */
+/** Placeholder for menu entries whose page is not built yet (menu reorganized on 2026-09-19, pages done one by one). */
 const route = useRoute()
 </script>
 

@@ -3,13 +3,16 @@ import { computed } from 'vue'
 import { money, num, signed, timeEt } from '../../lib/format'
 
 /**
- * 持仓标的，<b>与盈透 App 一致</b>（2026-09-19 对照 App 截图逐项核过）：
+ * Holdings, <b>matching the IBKR app</b> (checked field by field against app screenshots on 2026-09-19):
  * <ul>
- *   <li>盈透实时：数量 / 成本价来自持仓，最新价 / 前收来自盈透行情，市值 / 当日盈亏 / 浮动盈亏来自逐只盈亏；
- *       涨跌、成本（Cost Basis）、占组合（% of Portfolio）是 App 界面上的派生项，后端按同一口径给出；</li>
- *   <li>实时不可用时：最近一份收盘快照（收盘价与市值是快照当晚的估值）。</li>
+ *   <li>IBKR live: quantity / average cost from positions, last / prior close from IBKR market data, market value /
+ *       daily P&L / unrealized P&L from per-position P&L; change, cost basis and % of portfolio are derived
+ *       fields of the app's UI, which the backend supplies with the same definitions;</li>
+ *   <li>when live data is unavailable: the latest closing snapshot (close price and market value are that
+ *       evening's valuation).</li>
  * </ul>
- * 成本（Cost Basis）与市值两列不显示（09-19 用户要求，表格更清爽），但仍按市值降序排。价格显示两位小数，与 App 一致。
+ * The cost basis and market value columns are hidden (user request on 09-19, for a cleaner table) but rows are still
+ * sorted by market value, descending. Prices are shown with two decimals, as in the app.
  */
 export interface HoldingRow {
   symbol: string
@@ -26,13 +29,13 @@ export interface HoldingRow {
   dailyPnl: number | null
   unrealizedPnl: number | null
   cashEquivalent: boolean
-  /** 当天评估的结果（持仓也在评估范围里）：SIGNAL / BLOCKED_BY_AI 在代码旁标出 */
+  /** Outcome of the day's evaluation (holdings are evaluated too): SIGNAL / BLOCKED_BY_AI are marked next to the symbol */
   outcome: string | null
 }
 
 const props = defineProps<{
   rows: HoldingRow[]
-  /** LIVE = 盈透实时；SNAPSHOT = 收盘快照 */
+  /** LIVE = IBKR live; SNAPSHOT = closing snapshot */
   source: 'LIVE' | 'SNAPSHOT'
   asOf: string | null
   evalDate: string | null
@@ -42,7 +45,7 @@ const emit = defineEmits<{ open: [symbol: string] }>()
 
 const sorted = computed(() => [...props.rows].sort((a, b) => (b.marketValue ?? 0) - (a.marketValue ?? 0)))
 
-/** 带正号、两位小数（+2.40 / -0.55）。 */
+/** With an explicit plus sign and two decimals (+2.40 / -0.55). */
 function signedNum(v: number | null): string {
   return v === null ? '—' : (v > 0 ? '+' : '') + num(v)
 }

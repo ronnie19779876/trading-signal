@@ -1,22 +1,30 @@
 package org.jdkxx.trader.core.selection;
 
-/** 量化选股的作业名（落 job_run.job）。与行情、信号的作业名分开定义。 */
+/**
+ * Quant selection job names (stored in job_run.job). Defined separately from market data and signal
+ * job names.
+ */
 public final class SelectionJobs {
 
-    public static final String BACKFILL = "SELECTION_BACKFILL";
-    /** 每日：估值续接 → 新公告补取 → 打分 */
-    public static final String DAILY = "SELECTION_DAILY";
-    /** 每周：公告日刷新、补取证券类型 */
-    public static final String WEEKLY = "SELECTION_WEEKLY";
-    /** 手工给某一天打分 */
-    public static final String SCORE = "SELECTION_SCORE";
-    /** 历史重放 */
-    public static final String REPLAY = "SELECTION_REPLAY";
-    /** 模拟交易重算（每日作业里也会跑一次） */
-    public static final String SIM_UPDATE = "SELECTION_SIM";
-    /** 模拟交易周报 */
-    public static final String SIM_WEEKLY = "SELECTION_SIM_WEEKLY";
+  public static final String BACKFILL = "SELECTION_BACKFILL";
 
-    private SelectionJobs() {
-    }
+  /** Daily: valuation extension, then new-announcement refetch, then scoring */
+  public static final String DAILY = "SELECTION_DAILY";
+
+  /** Weekly: announcement date refresh, security type backfill */
+  public static final String WEEKLY = "SELECTION_WEEKLY";
+
+  /** Manual scoring of one day */
+  public static final String SCORE = "SELECTION_SCORE";
+
+  /** Historical replay */
+  public static final String REPLAY = "SELECTION_REPLAY";
+
+  /** Simulated-trading recompute (also run once inside the daily job) */
+  public static final String SIM_UPDATE = "SELECTION_SIM";
+
+  /** Simulated-trading weekly report */
+  public static final String SIM_WEEKLY = "SELECTION_SIM_WEEKLY";
+
+  private SelectionJobs() {}
 }

@@ -7,19 +7,21 @@ import { useTheme } from '../../composables/useTheme'
 import { money, signed, todayEt, trend } from '../../lib/format'
 
 /**
- * 净值走势：净值（折线）/ 日变化（柱）两种口径切换。
+ * NAV history, switchable between NAV (line) and daily change (bars).
  *
- * 日变化是相邻两份快照的净值差，**含出入金**——本系统没有盈透的当日盈亏，别把它读成交易盈亏。
- * 盈亏用柱子而不是折线：它是每天独立的一个量，折线会画出两天之间并不存在的过渡。
+ * The daily change is the NAV difference between two consecutive snapshots and **includes deposits and
+ * withdrawals** -- this system has no IBKR daily P&L history, so do not read it as trading P&L.
+ * Changes are bars rather than a line: each day is an independent quantity, and a line would draw transitions
+ * between days that never existed.
  */
 const props = withDefaults(
   defineProps<{
     series: AccountSnapshot[]
-    /** 说明文字里的"最近 N 天"；null = 全部 */
+    /** The "last N days" in the caption; null = all */
     days: number | null
     liveNav: number | null
     height?: number
-    /** 净值序列还没取到（首次加载中，或取数失败、正在自动重试）：空的时候显示「加载中」而不是「还没有快照」 */
+    /** The NAV series has not been loaded yet (first load, or a failed load being retried): when empty show "loading" rather than "no snapshots yet" */
     pending?: boolean
   }>(),
   { height: 200, pending: false },
@@ -30,7 +32,8 @@ const mode = ref<Mode>('nav')
 const box = ref<HTMLDivElement | null>(null)
 const { isDark } = useTheme()
 
-// 图表对象不进响应式代理：lightweight-charts 内部按实例比对，被 Proxy 包住后更新与销毁会静默失效。
+// Chart objects stay out of reactive proxies: lightweight-charts compares instances internally, and wrapped in a
+// Proxy, updates and removal silently stop working.
 const chart = shallowRef<IChartApi | null>(null)
 const line = shallowRef<ISeriesApi<'Line'> | null>(null)
 const tail = shallowRef<ISeriesApi<'Line'> | null>(null)
@@ -40,8 +43,9 @@ const rows = computed(() =>
   props.series.filter((s) => s.netLiquidation !== null).sort((a, b) => a.asOfDate.localeCompare(b.asOfDate)),
 )
 /**
- * 从最后一份快照往今天画一段虚线到实时净值。条件是今天确实晚于最后一份快照：
- * 当天 18:00 快照落库后两者指向同一天，再画一段就是把同一天画两次。
+ * Draw a dashed segment from the last snapshot to today's live NAV, only when today (US/Eastern) is really later
+ * than the last snapshot: after the 18:00 snapshot is stored both point at the same day, and another segment would
+ * draw the same day twice.
  */
 const liveTail = computed(() => {
   const last = rows.value.at(-1)
@@ -54,7 +58,10 @@ const changes = computed(() =>
   rows.value.slice(1).map((r, i) => ({ date: r.asOfDate, value: (r.netLiquidation as number) - (rows.value[i].netLiquidation as number) })),
 )
 
-/** 样本少时柱子会被 fitContent 撑成整块色块，读起来像"一段"而不是"一天"：限宽、左对齐，右侧留白如实表达"还在攒数据"。 */
+/**
+ * With few samples fitContent stretches the bars into one solid block that reads as "a period" rather than "a day":
+ * cap the width and left-align, so the empty space on the right honestly says "still collecting data".
+ */
 const MAX_BAR_SPACING = 48
 
 function render() {
@@ -63,7 +70,7 @@ function render() {
   if (!chart.value) {
     chart.value = createChart(box.value, {
       height: props.height,
-      // 跟着容器宽度走（内部 ResizeObserver）；尺寸变了再由下面的 ro 重算可见范围
+      // follow the container width (internal ResizeObserver); on resize the `ro` below recomputes the visible range
       autoSize: true,
       ...chartLayout(t),
       grid: { horzLines: { color: t.grid }, vertLines: { visible: false } },
@@ -72,7 +79,7 @@ function render() {
       handleScroll: false,
       handleScale: false,
       localization: {
-        // 净值六位数带两位小数只是噪音，日变化几百块不带小数又看不出差别：按量级切
+        // two decimals on a six-figure NAV are just noise, while a daily change of a few hundred needs them: switch by magnitude
         priceFormatter: (v: number) =>
           Math.abs(v) >= 10_000
             ? v.toLocaleString('en-US', { maximumFractionDigits: 0 })
@@ -111,7 +118,8 @@ function render() {
 }
 
 watch([rows, mode, isDark, liveTail], render, { flush: 'post' })
-// 宽度变了（首次出现、窗口缩放、侧栏开合）要重新 fitContent：否则按旧宽度算的可见范围会把整条线挤在右边
+// when the width changes (first appearance, window resize, sidebar toggle) fitContent must run again: a visible range
+// computed for the old width squeezes the whole line to the right
 const ro = new ResizeObserver(() => render())
 watch(box, (el, old) => {
   if (old) ro.unobserve(old)
@@ -119,7 +127,7 @@ watch(box, (el, old) => {
     ro.observe(el)
     render()
   } else {
-    // v-if 拿掉了盒子（快照不足两份）：图跟着销毁，下次盒子出现时按真实宽度重建
+    // v-if removed the box (fewer than two snapshots): destroy the chart too and rebuild it at the real width when the box returns
     chart.value?.remove()
     chart.value = null
   }
@@ -143,14 +151,14 @@ const lastChange = computed(() => changes.value.at(-1) ?? null)
       </span>
       <span v-else class="panel__src">每根柱子 = 相邻两份快照的净值差，含出入金，不是交易盈亏</span>
       <span class="panel__grow" />
-      <!-- 页面可以在这里放时间范围切换等 -->
+      <!-- Pages can put a time-range switch etc. here -->
       <slot name="actions" />
       <el-radio-group v-model="mode" size="small">
         <el-radio-button value="nav">净值</el-radio-button>
         <el-radio-button value="change">日变化</el-radio-button>
       </el-radio-group>
     </div>
-    <!-- v-if 而不是 v-show：隐藏时建图拿到的宽度是 0，时间轴会把所有点挤在最右边（生产 5 份快照时实测） -->
+    <!-- v-if rather than v-show: a chart built while hidden gets width 0 and the time axis squeezes every point to the far right (observed in production with 5 snapshots) -->
     <div v-if="rows.length > 1" ref="box" class="chart" :style="{ height: height + 'px' }" />
     <p class="panel__foot">
       <template v-if="rows.length > 1">

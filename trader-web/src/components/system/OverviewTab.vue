@@ -13,8 +13,9 @@ import { signalsApi } from '../../api/signals'
 import { getHealth } from '../../api/system'
 
 /**
- * 概况：运行状态、两家网关、巡检（点按钮才跑，与 check-daily.sh 同源）、各类作业最近一次（取自健康检查）。
- * 数据来自全站状态（页头也用它，5 秒一轮），这里不另外轮询。
+ * Overview: runtime status, the two gateways, the daily check (runs only on a button click, same endpoints as
+ * check-daily.sh), and the latest run of each job type (from the health check).
+ * Data comes from the site-wide store (also used by the header, one round every 10 seconds); no extra polling here.
  */
 const app = useAppStore()
 const info = computed(() => app.info)
@@ -23,8 +24,8 @@ const now = ref(Date.now())
 const clock = window.setInterval(() => (now.value = Date.now()), 1000)
 onBeforeUnmount(() => window.clearInterval(clock))
 
-// ---- 网关 ----
-/** 连接中与重连中也归到"可以断开"这一侧。 */
+// ---- gateways ----
+/** Connecting and reconnecting also count as "can be disconnected". */
 const busy = (state: GatewayView['state']) => state === 'CONNECTED' || state === 'CONNECTING' || state === 'RECONNECTING'
 async function toggle(g: GatewayView) {
   try {
@@ -42,7 +43,7 @@ async function toggle(g: GatewayView) {
 }
 const drawer = ref(false)
 const pickedBroker = ref<string | null>(null)
-/** 抽屉显示最新一轮拉回来的网关，不是打开时的快照。 */
+/** The drawer shows the gateway from the latest poll, not a snapshot taken when it opened. */
 const picked = computed(() => info.value?.gateways.find((g) => g.broker === pickedBroker.value) ?? null)
 const accounts = ref<Record<string, AccountView[]>>({})
 function openDetail(g: GatewayView) {
@@ -58,26 +59,27 @@ async function loadAccounts(g: GatewayView) {
 }
 const factsText = (facts: Record<string, string>) => Object.entries(facts).map(([k, v]) => `${k}=${v}`).join('  ')
 
-// ---- 运行状态附带：磁盘 ----
+// ---- runtime status extra: disk ----
 const disk = computed(() => {
   const d = health.value?.components?.diskSpace?.details as { free?: number; total?: number } | undefined
   return d?.free && d?.total ? `${(d.free / 1e9).toFixed(0)} GB 空闲 / ${(d.total / 1e9).toFixed(0)} GB` : '—'
 })
 
-// ---- 各类作业最近一次：健康检查里的 "OK @ 2026-09-18T21:30:00Z：摘要" ----
+// ---- latest run of each job type: the health check's "OK @ 2026-09-18T21:30:00Z: summary" (full-width or ASCII colon) ----
 const JOB_ORDER = ['DAILY_INCREMENT', 'VALUATION_SNAPSHOT', 'ACCOUNT_SNAPSHOT', 'SIGNAL_EVALUATION', 'CATCHUP_CHECK', 'UNIVERSE_SYNC', 'FINANCIALS_REFRESH']
 const lastJobs = computed(() => {
   const d = (health.value?.components?.jobs?.details ?? {}) as Record<string, string>
   const keys = [...JOB_ORDER.filter((k) => k in d), ...Object.keys(d).filter((k) => !JOB_ORDER.includes(k))]
   return keys.map((k) => {
-    // 时间本身带冒号（21:30:00），要以 Z 结尾再接分隔符，否则会截在时间中间
+    // the timestamp itself contains colons (21:30:00), so it must end with Z before the separator, otherwise the
+    // match would cut in the middle of the time
     const m = /^(\w+) @ (\S+?Z)\s*[：:]\s*(.*)$/s.exec(d[k])
     return { job: k, status: m?.[1] ?? '?', at: m?.[2] ?? null, summary: m ? m[3] : d[k] }
   })
 })
 const jobsStatus = computed(() => health.value?.components?.jobs?.status ?? null)
 
-// ---- 巡检：点按钮才跑 ----
+// ---- daily check: runs only on a button click; each audit is wrapped so one failure does not hide the others ----
 interface Section { title: string; report: AuditReport | null; error: string | null }
 const inspecting = ref(false)
 const inspectedAt = ref<string | null>(null)
@@ -115,7 +117,7 @@ const failedChecks = (r: AuditReport) => r.checks.filter((c) => !c.ok)
 <template>
   <div class="tab">
     <template v-if="info">
-      <!-- 运行状态 -->
+      <!-- runtime status -->
       <section class="panel">
         <div class="panel__head"><h3>运行状态</h3><span class="panel__src">页头与这里同一份数据，5 秒刷新</span></div>
         <div class="kv-grid">
@@ -130,7 +132,7 @@ const failedChecks = (r: AuditReport) => r.checks.filter((c) => !c.ok)
         </div>
       </section>
 
-      <!-- 网关 -->
+      <!-- gateways -->
       <div class="gws">
         <section v-for="g in info.gateways" :key="g.broker" class="panel gw">
           <div class="panel__head">
@@ -150,7 +152,7 @@ const failedChecks = (r: AuditReport) => r.checks.filter((c) => !c.ok)
         </section>
       </div>
 
-      <!-- 巡检 -->
+      <!-- daily check -->
       <section class="panel">
         <div class="panel__head">
           <h3>巡检</h3>
@@ -185,7 +187,7 @@ const failedChecks = (r: AuditReport) => r.checks.filter((c) => !c.ok)
         <p v-else class="muted">点"执行巡检"才会调四个审计接口（只读，一般一两秒）。</p>
       </section>
 
-      <!-- 作业最近一次 -->
+      <!-- latest run of each job -->
       <section class="panel">
         <div class="panel__head">
           <h3>各类作业最近一次</h3>

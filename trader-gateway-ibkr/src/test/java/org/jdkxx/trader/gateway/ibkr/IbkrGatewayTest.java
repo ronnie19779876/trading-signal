@@ -1,65 +1,80 @@
 package org.jdkxx.trader.gateway.ibkr;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.time.Duration;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.gateway.GatewayState;
 import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
 class IbkrGatewayTest {
 
-    private static IbkrProperties props(boolean enabled, String host, Integer port, Integer clientId) {
-        IbkrProperties d = IbkrProperties.disabled();
-        return new IbkrProperties(enabled, true, host, port, clientId, null, "NASDAQ", d.connectTimeout(),
-                d.requestTimeout(), d.heartbeatInterval(), d.heartbeatTimeout(), 40, d.reconnect());
+  private static IbkrProperties props(
+      boolean enabled, String host, Integer port, Integer clientId) {
+    IbkrProperties d = IbkrProperties.disabled();
+    return new IbkrProperties(
+        enabled,
+        true,
+        host,
+        port,
+        clientId,
+        null,
+        "NASDAQ",
+        d.connectTimeout(),
+        d.requestTimeout(),
+        d.heartbeatInterval(),
+        d.heartbeatTimeout(),
+        40,
+        d.reconnect());
+  }
+
+  @Test
+  void 未启用时状态为DISABLED且不校验连接参数() {
+    IbkrGateway gateway = new IbkrGateway(IbkrProperties.disabled());
+
+    assertThat(gateway.broker()).isEqualTo(Broker.IBKR);
+    assertThat(gateway.enabled()).isFalse();
+    assertThat(gateway.status().state()).isEqualTo(GatewayState.DISABLED);
+    assertThat(gateway.status().healthy()).isTrue();
+    assertThat(gateway.connect()).isCompleted();
+    assertThat(gateway.accounts()).isCompletedExceptionally();
+  }
+
+  @Test
+  void 启用但缺少host时拒绝构建() {
+    assertThatThrownBy(() -> new IbkrGateway(props(true, "", 1, 1)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("trader.ibkr.host");
+  }
+
+  @Test
+  void 启用且配置齐全时初始为DISCONNECTED且说明不含主机() {
+    try (IbkrGateway gateway = new IbkrGateway(props(true, "h", 1, 12))) {
+      assertThat(gateway.status().state()).isEqualTo(GatewayState.DISCONNECTED);
+      assertThat(gateway.status().detail()).doesNotContain("h:");
+      assertThat(gateway.status().facts()).containsEntry("accounts", "0");
     }
+  }
 
-    @Test
-    void 未启用时状态为DISABLED且不校验连接参数() {
-        IbkrGateway gateway = new IbkrGateway(IbkrProperties.disabled());
+  @Test
+  void 未连接时账户查询异常完成_账户号为空直接拒绝() {
+    IbkrGateway disabled = new IbkrGateway(IbkrProperties.disabled());
+    assertThat(disabled.positions("ACCT-A")).isCompletedExceptionally();
+    assertThat(disabled.accountSummary("ACCT-A")).isCompletedExceptionally();
+    assertThatThrownBy(() -> disabled.positions(" ")).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> disabled.accountSummary(null))
+        .isInstanceOf(IllegalArgumentException.class);
 
-        assertThat(gateway.broker()).isEqualTo(Broker.IBKR);
-        assertThat(gateway.enabled()).isFalse();
-        assertThat(gateway.status().state()).isEqualTo(GatewayState.DISABLED);
-        assertThat(gateway.status().healthy()).isTrue();
-        assertThat(gateway.connect()).isCompleted();
-        assertThat(gateway.accounts()).isCompletedExceptionally();
+    try (IbkrGateway gateway = new IbkrGateway(props(true, "h", 1, 12))) {
+      assertThat(gateway.positions("ACCT-A"))
+          .failsWithin(Duration.ofSeconds(1))
+          .withThrowableOfType(java.util.concurrent.ExecutionException.class)
+          .withCauseInstanceOf(org.jdkxx.trader.gateway.NotConnectedException.class);
+      assertThat(gateway.accountSummary("ACCT-A"))
+          .failsWithin(Duration.ofSeconds(1))
+          .withThrowableOfType(java.util.concurrent.ExecutionException.class)
+          .withCauseInstanceOf(org.jdkxx.trader.gateway.NotConnectedException.class);
     }
-
-    @Test
-    void 启用但缺少host时拒绝构建() {
-        assertThatThrownBy(() -> new IbkrGateway(props(true, "", 1, 1)))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("trader.ibkr.host");
-    }
-
-    @Test
-    void 启用且配置齐全时初始为DISCONNECTED且说明不含主机() {
-        try (IbkrGateway gateway = new IbkrGateway(props(true, "h", 1, 12))) {
-            assertThat(gateway.status().state()).isEqualTo(GatewayState.DISCONNECTED);
-            assertThat(gateway.status().detail()).doesNotContain("h:");
-            assertThat(gateway.status().facts()).containsEntry("accounts", "0");
-        }
-    }
-
-    @Test
-    void 未连接时账户查询异常完成_账户号为空直接拒绝() {
-        IbkrGateway disabled = new IbkrGateway(IbkrProperties.disabled());
-        assertThat(disabled.positions("ACCT-A")).isCompletedExceptionally();
-        assertThat(disabled.accountSummary("ACCT-A")).isCompletedExceptionally();
-        assertThatThrownBy(() -> disabled.positions(" ")).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> disabled.accountSummary(null)).isInstanceOf(IllegalArgumentException.class);
-
-        try (IbkrGateway gateway = new IbkrGateway(props(true, "h", 1, 12))) {
-            assertThat(gateway.positions("ACCT-A")).failsWithin(Duration.ofSeconds(1))
-                    .withThrowableOfType(java.util.concurrent.ExecutionException.class)
-                    .withCauseInstanceOf(org.jdkxx.trader.gateway.NotConnectedException.class);
-            assertThat(gateway.accountSummary("ACCT-A")).failsWithin(Duration.ofSeconds(1))
-                    .withThrowableOfType(java.util.concurrent.ExecutionException.class)
-                    .withCauseInstanceOf(org.jdkxx.trader.gateway.NotConnectedException.class);
-        }
-    }
+  }
 }

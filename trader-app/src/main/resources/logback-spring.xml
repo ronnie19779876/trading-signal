@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  日志：控制台照旧（bin/trader.sh 会把它重定向到 logs/console.log），另外单独写一份按天滚动的文件。
+  Logging: the console works as before (bin/trader.sh redirects it to logs/console.log), plus a separate file that
+  rolls daily.
 
-  为什么要滚动：console.log 是 nohup 重定向，只增不滚；而且它在版本目录里，
-  升级后清理旧版本目录会把日志一起带走——复查时就发生过前一晚增量的日志已经找不到的情况。
-  滚动文件独立于 console.log，保留 14 天，够覆盖一次事后追查。
+  Why rolling: console.log is a nohup redirect that only grows and never rolls; it also lives in the version
+  directory, so cleaning up old version directories after an upgrade deletes the logs with them. During one review
+  the previous night's increment logs could no longer be found because of this.
+  The rolling file is independent of console.log and keeps 14 days, enough to cover one after-the-fact
+  investigation.
 -->
 <configuration>
     <include resource="org/springframework/boot/logging/logback/defaults.xml"/>

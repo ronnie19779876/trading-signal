@@ -1,38 +1,39 @@
 package org.jdkxx.trader.storage.account;
 
 import com.fasterxml.jackson.annotation.JsonRawValue;
-
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 
 /**
- * 账户快照一行。accountKey 是带密钥的 HMAC，accountMask 是展示用脱敏形式；明文账户号不落库。
- * recon 是对账明细的 JSON 原文，接口里原样嵌入。
+ * One account snapshot row. accountKey is a keyed HMAC and accountMask is the masked form for
+ * display; the plain account number is never stored. recon is the raw JSON of the reconciliation
+ * details and is embedded as-is in API responses.
  */
 public record AccountSnapshotRow(
-        long id,
-        String broker,
-        String accountKey,
-        String accountMask,
-        LocalDate asOfDate,
-        Instant takenAt,
-        String currency,
-        BigDecimal netLiquidation,
-        BigDecimal totalCash,
-        BigDecimal stockMarketValue,
-        BigDecimal grossPositionValue,
-        BigDecimal availableFunds,
-        BigDecimal buyingPower,
-        BigDecimal excessLiquidity,
-        BigDecimal unrealizedPnl,
-        BigDecimal realizedPnl,
-        BigDecimal accruedDividend,
-        /** 应计利息（盈透 $LEDGER-AccruedCash）；3.1.3 起采集，更早的快照为 null。 */
-        BigDecimal accruedInterest,
-        BigDecimal positionValue,
-        int positions,
-        String reconStatus,
-        @JsonRawValue String recon,
-        Long jobRunId) {
-}
+    long id,
+    String broker,
+    String accountKey,
+    String accountMask,
+    LocalDate asOfDate,
+    Instant takenAt,
+    String currency,
+    BigDecimal netLiquidation,
+    BigDecimal totalCash,
+    BigDecimal stockMarketValue,
+    BigDecimal grossPositionValue,
+    BigDecimal availableFunds,
+    BigDecimal buyingPower,
+    BigDecimal excessLiquidity,
+    BigDecimal unrealizedPnl,
+    BigDecimal realizedPnl,
+    BigDecimal accruedDividend,
+    /**
+     * Accrued interest (IBKR $LEDGER-AccruedCash); collected since 3.1.3, null in older snapshots.
+     */
+    BigDecimal accruedInterest,
+    BigDecimal positionValue,
+    int positions,
+    String reconStatus,
+    @JsonRawValue String recon,
+    Long jobRunId) {}

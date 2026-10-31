@@ -4,8 +4,9 @@ import type { SimCriteria } from '../../api/selection'
 import { pct } from '../../lib/format'
 
 /**
- * 「稳定盈利」判据（ARCHITECTURE §26.8，用户 2026-10-13 定）：默认收起，标题不露结果，点开才看三条与结论（用户要求）。
- * 未满 12 个月时前两条照算，结论固定为「观察中」。
+ * The "consistently profitable" criteria (ARCHITECTURE §26.8, set by the user on 2026-10-13): collapsed by default
+ * and the title does not reveal the result; the three criteria and the verdict are only visible when expanded (user
+ * request). Before 12 months have passed the first two are still computed but the verdict is fixed at "observing".
  */
 const props = defineProps<{ criteria: SimCriteria | null | undefined }>()
 const open = ref<string[]>([])

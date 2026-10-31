@@ -18,15 +18,16 @@ const links = [
 ]
 
 /**
- * 绑定成普通 URL，让浏览器直接取 public/favicon.svg。写成静态 src 时 Vite 会把它内联成 base64，
- * 开发时改了 SVG 页头还是旧图（资源缓存不跟着 public 文件失效，2026-09-19 实测）。
+ * Bound as a plain URL so the browser fetches public/favicon.svg directly. With a static src Vite inlines it as
+ * base64, and during development the header kept showing the old image after the SVG changed (the asset cache is
+ * not invalidated by changes to public files, verified 2026-09-19).
  */
 const LOGO = '/favicon.svg'
 
 const THEME_LABEL: Record<ThemeMode, string> = { system: '跟随系统', light: '浅色', dark: '深色' }
 
 const app = useAppStore()
-// 页头常驻显示环境与当前作业，各页面不必再自己轮询这两样。
+// The header always shows the environment and the current job, so pages no longer poll these two themselves.
 useAutoRefresh(() => app.refresh(), 10_000)
 
 const { mode, isDark, setMode } = useTheme()
@@ -49,7 +50,7 @@ const env = computed(() => app.info?.environment ?? null)
 
       <MarketClock />
 
-      <!-- 生产实例红色标记：写操作按钮长得一样，别对着生产点。 -->
+      <!-- Red marker for the production instance: write buttons look identical, so do not click them against production by mistake. -->
       <el-tag v-if="env" size="small" :type="env === 'PROD' ? 'danger' : 'success'" effect="plain">{{ env }}</el-tag>
       <router-link v-if="app.running" :to="{ path: '/system', query: { tab: 'jobs' } }" class="shell__job">
         <el-tag size="small" type="warning" effect="plain">
@@ -104,7 +105,7 @@ const env = computed(() => app.info?.environment ?? null)
   color: var(--el-text-color-primary);
   text-decoration: none;
 }
-/* 菜单：按钮效果（参考 futu-trader）——每项圆角块，悬停出底色，选中淡蓝底蓝字 */
+/* Menu: button style (modelled on futu-trader) -- each item a rounded block, background on hover, light-blue background and blue text when selected */
 .shell__nav {
   display: flex;
   gap: 2px;
@@ -122,7 +123,7 @@ const env = computed(() => app.info?.environment ?? null)
   background: var(--el-fill-color-light);
   color: var(--el-text-color-primary);
 }
-/* 用 exact-active：'/' 是所有路由的前缀，router-link-active 会让"仪表盘"永远高亮。 */
+/* Use exact-active: '/' is a prefix of every route, so router-link-active would keep the dashboard link highlighted forever. */
 .shell__nav a.router-link-exact-active {
   background: var(--el-color-primary-light-9);
   color: var(--el-color-primary);
@@ -138,7 +139,7 @@ const env = computed(() => app.info?.environment ?? null)
   font-size: 15px;
   line-height: 1;
 }
-/* 满宽：窗口最大化时 1100px 的老上限会让两侧各空掉几百像素，表格却在里面横向滚动。 */
+/* Full width: the old 1100px cap left hundreds of pixels empty on each side of a maximized window while tables scrolled horizontally inside. */
 .shell__main {
   width: 100%;
   padding: 16px var(--tr-gutter) 32px;

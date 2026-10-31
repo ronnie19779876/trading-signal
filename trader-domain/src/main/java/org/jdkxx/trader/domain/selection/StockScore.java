@@ -3,16 +3,27 @@ package org.jdkxx.trader.domain.selection;
 import java.util.Map;
 
 /**
- * 一只标的某天的打分结果。没评级（被排除、或四个因子不齐）时 composite / rating 为 null。
+ * Scoring result of one instrument on one day. When not rated (excluded, or not all four factors
+ * available), {@code composite} / {@code rating} are null.
  *
- * @param metricPct    各指标在板块内的百分位（0~100，越大越好）
- * @param compositePct 合成分在当天全部可评级标的里的百分位（0~100）
+ * @param metricPct percentile of each metric within the sector (0~100, higher is better)
+ * @param compositePct percentile of the composite score among all instruments rated that day
+ *     (0~100)
  */
-public record StockScore(long instrumentId, String symbol, String sector, Exclusion exclusion, String exclusionDetail,
-                         Map<Metric, Double> metrics, Map<Metric, Double> metricPct, Map<Factor, Double> factorScores,
-                         Double composite, Double compositePct, Rating rating) {
+public record StockScore(
+    long instrumentId,
+    String symbol,
+    String sector,
+    Exclusion exclusion,
+    String exclusionDetail,
+    Map<Metric, Double> metrics,
+    Map<Metric, Double> metricPct,
+    Map<Factor, Double> factorScores,
+    Double composite,
+    Double compositePct,
+    Rating rating) {
 
-    public boolean rated() {
-        return rating != null;
-    }
+  public boolean rated() {
+    return rating != null;
+  }
 }

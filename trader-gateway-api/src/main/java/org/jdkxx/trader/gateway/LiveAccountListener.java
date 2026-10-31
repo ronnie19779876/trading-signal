@@ -1,34 +1,42 @@
 package org.jdkxx.trader.gateway;
 
+import java.util.List;
 import org.jdkxx.trader.domain.AccountPnl;
 import org.jdkxx.trader.domain.AccountSummary;
 import org.jdkxx.trader.domain.Position;
 import org.jdkxx.trader.domain.PositionPnl;
 import org.jdkxx.trader.domain.PositionPrice;
 
-import java.util.List;
-
 /**
- * 实时账户推送。回调在网关的 dispatch 线程上，<b>不得阻塞</b>；同一次订阅的回调按到达顺序串行执行。
+ * Live account pushes. Callbacks run on the gateway's dispatch thread and <b>must not block</b>;
+ * callbacks of one subscription are executed serially in arrival order.
  */
 public interface LiveAccountListener {
 
-    /** 资金汇总：首批收齐时一次，之后券商约 3 分钟推一次（实测）。 */
-    void onSummary(AccountSummary summary);
+  /**
+   * Funds summary: once when the first batch is complete, then roughly every 3 minutes from the
+   * broker (measured).
+   */
+  void onSummary(AccountSummary summary);
 
-    /** 账户盈亏：约每 5 秒按变化推送（实测）。 */
-    void onPnl(AccountPnl pnl);
+  /** Account P&amp;L: pushed on change, roughly every 5 seconds (measured). */
+  void onPnl(AccountPnl pnl);
 
-    /** 全部持仓：首批收齐时一次，之后每有变化（成交）推一次完整列表。数量为 0 的已剔除。 */
-    void onPositions(List<Position> positions);
+  /**
+   * All positions: once when the first batch is complete, then the full list again on every change
+   * (a fill). Zero-quantity entries are already removed.
+   */
+  void onPositions(List<Position> positions);
 
-    /** 单个持仓的盈亏与市值。 */
-    void onPositionPnl(PositionPnl pnl);
+  /** P&amp;L and market value of a single position. */
+  void onPositionPnl(PositionPnl pnl);
 
-    /** 单个持仓标的的最新价（盈透行情）。 */
-    void onPositionPrice(PositionPrice price);
+  /** Latest price of a single held instrument (IBKR market data). */
+  void onPositionPrice(PositionPrice price);
 
-    /** 订阅被券商拒绝（例如账户汇总超出并发上限 322）。订阅本身不重试，由调用方决定。 */
-    default void onLiveError(String what, GatewayException error) {
-    }
+  /**
+   * A subscription was rejected by the broker (e.g. the account summary exceeding its concurrency
+   * limit, 322). The subscription itself is not retried; the caller decides.
+   */
+  default void onLiveError(String what, GatewayException error) {}
 }

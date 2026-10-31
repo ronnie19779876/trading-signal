@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 #
-# 每日备份：两台服务器都装（cron，北京 12:00 = 美东零点前后，避开所有跑批与 06:00~07:00 的自动更新），
-# 只在主库那边真正导出；备库那边记一行「跳过」。复制不是备份——误删一张表，备库会跟着删。
-#   db_trader、db_trader_dev 各导一份 -Fc，pg_restore -l 能列出才算成功，各保留最近 7 份。
-#   目录与日志：~/db-backup/daily/、~/db-backup/daily/backup.log
+# Daily backup: installed on both servers (cron, 12:00 Beijing time = around midnight US/Eastern, clear of
+# every batch job and of the 06:00~07:00 automatic updates), but only the primary actually dumps; the
+# standby logs one "skipped" line. Replication is not a backup -- drop a table by mistake and the standby
+# drops it too.
+#   One -Fc dump each of db_trader and db_trader_dev; a dump only counts as successful when pg_restore -l
+#   can list it (and it has table data); the latest 7 of each are kept.
+#   Directory and log: ~/db-backup/daily/, ~/db-backup/daily/backup.log
+# Dumps are written as <name>.part and renamed only after verification, so retention (which globs *.dump)
+# never counts or keeps a broken dump. Files get the default umask permissions.
 set -uo pipefail
 DIR="${HOME}/db-backup/daily"
 KEEP=7

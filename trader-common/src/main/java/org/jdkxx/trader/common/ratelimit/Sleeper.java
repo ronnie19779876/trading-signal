@@ -2,11 +2,12 @@ package org.jdkxx.trader.common.ratelimit;
 
 import java.time.Duration;
 
-/** 可替换的休眠，便于在测试里用虚拟时间。 */
+/** Replaceable sleep, so tests can drive the limiters with virtual time. */
 @FunctionalInterface
 public interface Sleeper {
 
-    void sleep(Duration duration) throws InterruptedException;
+  void sleep(Duration duration) throws InterruptedException;
 
-    Sleeper REAL = duration -> Thread.sleep(duration.toMillis(), (int) (duration.toNanos() % 1_000_000));
+  Sleeper REAL =
+      duration -> Thread.sleep(duration.toMillis(), (int) (duration.toNanos() % 1_000_000));
 }

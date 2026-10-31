@@ -8,8 +8,9 @@ import { errMsg } from '../../lib/format'
 import { RATING_LABEL, RATINGS } from '../../lib/selection'
 
 /**
- * 单只标的的评分历史：合成分（粗线）与四个因子分（细线），0~100；底部色带是每天的评级。
- * 被排除或因子不齐的日子没有点，线会断开——不补、不插值。
+ * Score history of one instrument: composite (thick line) and the four factor scores (thin lines), 0~100; the band
+ * at the bottom is each day's rating. Days that were excluded or lacked factors have no point and the line breaks --
+ * no filling, no interpolation.
  */
 const props = defineProps<{ symbol: string; asOf: string }>()
 
@@ -32,7 +33,8 @@ async function load() {
     const to = new Date(props.asOf)
     const from = range.value === 'all' ? '2018-01-01'
       : new Date(to.getTime() - Number(range.value) * 365 * 86_400_000).toISOString().slice(0, 10)
-    // 1 年 / 3 年截止到所选日（只看当时为止）；全部 = 2018 年至最新，选早年日期时才看得到之后的走势
+    // 1 / 3 years end at the selected date (only what was known up to then); "all" = 2018 to the latest, so the later
+    // course is visible when an early date is selected. Date math is in UTC on purpose: asOf is a plain date string.
     rows.value = await selectionApi.history(props.symbol, from, range.value === 'all' ? undefined : props.asOf)
   } catch (e) {
     rows.value = []
@@ -51,7 +53,7 @@ const LINES = [
   { key: 'momentumScore', label: '动能', color: '#f56c9f', width: 1 },
 ] as const
 
-/** 评级色带的具体颜色（图表不认 CSS 变量） */
+/** Concrete colors for the rating band (the chart does not accept CSS variables) */
 function ratingColors(): Record<Rating, string> {
   const t = chartTheme()
   return { STRONG_BUY: t.up, BUY: t.upFill, HOLD: t.border, SELL: t.downFill, STRONG_SELL: t.down }
@@ -105,7 +107,7 @@ onBeforeUnmount(() => {
   chart.value = null
 })
 
-/** 合成分有值的天数：全被排除或因子不齐时一个点都没有，不画空图 */
+/** Number of days with a composite score: when all were excluded or lacked factors there is no point at all, so no empty chart is drawn */
 const plotted = computed(() => rows.value.filter((r) => r.composite !== null).length)
 const emptyText = computed(() => {
   if (!rows.value.length) return '这段时间没有评分'

@@ -8,11 +8,14 @@ import {
 import { big, errMsg, num, numMax } from '../../lib/format'
 
 /**
- * 分部估值（SOTP）：把公司按业务线拆开估值。
+ * Sum-of-the-parts valuation (SOTP): value a company business line by business line.
  *
- * 券商只给合并报表，没有分部量价、也没有一致预期，所以每条业务线的量、价、净利率、本益比都得自己填；
- * 这个面板负责自动带入公司级底座、做算术、并把**自相矛盾的假设**指出来（净利率口径核对、单因子敏感度、反推）。
- * 它不预测、不给建议，也不联动入场信号与纸面账本。
+ * The broker only provides consolidated statements, with no segment volumes/prices and no consensus estimates, so
+ * volume, price, net margin and P/E for each business line have to be entered by hand; this panel fills in the
+ * company-level base figures, does the arithmetic and points out **self-contradictory assumptions** (net-margin
+ * consistency check, one-factor sensitivity, reverse calculation).
+ * It does not forecast, gives no advice, and is not linked to entry signals or the paper ledger.
+ * Every request is keyed by props.symbol at the time of the call; the form holds whatever load() last wrote.
  */
 const props = defineProps<{ symbol: string }>()
 
@@ -24,7 +27,7 @@ const busy = ref(false)
 const error = ref('')
 const currentId = ref<number | null>(null)
 
-/** 表单。净利率与要求回报率在界面上是**百分数**，发给后端前换成小数。 */
+/** The form. Net margin and required return are **percentages** in the UI and converted to decimals before being sent to the backend. */
 const form = ref({
   name: '',
   asOf: '',
@@ -197,7 +200,7 @@ watch(() => props.symbol, load, { immediate: true })
     </el-alert>
 
     <template v-if="basis && applicable">
-      <!-- 底座：系统带入，只读 -->
+      <!-- base figures: filled in by the system, read-only -->
       <div class="kv-grid">
         <div class="kv"><label>现价（{{ basis.priceDate ?? '—' }}）</label><b class="num">{{ numMax(basis.price) }}</b></div>
         <div class="kv"><label>净现金（{{ basis.netCash.periodText ?? '—' }}）</label><b class="num">{{ big(basis.netCash.netCash) }}</b></div>
@@ -216,7 +219,7 @@ watch(() => props.symbol, load, { immediate: true })
         <el-button link type="primary" @click="useShares(basis.shares.byDilutedEps)">净利 ÷ 稀释每股收益 {{ big(basis.shares.byDilutedEps) }}</el-button>
       </p>
 
-      <!-- 方案 -->
+      <!-- model -->
       <div class="toolbar">
         <el-select v-model="currentId" size="small" placeholder="选一套已存的方案" style="width: 200px" clearable
                    @change="(id: number | null) => { const m = models.find(x => x.id === id); if (m) loadModel(m); else resetForm() }">
@@ -233,7 +236,7 @@ watch(() => props.symbol, load, { immediate: true })
         <el-button link type="primary" @click="useNetCash">用当前值</el-button>
       </div>
 
-      <!-- 业务线 -->
+      <!-- business lines -->
       <div v-for="(s, i) in form.segments" :key="i" class="seg">
         <div class="seg__head">
           <el-input v-model="s.name" size="small" placeholder="业务线名称" style="width: 160px" />
@@ -264,7 +267,7 @@ watch(() => props.symbol, load, { immediate: true })
         <el-input v-model="form.note" size="small" placeholder="备注" style="width: 220px" />
       </div>
 
-      <!-- 结果 -->
+      <!-- result -->
       <template v-if="result">
         <table class="res">
           <thead>

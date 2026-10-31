@@ -5,20 +5,27 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * 一期财报。券商按"字段字典 + 数据项"两段式返回，字段随行业与版本变化，
- * 所以这里保留 fieldId 原样，不映射成固定字段名。
+ * One period of a financial statement. The broker returns it in two parts ("field dictionary + data
+ * items") and the fields vary by industry and version, so the raw {@code fieldId} is kept instead
+ * of being mapped to fixed field names. A field id only has meaning together with its statement
+ * type (8001 is total revenue in the income statement but total assets in the balance sheet). The
+ * annual report and the Q4 report share the same period end, so {@code periodText} is part of the
+ * identity.
  */
-public record FinancialReport(Instrument instrument,
-                              FinancialStatement statement,
-                              LocalDate periodEnd,
-                              int fiscalYear,
-                              String periodText,
-                              String currency,
-                              String accountingStandards,
-                              String auditorReport,
-                              List<Item> items) {
+public record FinancialReport(
+    Instrument instrument,
+    FinancialStatement statement,
+    LocalDate periodEnd,
+    int fiscalYear,
+    String periodText,
+    String currency,
+    String accountingStandards,
+    String auditorReport,
+    List<Item> items) {
 
-    /** 一个财务字段的取值与同比环比（百分比，可空）。 */
-    public record Item(long fieldId, String name, BigDecimal value, BigDecimal yoy, BigDecimal qoq) {
-    }
+  /**
+   * Value of one financial field with its year-over-year and quarter-over-quarter change (percent,
+   * nullable).
+   */
+  public record Item(long fieldId, String name, BigDecimal value, BigDecimal yoy, BigDecimal qoq) {}
 }

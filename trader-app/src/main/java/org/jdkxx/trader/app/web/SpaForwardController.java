@@ -4,23 +4,27 @@ import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 
 /**
- * 前端深链接回退。
+ * Fallback for frontend deep links.
  *
- * <p>前端用 history 路由：从首页点进 {@code /account} 由浏览器内的路由切换，不发请求；
- * 直接打开或刷新 {@code /account} 时请求落到后端，没有映射就是 404（2.0.0 及以前如此）。
- * 这里把"单段、不含点、不是 api / actuator / error"的路径转发给 index.html，由前端路由接管。
- * 带点的是静态文件（{@code /assets/x.js}、{@code /favicon.ico}），照常走静态资源。
+ * <p>The frontend uses history-mode routing: clicking from the home page to {@code /account} is a
+ * route change inside the browser and sends no request; opening or refreshing {@code /account}
+ * directly sends the request to the backend, and without a mapping that is a 404 (this was the case
+ * up to and including 2.0.0). This controller forwards paths that are "a single segment, contain no
+ * dot, and are not api / actuator / error" to index.html so the frontend router takes over. Paths
+ * with a dot are static files ({@code /assets/x.js}, {@code /favicon.ico}) and are served as static
+ * resources as usual.
  *
- * <p>前端路由都是单段路径；{@code SpaForwardControllerTest} 逐个核对 {@code router/index.ts}，新增多段路由时会失败提醒。
+ * <p>All frontend routes are single-segment paths; {@code SpaForwardControllerTest} checks every
+ * route in {@code router/index.ts} and fails as a reminder when a multi-segment route is added.
  */
 @Controller
 public class SpaForwardController {
 
-    /** 单段、不含点、不是 api / actuator / error。 */
-    static final String PATH = "/{path:^(?!api$|actuator$|error$)[^.]+$}";
+  /** Single segment, no dot, not api / actuator / error. */
+  static final String PATH = "/{path:^(?!api$|actuator$|error$)[^.]+$}";
 
-    @GetMapping(PATH)
-    public String forward() {
-        return "forward:/index.html";
-    }
+  @GetMapping(PATH)
+  public String forward() {
+    return "forward:/index.html";
+  }
 }

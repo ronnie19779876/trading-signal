@@ -6,8 +6,9 @@ import { EXCLUSION_LABEL, RATING_RANK, score } from '../../lib/selection'
 import RatingTag from './RatingTag.vue'
 
 /**
- * 评级变动：与上一个评分日比。新进 / 跌出强烈买入单列（第 3 步「持续 N 天才触发」看的是强烈买入），
- * 其余升降级合成一张表；另列连续强烈买入天数排行。
+ * Rating changes vs the previous score date. Entries into and drops out of STRONG_BUY get their own lists (step 3's
+ * "trigger only after N consecutive days" looks at STRONG_BUY); all other upgrades and downgrades share one table;
+ * plus a ranking of consecutive STRONG_BUY days. A missing rating counts as rank 5, below STRONG_SELL.
  */
 const props = defineProps<{ rows: ScoreView[]; prev: ScoreView[] | null; prevDate: string | null; names: Map<string, string | null> }>()
 const emit = defineEmits<{ open: [row: ScoreView] }>()
@@ -22,7 +23,7 @@ const changes = computed<Change[]>(() => {
     const from = p?.rating ?? null
     const to = r.rating
     if (from === to) continue
-    const delta = (from ? RATING_RANK[from] : 5) - (to ? RATING_RANK[to] : 5)   // 正数 = 升级
+    const delta = (from ? RATING_RANK[from] : 5) - (to ? RATING_RANK[to] : 5)   // positive = upgrade
     out.push({ row: r, from, to, delta })
   }
   return out

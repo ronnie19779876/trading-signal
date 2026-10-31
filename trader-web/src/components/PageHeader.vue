@@ -1,5 +1,8 @@
 <script setup lang="ts">
-/** 页头：标题一行（操作按钮跟在标题右边），说明文字另起一行。五个页面此前各写一套，对齐方式与字号都不一样。 */
+/**
+ * Page header: the title on one line (action buttons to its right), the description on the next line. Five pages
+ * used to have their own versions with different alignment and font sizes.
+ */
 defineProps<{ title: string; hint?: string }>()
 </script>
 

@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 #
-# 把一台重建成备库：从当前主库全量同步（约 3.3 GB，按 2026-10-19 实测带宽半小时上下）。
+# Rebuilds one node as a standby: full sync from the current primary (about 3.3 GB; roughly half an hour
+# at the bandwidth measured on 2026-10-19).
 #   ./scripts/replica/reseed.sh vps|shanghai
-# 用于：主库宕机、强制提升后原主库回归；复制槽超过保留上限被作废；备库数据目录坏了。
-# 原数据目录改名为 main.reseed-<时间> 保留，确认新备库正常后再手工删除。
+# For: the old primary returning after an outage and a forced promotion; a replication slot invalidated for
+# exceeding the retention limit; a broken standby data directory.
+# The old data directory is renamed to main.reseed-<time> and kept; delete it by hand once the new standby
+# is confirmed healthy.
+# Guards: the other node must be a primary, the application must not be running on this node (protects
+# the node holding the live data in a split brain), and the operator must type "reseed <node>".
+# pg_basebackup is run without -R on purpose: -R writes primary_conninfo into postgresql.auto.conf inside
+# the data directory; node-specific settings live in /etc/postgresql/18/main/conf.d/ instead.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 source scripts/replica/lib.sh

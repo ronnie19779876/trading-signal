@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 统计卡：大数字 + 说明 + 小字。此前在四个页面里抄了十二遍。 */
+/** Stat card: big number + label + fine print. It had been copied twelve times across four pages. */
 defineProps<{ value?: string | number; label?: string; sub?: string; valueClass?: string }>()
 </script>
 

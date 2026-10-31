@@ -7,33 +7,46 @@ import java.util.Optional;
 import java.util.function.Predicate;
 
 /**
- * 收盘快照的时间窗口：交易日美东 16:15（收盘数据落定）到次日 04:00（盘前开始、快照价不再是当日收盘）。
- * 账户快照与估值快照共用。
+ * Time window for close-of-day snapshots: from 16:15 US/Eastern on a trading day (closing data has
+ * settled) to 04:00 the next morning (pre-market starts and the snapshot price is no longer that
+ * day's close). Shared by the account snapshot and the valuation snapshot.
  *
- * <p>为什么要窗口：盈透只给"现在"的持仓与资金，不给历史，窗口外拍到的持仓不属于任何一个交易日的收盘；
- * 富途快照在盘中给的是实时价，窗口外取的估值会覆盖上一交易日按收盘算的市值与市盈率。
+ * <p>Why a window: IBKR only reports positions and cash as of "now", with no history, so positions
+ * captured outside the window do not belong to any trading day's close. Futu snapshots carry live
+ * prices intraday, so valuations taken outside the window would overwrite the previous trading
+ * day's market cap and P/E computed from the close.
  */
 public final class SnapshotWindow {
 
-    /** 收盘数据落定的时刻；K 线写库截止日也以它为界。 */
-    public static final LocalTime OPENS = LocalTime.of(16, 15);
-    public static final LocalTime CLOSES = LocalTime.of(4, 0);
+  /**
+   * When closing data counts as settled (16:00 close plus 15 minutes for the broker to finalize).
+   * The bar write cutoff ({@code SettledCutoff}) uses the same boundary.
+   */
+  public static final LocalTime OPENS = LocalTime.of(16, 15);
 
-    public static final String OUTSIDE = "现在不在账户快照窗口（交易日美东 16:15 至次日 04:00）。盈透只给当前持仓，过去的日子补不回来";
+  public static final LocalTime CLOSES = LocalTime.of(4, 0);
 
-    private SnapshotWindow() {
+  public static final String OUTSIDE = "现在不在账户快照窗口（交易日美东 16:15 至次日 04:00）。盈透只给当前持仓，过去的日子补不回来";
+
+  private SnapshotWindow() {}
+
+  /**
+   * Which trading day a snapshot taken now belongs to; empty outside the window.
+   *
+   * <p>Two cases: at or after 16:15 on a trading day it is today; before 04:00 it is yesterday,
+   * provided yesterday was a trading day (so Saturday 01:00 still maps to Friday, while Monday
+   * 01:00 maps to nothing). Both checks use the US/Eastern wall clock of {@code nowEt}.
+   */
+  public static Optional<LocalDate> asOfDate(
+      ZonedDateTime nowEt, Predicate<LocalDate> isTradingDay) {
+    LocalDate today = nowEt.toLocalDate();
+    LocalTime t = nowEt.toLocalTime();
+    if (!t.isBefore(OPENS) && isTradingDay.test(today)) {
+      return Optional.of(today);
     }
-
-    /** 此刻拍快照属于哪个交易日；窗口外为空。 */
-    public static Optional<LocalDate> asOfDate(ZonedDateTime nowEt, Predicate<LocalDate> isTradingDay) {
-        LocalDate today = nowEt.toLocalDate();
-        LocalTime t = nowEt.toLocalTime();
-        if (!t.isBefore(OPENS) && isTradingDay.test(today)) {
-            return Optional.of(today);
-        }
-        if (t.isBefore(CLOSES) && isTradingDay.test(today.minusDays(1))) {
-            return Optional.of(today.minusDays(1));
-        }
-        return Optional.empty();
+    if (t.isBefore(CLOSES) && isTradingDay.test(today.minusDays(1))) {
+      return Optional.of(today.minusDays(1));
     }
+    return Optional.empty();
+  }
 }

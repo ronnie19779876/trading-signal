@@ -1,8 +1,8 @@
 import type { Gate, Outcome, SignalStatus, EvaluationStatus, Role, TrackStatus, ExitReason } from '../../api/signals'
 import type { Stance, Confidence, AiStatus, AiVerdict } from '../../api/ai'
 
-// 数字与日期的格式化全站一份，见 lib/format.ts；这里只留信号相关的中文标签。
-// 仍然从本文件转出，是为了让信号页的组件只 import 一个地方。
+// Number and date formatting has a single site-wide copy in lib/format.ts; only the signal-specific Chinese labels
+// live here. They are still re-exported from this file so the signals components import from one place only.
 export { errMsg, num, pct, signedR, trend, daysAgoEt as daysAgo, isoEt as iso, todayEt } from '../../lib/format'
 
 type TagType = 'primary' | 'success' | 'warning' | 'danger' | 'info'
@@ -11,14 +11,15 @@ export const GATE_LABEL: Record<Gate, string> = { TREND: '趋势', LOCATION: '�
 export const GATES: Gate[] = ['TREND', 'LOCATION', 'TRIGGER', 'RISK']
 
 /**
- * 展示用：含 PENDING_AI。它是<b>回放接口里的中间态</b>，落库的评估行永远不会是这个值。
- * 所以筛选下拉不能按这张表全量生成——选中「待 AI」必定零结果
- * （2026-09-25 全项目审查发现）。筛选用 {@link OUTCOME_FILTERS}。
+ * For display: includes PENDING_AI. That is an <b>intermediate state of the replay endpoint</b>; a stored
+ * evaluation row never has this value. So the filter dropdown must not be generated from this whole table --
+ * selecting "pending AI" would always return zero rows (found in the 2026-09-25 full-project review). Filters use
+ * {@link OUTCOME_FILTERS}.
  */
 export const OUTCOME_LABEL: Record<Outcome | 'PENDING_AI', string> = {
   SIGNAL: '信号', NO_SIGNAL: '未触发', SUPPRESSED_EDGE: '边沿抑制', SUPPRESSED_COOLDOWN: '冷却抑制', BLOCKED_BY_AI: 'AI 否决', PENDING_AI: '待 AI',
 }
-/** 真的会落库、因而能筛出东西的结果。 */
+/** Outcomes that are actually stored and can therefore match a filter. */
 export const OUTCOME_FILTERS: Outcome[] = ['SIGNAL', 'NO_SIGNAL', 'SUPPRESSED_EDGE', 'SUPPRESSED_COOLDOWN', 'BLOCKED_BY_AI']
 export const STATUS_LABEL: Record<EvaluationStatus, string> = {
   EVALUATED: '已判定', SKIPPED_INSUFFICIENT_BARS: 'K 线不足', SKIPPED_STALE_DATA: '数据过期', SKIPPED_DATA_GAP: '缺交易日',

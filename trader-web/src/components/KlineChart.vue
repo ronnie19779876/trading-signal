@@ -17,6 +17,11 @@ import {
 import { MA_COLORS, chartLayout, chartTheme, movingAverage, type ChartMarker, type ChartPriceLine, type ChartZone, type KlineBar } from './chart'
 import { useTheme } from '../composables/useTheme'
 
+/**
+ * Candlestick chart with volume, optional simple moving averages, price lines, zones and markers
+ * (lightweight-charts). The chart objects are plain variables, not refs: lightweight-charts compares instances
+ * internally and breaks when they are wrapped in a reactive Proxy. Created on mount, removed on unmount.
+ */
 const props = withDefaults(
   defineProps<{
     bars: KlineBar[]
@@ -25,13 +30,13 @@ const props = withDefaults(
     markers?: ChartMarker[]
     priceLines?: ChartPriceLine[]
     zones?: ChartZone[]
-    /** 均线周期（收盘价简单均线），空 = 不画；图上有开关，隐藏哪几条记在本机浏览器 */
+    /** Moving-average periods (simple MA of the close), empty = none; the chart has toggles, and which ones are hidden is remembered in this browser */
     ma?: number[]
-    /** 只显示这天及以后；更早的 K 线只用来给均线预热（MA200 要 200 根） */
+    /** Only show this date and later; earlier bars are used only to warm up the moving averages (MA200 needs 200 bars) */
     visibleFrom?: string
-    /** 均线显隐记在本机的键；不同场景各记各的（信号图默认隐藏，持仓抽屉默认显示） */
+    /** localStorage key for MA visibility; each context keeps its own (signal charts hide them by default, the position drawer shows them) */
     maKey?: string
-    /** 本机没有记录时均线默认隐藏 */
+    /** Hide the moving averages when nothing is stored locally */
     maHiddenByDefault?: boolean
   }>(),
   {
@@ -50,7 +55,7 @@ let markerApi: ISeriesMarkersPluginApi<Time> | null = null
 let lines: IPriceLine[] = []
 let maSeries = new Map<number, ISeriesApi<'Line'>>()
 
-// ---- 均线开关：隐藏的周期记在本机（取不到存储就按全部显示） ----
+// ---- MA toggles: hidden periods are remembered locally (if storage is unavailable, fall back to the default) ----
 function readHidden(): number[] {
   const fallback = props.maHiddenByDefault ? [...props.ma] : []
   try {
@@ -68,12 +73,12 @@ function toggleMa(period: number) {
   try {
     localStorage.setItem(props.maKey, JSON.stringify(hidden.value))
   } catch {
-    // 存不了就只在本次页面里生效
+    // if it cannot be stored it only applies to this page view
   }
   maSeries.get(period)?.applyOptions({ visible: !hidden.value.includes(period) })
 }
 const maColor = (i: number) => MA_COLORS[i % MA_COLORS.length]
-/** 图例上显示每条均线最后一天的值 */
+/** The legend shows each moving average's value on the last day */
 const maLast = ref<Map<number, number | null>>(new Map())
 let observer: ResizeObserver | null = null
 
@@ -89,7 +94,7 @@ function render() {
   chart?.timeScale().fitContent()
 }
 
-/** 均线用全部 K 线算（含预热段），只画可见段。 */
+/** Moving averages are computed over all bars (including the warm-up part) but only the visible part is drawn. */
 function renderMa(all: KlineBar[]) {
   if (!chart) return
   for (const [period, series] of maSeries) {
@@ -130,9 +135,9 @@ function renderOverlays() {
     lines.push(candles.createPriceLine({ price: z.top, color, title: `${z.title} 顶`, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false }))
     lines.push(candles.createPriceLine({ price: z.bottom, color, title: `${z.title} 底`, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false }))
   }
-  // 只认可见段（visibleFrom 之前的 K 线只给均线预热，没画出来）
+  // only the visible part counts (bars before visibleFrom only warm up the moving averages and are not drawn)
   const dates = new Set(props.bars.filter((b) => !props.visibleFrom || b.tradeDate >= props.visibleFrom).map((b) => b.tradeDate))
-  // 标记的日期必须在 K 线里，否则图表库报错；并且要按时间升序
+  // marker dates must exist among the bars or the chart library throws; they must also be in ascending time order
   const markers: SeriesMarker<Time>[] = props.markers
     .filter((m) => dates.has(m.time))
     .sort((a, b) => (a.time < b.time ? -1 : 1))
@@ -141,7 +146,7 @@ function renderOverlays() {
   else markerApi = createSeriesMarkers(candles, markers)
 }
 
-/** 主题切换：图表配色不是 CSS，改不到，只能重新取值套一遍（成交量柱的颜色在数据里，要重画）。 */
+/** Theme switch: chart colors are not CSS and cannot be restyled, so read them again and reapply (volume bar colors are part of the data, so redraw). */
 function applyTheme() {
   if (!chart || !candles) return
   const t = chartTheme()
@@ -156,11 +161,12 @@ onMounted(() => {
   chart = createChart(el.value, {
     height: props.height,
     ...chartLayout(t),
-    // 滚轮留给页面滚动：在图上滚动不再缩放、平移图表（拖动与触控板捏合照常）
+    // the mouse wheel is left to page scrolling: scrolling over the chart no longer zooms or pans it (dragging and
+    // trackpad pinch still work)
     handleScroll: { mouseWheel: false },
     handleScale: { mouseWheel: false },
   })
-  // 涨跌色来自 tokens.css（美股口径绿涨红跌）
+  // up/down colors come from tokens.css (US convention: green up, red down)
   candles = chart.addSeries(CandlestickSeries, { upColor: t.up, downColor: t.down, borderVisible: false, wickUpColor: t.up, wickDownColor: t.down })
   volume = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'volume' })
   chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })

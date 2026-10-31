@@ -1,14 +1,17 @@
 package org.jdkxx.trader.core.marketdata.jobs;
 
-/** 作业执行上下文：汇报进度、标记部分失败。 */
+/** Execution context of a job: report progress, mark partial failure, observe cancellation. */
 public interface JobContext {
 
-    long id();
+  long id();
 
-    void progress(String text);
+  void progress(String text);
 
-    /** 标记本次作业"部分完成"（有失败但整体继续），最终状态为 PARTIAL。 */
-    void partial(String reason);
+  /**
+   * Marks this run as "partially complete" (something failed but the job carried on); the final
+   * status becomes PARTIAL. Reasons from repeated calls are concatenated.
+   */
+  void partial(String reason);
 
-    boolean cancelled();
+  boolean cancelled();
 }

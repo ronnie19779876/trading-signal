@@ -1,19 +1,20 @@
 package org.jdkxx.trader.domain;
 
 /**
- * 交易市场。第 0 期只需区分美股与港股；两家券商对市场的编码不同，映射放在各自的接入层。
+ * Trading market. Phase 0 only needs to distinguish US and Hong Kong stocks; the two brokers encode
+ * markets differently, so the mapping lives in each adapter.
  */
 public enum Market {
-    US("美股"),
-    HK("港股");
+  US("美股"),
+  HK("港股");
 
-    private final String displayName;
+  private final String displayName;
 
-    Market(String displayName) {
-        this.displayName = displayName;
-    }
+  Market(String displayName) {
+    this.displayName = displayName;
+  }
 
-    public String displayName() {
-        return displayName;
-    }
+  public String displayName() {
+    return displayName;
+  }
 }

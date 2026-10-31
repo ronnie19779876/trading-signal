@@ -1,21 +1,21 @@
 /**
- * 五段审计（日线、基本面、账户、信号、量化选股）的检查项中文名，与 check-daily.sh 同源的接口共用。
- * 不认识的原样显示。
+ * Chinese display names for the check items of the five audits (daily bars, fundamentals, account, signals,
+ * quant selection), shared by the endpoints that check-daily.sh also uses. Unknown names are shown as-is.
  */
 export const AUDIT_CHECK_LABEL: Record<string, string> = {
-  // 日线
+  // daily bars
   completeness: '完整性', sanity: '合理性', continuity: '连续性', rehab: '复权因子', syncErrors: '同步错误',
   incrementJob: '增量作业', calendarCoverage: '日历覆盖', historyGaps: '历史缺口', phantomBars: '幽灵 K 线',
   unsettledBars: '未落定 K 线', gateway: '网关', calendar: '交易日历',
   universeSize: '成分股规模', resolveDowngrade: '标的降级',
-  // 基本面
+  // fundamentals
   valuationCompleteness: '估值完整性', valuationSanity: '估值合理性', financialsFreshness: '财报新鲜度', valuationJob: '估值作业',
-  // 账户
+  // account
   snapshotExists: '当天快照', reconciliation: '对账', pricing: '估值取价', snapshotJob: '快照作业',
-  // 信号
+  // signals
   evaluationExists: '当天评估', coverage: '覆盖', staleData: '数据过期', dataQuality: '数据质量',
   signalConsistency: '信号一致性', aiAnalyses: 'AI 分析', ledgerCurrent: '纸面账本', evaluationJob: '评估作业',
-  // 量化选股
+  // quant selection
   scored: '当天评分', ratedShare: '可评级占比', valuationFresh: '估值新鲜度', ratingDistribution: '评级分布',
   exclusions: '排除原因', ratedBySector: '各板块评级', priceSeams: '盈透接缝', knownBiases: '已知偏差',
   simUpdated: '模拟交易算到当天', simTargetHits: '模拟交易止盈提示', financialsComplete: '季报到齐',

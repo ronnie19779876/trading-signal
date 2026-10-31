@@ -1,10 +1,13 @@
 package org.jdkxx.trader.domain.selection;
 
-/** 五档评级，强制分布 10 / 20 / 40 / 20 / 10（§25.4、§25.10 第 2 条）。 */
+/**
+ * Five rating tiers with a forced distribution of 10 / 20 / 40 / 20 / 10 percent (§25.4, §25.10
+ * item 2).
+ */
 public enum Rating {
-    STRONG_BUY,
-    BUY,
-    HOLD,
-    SELL,
-    STRONG_SELL
+  STRONG_BUY,
+  BUY,
+  HOLD,
+  SELL,
+  STRONG_SELL
 }

@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 #
-# 主备状态（只读）：两边各是什么角色、应用在哪边跑、复制是否在走、落后多少、复制槽压了多少 WAL。
+# Primary/standby status (read-only): the role of each node, where the application runs, whether
+# replication is flowing, how far behind it is, and how much WAL the replication slot is holding back.
 #   ./scripts/replica/status.sh
-# 退出码：0 正常；1 有问题（两个主库、应用跑在备库、复制断了等）；2 有节点连不上。
+# Exit codes: 0 healthy; 1 problems (two primaries, application running on the standby, replication broken,
+# etc.); 2 a node is unreachable.
 #
-# 判定规则：恰好一个主库；应用只在主库上跑；主库上有一个 streaming 的备库；隧道只在备库那边开；
-# 复制槽压着的 WAL 超过 5 GB 告警（上限 20 GB，超过会被作废、要重做全量同步）。
+# Rules: exactly one primary; the application runs only on the primary; the primary has one streaming
+# standby; the tunnel is open only on the standby side; warn when the slot holds more than 5 GB of WAL
+# (the limit is 20 GB; beyond it the slot is invalidated and a full resync is required).
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 source scripts/replica/lib.sh
@@ -13,7 +16,8 @@ load_env
 
 PROBLEM=0
 UNREACHABLE=0
-# 本机是 macOS 自带 bash 3.2，没有关联数组：用 ROLE_vps 这样的变量，set_v / get_v 读写
+# The local machine runs macOS's bundled bash 3.2, which has no associative arrays: use variables such as
+# ROLE_vps, read and written through set_v / get_v
 set_v() { printf -v "$1_$2" '%s' "$3"; }
 get_v() { local v="$1_$2"; echo "${!v:-}"; }
 warn() { echo "  ⚠️  $*"; [[ ${PROBLEM} -eq 0 ]] && PROBLEM=1; }

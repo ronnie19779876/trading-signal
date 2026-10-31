@@ -1,256 +1,374 @@
 package org.jdkxx.trader.core.marketdata;
 
+import java.time.Clock;
+import java.time.ZoneId;
 import org.jdkxx.trader.common.ratelimit.Sleeper;
 import org.jdkxx.trader.core.marketdata.audit.BarAuditService;
 import org.jdkxx.trader.core.marketdata.bars.BarQueryService;
 import org.jdkxx.trader.core.marketdata.bars.CalendarBackfillService;
+import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
+import org.jdkxx.trader.core.marketdata.bars.DeepBackfillService;
+import org.jdkxx.trader.core.marketdata.bars.RotationRefresher;
+import org.jdkxx.trader.core.marketdata.bars.SettledCutoff;
 import org.jdkxx.trader.core.marketdata.fundamentals.FinancialsRefreshService;
 import org.jdkxx.trader.core.marketdata.fundamentals.FundamentalsAuditService;
 import org.jdkxx.trader.core.marketdata.fundamentals.FundamentalsFacade;
 import org.jdkxx.trader.core.marketdata.fundamentals.FundamentalsQueryService;
 import org.jdkxx.trader.core.marketdata.fundamentals.ValuationSnapshotService;
-import org.jdkxx.trader.core.marketdata.bars.DailyIncrementService;
-import org.jdkxx.trader.core.marketdata.bars.DeepBackfillService;
-import org.jdkxx.trader.core.marketdata.bars.RotationRefresher;
-import org.jdkxx.trader.core.marketdata.bars.SettledCutoff;
 import org.jdkxx.trader.core.marketdata.jobs.CatchUpService;
 import org.jdkxx.trader.core.marketdata.jobs.JobService;
 import org.jdkxx.trader.core.marketdata.quotes.QuoteCache;
 import org.jdkxx.trader.core.marketdata.quotes.QuoteStreamService;
 import org.jdkxx.trader.core.marketdata.quotes.QuoteSubscriptionService;
-import org.jdkxx.trader.gateway.BrokerGateway;
 import org.jdkxx.trader.core.marketdata.universe.SpyHoldingsCrossCheck;
 import org.jdkxx.trader.core.marketdata.universe.UniverseScope;
-import org.jdkxx.trader.core.marketdata.universe.UnknownSymbolGuard;
 import org.jdkxx.trader.core.marketdata.universe.UniverseSource;
 import org.jdkxx.trader.core.marketdata.universe.UniverseSyncService;
+import org.jdkxx.trader.core.marketdata.universe.UnknownSymbolGuard;
 import org.jdkxx.trader.core.marketdata.universe.WikipediaUniverseSource;
+import org.jdkxx.trader.core.marketdata.valuation.SotpBasisService;
+import org.jdkxx.trader.core.marketdata.valuation.SotpService;
+import org.jdkxx.trader.gateway.BrokerGateway;
 import org.jdkxx.trader.gateway.MarketDataGateway;
 import org.jdkxx.trader.storage.marketdata.BarSyncStateRepository;
+import org.jdkxx.trader.storage.marketdata.CompanyProfileRepository;
 import org.jdkxx.trader.storage.marketdata.DailyBarRepository;
+import org.jdkxx.trader.storage.marketdata.FinancialRepository;
 import org.jdkxx.trader.storage.marketdata.IndexConstituentRepository;
 import org.jdkxx.trader.storage.marketdata.InstrumentRepository;
 import org.jdkxx.trader.storage.marketdata.JobRunRepository;
 import org.jdkxx.trader.storage.marketdata.PoolRepository;
 import org.jdkxx.trader.storage.marketdata.RehabFactorRepository;
-import org.jdkxx.trader.storage.marketdata.ValuationRepository;
-import org.jdkxx.trader.storage.marketdata.FinancialRepository;
-import org.jdkxx.trader.storage.marketdata.CompanyProfileRepository;
 import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
-import org.jdkxx.trader.core.marketdata.valuation.SotpBasisService;
-import org.jdkxx.trader.core.marketdata.valuation.SotpService;
+import org.jdkxx.trader.storage.marketdata.ValuationRepository;
 import org.jdkxx.trader.storage.valuation.SotpModelRepository;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import java.time.Clock;
-import java.time.ZoneId;
-
 /**
- * 行情数据底座的装配。整块只在存储启用时存在（仓储都依赖数据库）。
+ * Wiring of the market-data foundation. The whole block exists only when storage is enabled (every
+ * repository needs the database). Services that take a {@code Clock} get {@code Clock.systemUTC()}
+ * and convert to the configured zone (US/Eastern) themselves, so their trading-day logic does not
+ * depend on the JVM's default time zone.
  */
 @Configuration
 @ConditionalOnProperty(name = "trader.storage.enabled", havingValue = "true")
 @EnableConfigurationProperties(MarketDataProperties.class)
 public class MarketDataConfiguration {
 
-    @Bean
-    public UniverseSource universeSource(MarketDataProperties props) {
-        return new WikipediaUniverseSource(props.universe());
+  @Bean
+  public UniverseSource universeSource(MarketDataProperties props) {
+    return new WikipediaUniverseSource(props.universe());
+  }
+
+  @Bean
+  public SpyHoldingsCrossCheck spyHoldingsCrossCheck(MarketDataProperties props) {
+    return new SpyHoldingsCrossCheck(props.universe());
+  }
+
+  @Bean
+  public InstrumentDirectory instrumentDirectory(InstrumentRepository instruments) {
+    return new InstrumentDirectory(instruments);
+  }
+
+  @Bean
+  public UniverseScope universeScope(
+      IndexConstituentRepository constituents,
+      PoolRepository pool,
+      InstrumentRepository instruments) {
+    return new UniverseScope(constituents, pool, instruments);
+  }
+
+  /**
+   * Batch-level recovery: when Futu rejects a whole batch as "unknown stock", identify the bad
+   * symbols, mark them UNRESOLVED and let the caller drop them and retry once. The four batch paths
+   * on the collection side share the same decision and the same guards, so their rules cannot drift
+   * apart.
+   */
+  @Bean
+  public UnknownSymbolGuard unknownSymbolGuard(
+      MarketDataProperties props, MarketDataGateway gateway, InstrumentRepository instruments) {
+    return new UnknownSymbolGuard(
+        gateway,
+        instruments,
+        props.universe().staticBatchSize(),
+        props.universe().maxUnknownPerBatch());
+  }
+
+  @Bean
+  public JobService jobService(JobRunRepository repo) {
+    return new JobService(repo);
+  }
+
+  @Bean
+  public UniverseSyncService universeSyncService(
+      MarketDataProperties props,
+      UniverseSource source,
+      SpyHoldingsCrossCheck spy,
+      InstrumentRepository instruments,
+      IndexConstituentRepository constituents,
+      MarketDataGateway gateway) {
+    return new UniverseSyncService(props, source, spy, instruments, constituents, gateway);
+  }
+
+  @Bean
+  public SettledCutoff settledCutoff(MarketDataProperties props, TradingDayRepository days) {
+    return new SettledCutoff(days, ZoneId.of(props.zone()), Clock.systemUTC());
+  }
+
+  @Bean
+  public RotationRefresher rotationRefresher(
+      MarketDataProperties props,
+      MarketDataGateway gateway,
+      DailyBarRepository bars,
+      BarSyncStateRepository states,
+      SettledCutoff cutoff,
+      UnknownSymbolGuard unknownSymbols) {
+    return new RotationRefresher(
+        props.refresh(), gateway, bars, states, cutoff, unknownSymbols, Sleeper.REAL);
+  }
+
+  @Bean
+  public DeepBackfillService deepBackfillService(
+      MarketDataProperties props,
+      MarketDataGateway gateway,
+      DailyBarRepository bars,
+      RehabFactorRepository rehabs,
+      BarSyncStateRepository states,
+      UniverseScope scope,
+      SettledCutoff cutoff) {
+    return new DeepBackfillService(props, gateway, bars, rehabs, states, scope, cutoff);
+  }
+
+  @Bean
+  public DailyIncrementService dailyIncrementService(
+      MarketDataProperties props,
+      MarketDataGateway gateway,
+      TradingDayRepository days,
+      DailyBarRepository bars,
+      UniverseScope scope,
+      RotationRefresher rotation,
+      DeepBackfillService deep) {
+    return new DailyIncrementService(
+        props, gateway, days, bars, scope, rotation, deep, Clock.systemUTC());
+  }
+
+  @Bean
+  public BarQueryService barQueryService(
+      InstrumentDirectory directory,
+      DailyBarRepository bars,
+      RehabFactorRepository rehabs,
+      MarketDataProperties props) {
+    return new BarQueryService(directory, bars, rehabs, props);
+  }
+
+  @Bean
+  public CalendarBackfillService calendarBackfillService(
+      MarketDataProperties props,
+      MarketDataGateway gateway,
+      TradingDayRepository days,
+      DailyBarRepository bars,
+      UniverseScope scope) {
+    return new CalendarBackfillService(props, gateway, days, bars, scope, Clock.systemUTC());
+  }
+
+  @Bean
+  public BarAuditService barAuditService(
+      MarketDataProperties props,
+      UniverseScope scope,
+      DailyBarRepository bars,
+      TradingDayRepository days,
+      BarSyncStateRepository states,
+      JobRunRepository jobs,
+      MarketDataGateway gateway) {
+    return new BarAuditService(props, scope, bars, days, states, jobs, gateway, Clock.systemUTC());
+  }
+
+  // ------------------------------------------------------------------ Fundamentals (step 3)
+
+  @Bean
+  public ValuationSnapshotService valuationSnapshotService(
+      MarketDataProperties props,
+      UniverseScope scope,
+      MarketDataGateway gateway,
+      ValuationRepository valuations,
+      TradingDayRepository days,
+      UnknownSymbolGuard unknownSymbols) {
+    return new ValuationSnapshotService(
+        props, scope, gateway, valuations, days, unknownSymbols, Clock.systemUTC());
+  }
+
+  @Bean
+  public FinancialsRefreshService financialsRefreshService(
+      MarketDataProperties props,
+      UniverseScope scope,
+      MarketDataGateway gateway,
+      FinancialRepository financials,
+      CompanyProfileRepository profiles) {
+    return new FinancialsRefreshService(
+        props, scope, gateway, financials, profiles, Clock.systemUTC());
+  }
+
+  @Bean
+  public FundamentalsQueryService fundamentalsQueryService(
+      InstrumentDirectory directory,
+      ValuationRepository valuations,
+      FinancialRepository financials,
+      CompanyProfileRepository profiles,
+      UniverseScope scope,
+      MarketDataProperties props) {
+    return new FundamentalsQueryService(directory, valuations, financials, profiles, scope, props);
+  }
+
+  @Bean
+  public FundamentalsAuditService fundamentalsAuditService(
+      MarketDataProperties props,
+      UniverseScope scope,
+      ValuationRepository valuations,
+      FinancialRepository financials,
+      TradingDayRepository days,
+      JobRunRepository jobs) {
+    return new FundamentalsAuditService(
+        props, scope, valuations, financials, days, jobs, Clock.systemUTC());
+  }
+
+  @Bean
+  public FundamentalsFacade fundamentalsFacade(
+      JobService jobs,
+      ValuationSnapshotService valuation,
+      FinancialsRefreshService financials,
+      FundamentalsQueryService query,
+      UniverseScope scope) {
+    return new FundamentalsFacade(jobs, valuation, financials, query, scope);
+  }
+
+  @Bean
+  public PoolService poolService(
+      MarketDataProperties props,
+      PoolRepository pool,
+      InstrumentDirectory directory,
+      JobService jobs,
+      DeepBackfillService deep,
+      InstrumentRepository instruments,
+      MarketDataGateway gateway) {
+    return new PoolService(props, pool, directory, jobs, deep, instruments, gateway);
+  }
+
+  @Bean
+  public MarketDataFacade marketDataFacade(
+      MarketDataProperties props,
+      JobService jobs,
+      UniverseSyncService sync,
+      UniverseScope scope,
+      RotationRefresher rotation,
+      DeepBackfillService deep,
+      DailyIncrementService increment,
+      CalendarBackfillService calendar,
+      TradingDayRepository days,
+      InstrumentRepository instruments,
+      IndexConstituentRepository constituents,
+      DailyBarRepository bars,
+      BarSyncStateRepository states,
+      MarketDataGateway gateway,
+      InstrumentDirectory directory) {
+    return new MarketDataFacade(
+        props,
+        jobs,
+        sync,
+        scope,
+        rotation,
+        deep,
+        increment,
+        calendar,
+        days,
+        instruments,
+        constituents,
+        bars,
+        states,
+        gateway,
+        directory);
+  }
+
+  @Bean
+  public CatchUpService catchUpService(
+      MarketDataProperties props,
+      UniverseScope scope,
+      DailyBarRepository bars,
+      ValuationRepository valuations,
+      TradingDayRepository days) {
+    return new CatchUpService(props, scope, bars, valuations, days, Clock.systemUTC());
+  }
+
+  @Bean
+  @ConditionalOnProperty(name = "trader.marketdata.schedule-enabled", havingValue = "true")
+  public MarketDataScheduler marketDataScheduler(
+      MarketDataFacade facade,
+      FundamentalsFacade fundamentals,
+      JobRunRepository jobRuns,
+      CatchUpService catchUpService) {
+    return new MarketDataScheduler(facade, fundamentals, jobRuns, catchUpService);
+  }
+
+  // ------------------------------------------------------------------ Sum-of-the-parts valuation
+  // (phase 5: read-only plus manual assumptions; not linked to signals or the ledger)
+
+  @Bean
+  public SotpBasisService sotpBasisService(
+      InstrumentDirectory directory,
+      DailyBarRepository bars,
+      ValuationRepository valuations,
+      FinancialRepository financials,
+      IndexConstituentRepository constituents) {
+    return new SotpBasisService(directory, bars, valuations, financials, constituents);
+  }
+
+  @Bean
+  public SotpService sotpService(
+      InstrumentDirectory directory,
+      SotpBasisService sotpBasisService,
+      SotpModelRepository sotpModels,
+      com.fasterxml.jackson.databind.ObjectMapper json) {
+    return new SotpService(directory, sotpBasisService, sotpModels, json);
+  }
+
+  // ------------------------------------------------------------------ Real-time quotes (step 2,
+  // not persisted)
+
+  @Bean
+  public QuoteCache quoteCache(MarketDataGateway gateway) {
+    QuoteCache cache = new QuoteCache();
+    gateway.addQuoteListener(cache::accept);
+    return cache;
+  }
+
+  @Bean
+  public QuoteSubscriptionService quoteSubscriptionService(
+      MarketDataProperties props,
+      MarketDataGateway gateway,
+      UniverseScope scope,
+      QuoteCache cache,
+      RotationRefresher rotation,
+      PoolService pool,
+      UnknownSymbolGuard unknownSymbols) {
+    // Three hooks, all needed: gateway connect/disconnect (clears and re-reconciles subscriptions),
+    // rotation (pauses real-time quotes to free quota for the 90-per-batch rotation), and pool
+    // changes (follow the pool)
+    QuoteSubscriptionService service =
+        new QuoteSubscriptionService(
+            props.realtime(), gateway, scope, cache, unknownSymbols, Clock.systemUTC());
+    if (gateway instanceof BrokerGateway broker) {
+      broker.addListener(service);
     }
+    rotation.coordinator(service);
+    pool.afterChange(service::onPoolChanged);
+    return service;
+  }
 
-    @Bean
-    public SpyHoldingsCrossCheck spyHoldingsCrossCheck(MarketDataProperties props) {
-        return new SpyHoldingsCrossCheck(props.universe());
-    }
-
-    @Bean
-    public InstrumentDirectory instrumentDirectory(InstrumentRepository instruments) {
-        return new InstrumentDirectory(instruments);
-    }
-
-    @Bean
-    public UniverseScope universeScope(IndexConstituentRepository constituents, PoolRepository pool, InstrumentRepository instruments) {
-        return new UniverseScope(constituents, pool, instruments);
-    }
-
-    /**
-     * 批次级恢复：富途以「未知股票」拒掉整批时，核实出坏代码、标 UNRESOLVED、让调用方剔除后重试一次。
-     * 采集侧的四条批次路径共用同一个判定与同一套守护，口径不分叉。
-     */
-    @Bean
-    public UnknownSymbolGuard unknownSymbolGuard(MarketDataProperties props, MarketDataGateway gateway,
-                                                 InstrumentRepository instruments) {
-        return new UnknownSymbolGuard(gateway, instruments, props.universe().staticBatchSize(),
-                props.universe().maxUnknownPerBatch());
-    }
-
-    @Bean
-    public JobService jobService(JobRunRepository repo) {
-        return new JobService(repo);
-    }
-
-    @Bean
-    public UniverseSyncService universeSyncService(MarketDataProperties props, UniverseSource source, SpyHoldingsCrossCheck spy,
-                                                   InstrumentRepository instruments, IndexConstituentRepository constituents,
-                                                   MarketDataGateway gateway) {
-        return new UniverseSyncService(props, source, spy, instruments, constituents, gateway);
-    }
-
-    @Bean
-    public SettledCutoff settledCutoff(MarketDataProperties props, TradingDayRepository days) {
-        return new SettledCutoff(days, ZoneId.of(props.zone()), Clock.systemUTC());
-    }
-
-    @Bean
-    public RotationRefresher rotationRefresher(MarketDataProperties props, MarketDataGateway gateway, DailyBarRepository bars,
-                                               BarSyncStateRepository states, SettledCutoff cutoff,
-                                               UnknownSymbolGuard unknownSymbols) {
-        return new RotationRefresher(props.refresh(), gateway, bars, states, cutoff, unknownSymbols, Sleeper.REAL);
-    }
-
-    @Bean
-    public DeepBackfillService deepBackfillService(MarketDataProperties props, MarketDataGateway gateway, DailyBarRepository bars,
-                                                   RehabFactorRepository rehabs, BarSyncStateRepository states, UniverseScope scope,
-                                                   SettledCutoff cutoff) {
-        return new DeepBackfillService(props, gateway, bars, rehabs, states, scope, cutoff);
-    }
-
-    @Bean
-    public DailyIncrementService dailyIncrementService(MarketDataProperties props, MarketDataGateway gateway, TradingDayRepository days,
-                                                       DailyBarRepository bars, UniverseScope scope, RotationRefresher rotation,
-                                                       DeepBackfillService deep) {
-        return new DailyIncrementService(props, gateway, days, bars, scope, rotation, deep, Clock.systemUTC());
-    }
-
-    @Bean
-    public BarQueryService barQueryService(InstrumentDirectory directory, DailyBarRepository bars, RehabFactorRepository rehabs,
-                                           MarketDataProperties props) {
-        return new BarQueryService(directory, bars, rehabs, props);
-    }
-
-    @Bean
-    public CalendarBackfillService calendarBackfillService(MarketDataProperties props, MarketDataGateway gateway,
-                                                           TradingDayRepository days, DailyBarRepository bars,
-                                                           UniverseScope scope) {
-        return new CalendarBackfillService(props, gateway, days, bars, scope, Clock.systemUTC());
-    }
-
-    @Bean
-    public BarAuditService barAuditService(MarketDataProperties props, UniverseScope scope, DailyBarRepository bars,
-                                           TradingDayRepository days, BarSyncStateRepository states, JobRunRepository jobs,
-                                           MarketDataGateway gateway) {
-        return new BarAuditService(props, scope, bars, days, states, jobs, gateway, Clock.systemUTC());
-    }
-
-    // ------------------------------------------------------------------ 基本面（步骤 3）
-
-    @Bean
-    public ValuationSnapshotService valuationSnapshotService(MarketDataProperties props, UniverseScope scope,
-                                                            MarketDataGateway gateway, ValuationRepository valuations,
-                                                            TradingDayRepository days, UnknownSymbolGuard unknownSymbols) {
-        return new ValuationSnapshotService(props, scope, gateway, valuations, days, unknownSymbols, Clock.systemUTC());
-    }
-
-    @Bean
-    public FinancialsRefreshService financialsRefreshService(MarketDataProperties props, UniverseScope scope,
-                                                            MarketDataGateway gateway, FinancialRepository financials,
-                                                            CompanyProfileRepository profiles) {
-        return new FinancialsRefreshService(props, scope, gateway, financials, profiles, Clock.systemUTC());
-    }
-
-    @Bean
-    public FundamentalsQueryService fundamentalsQueryService(InstrumentDirectory directory, ValuationRepository valuations,
-                                                             FinancialRepository financials, CompanyProfileRepository profiles,
-                                                             UniverseScope scope, MarketDataProperties props) {
-        return new FundamentalsQueryService(directory, valuations, financials, profiles, scope, props);
-    }
-
-    @Bean
-    public FundamentalsAuditService fundamentalsAuditService(MarketDataProperties props, UniverseScope scope,
-                                                             ValuationRepository valuations, FinancialRepository financials,
-                                                             TradingDayRepository days, JobRunRepository jobs) {
-        return new FundamentalsAuditService(props, scope, valuations, financials, days, jobs, Clock.systemUTC());
-    }
-
-    @Bean
-    public FundamentalsFacade fundamentalsFacade(JobService jobs, ValuationSnapshotService valuation,
-                                                 FinancialsRefreshService financials, FundamentalsQueryService query,
-                                                 UniverseScope scope) {
-        return new FundamentalsFacade(jobs, valuation, financials, query, scope);
-    }
-
-    @Bean
-    public PoolService poolService(MarketDataProperties props, PoolRepository pool, InstrumentDirectory directory, JobService jobs,
-                                   DeepBackfillService deep, InstrumentRepository instruments, MarketDataGateway gateway) {
-        return new PoolService(props, pool, directory, jobs, deep, instruments, gateway);
-    }
-
-    @Bean
-    public MarketDataFacade marketDataFacade(MarketDataProperties props, JobService jobs, UniverseSyncService sync, UniverseScope scope,
-                                             RotationRefresher rotation, DeepBackfillService deep, DailyIncrementService increment,
-                                             CalendarBackfillService calendar, TradingDayRepository days,
-                                             InstrumentRepository instruments, IndexConstituentRepository constituents,
-                                             DailyBarRepository bars, BarSyncStateRepository states, MarketDataGateway gateway,
-                                             InstrumentDirectory directory) {
-        return new MarketDataFacade(props, jobs, sync, scope, rotation, deep, increment, calendar, days,
-                instruments, constituents, bars, states, gateway, directory);
-    }
-
-    @Bean
-    public CatchUpService catchUpService(MarketDataProperties props, UniverseScope scope, DailyBarRepository bars,
-                                         ValuationRepository valuations, TradingDayRepository days) {
-        return new CatchUpService(props, scope, bars, valuations, days, Clock.systemUTC());
-    }
-
-    @Bean
-    @ConditionalOnProperty(name = "trader.marketdata.schedule-enabled", havingValue = "true")
-    public MarketDataScheduler marketDataScheduler(MarketDataFacade facade, FundamentalsFacade fundamentals,
-                                                   JobRunRepository jobRuns, CatchUpService catchUpService) {
-        return new MarketDataScheduler(facade, fundamentals, jobRuns, catchUpService);
-    }
-
-    // ------------------------------------------------------------------ 分部估值（第 5 期，只读 + 手工假设，不联动信号与账本）
-
-    @Bean
-    public SotpBasisService sotpBasisService(InstrumentDirectory directory, DailyBarRepository bars,
-                                             ValuationRepository valuations, FinancialRepository financials,
-                                             IndexConstituentRepository constituents) {
-        return new SotpBasisService(directory, bars, valuations, financials, constituents);
-    }
-
-    @Bean
-    public SotpService sotpService(InstrumentDirectory directory, SotpBasisService sotpBasisService,
-                                   SotpModelRepository sotpModels, com.fasterxml.jackson.databind.ObjectMapper json) {
-        return new SotpService(directory, sotpBasisService, sotpModels, json);
-    }
-
-    // ------------------------------------------------------------------ 实时报价（步骤 2，不落库）
-
-    @Bean
-    public QuoteCache quoteCache(MarketDataGateway gateway) {
-        QuoteCache cache = new QuoteCache();
-        gateway.addQuoteListener(cache::accept);
-        return cache;
-    }
-
-    @Bean
-    public QuoteSubscriptionService quoteSubscriptionService(MarketDataProperties props, MarketDataGateway gateway, UniverseScope scope,
-                                                             QuoteCache cache, RotationRefresher rotation, PoolService pool,
-                                                             UnknownSymbolGuard unknownSymbols) {
-        QuoteSubscriptionService service = new QuoteSubscriptionService(props.realtime(), gateway, scope, cache, unknownSymbols, Clock.systemUTC());
-        if (gateway instanceof BrokerGateway broker) {
-            broker.addListener(service);
-        }
-        rotation.coordinator(service);
-        pool.afterChange(service::onPoolChanged);
-        return service;
-    }
-
-    @Bean(destroyMethod = "close")
-    public QuoteStreamService quoteStreamService(MarketDataProperties props, QuoteCache cache, QuoteSubscriptionService subscriptions) {
-        return new QuoteStreamService(cache, subscriptions::status, props.realtime().streamInterval());
-    }
+  @Bean(destroyMethod = "close")
+  public QuoteStreamService quoteStreamService(
+      MarketDataProperties props, QuoteCache cache, QuoteSubscriptionService subscriptions) {
+    return new QuoteStreamService(cache, subscriptions::status, props.realtime().streamInterval());
+  }
 }

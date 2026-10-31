@@ -2,8 +2,9 @@
 import { computed } from 'vue'
 
 /**
- * 迷你走势（纯 SVG）。一行一个 canvas 图表太重，这里不需要交互。
- * 颜色按首尾比较取涨跌色（tokens.css，美股口径绿涨红跌）。
+ * Sparkline (plain SVG). A canvas chart per table row is too heavy, and no interaction is needed here.
+ * The color compares the first and last points and uses the up/down colors (tokens.css, US convention green up,
+ * red down).
  */
 const props = withDefaults(defineProps<{ points: number[]; width?: number; height?: number }>(), { width: 96, height: 26 })
 
@@ -11,9 +12,9 @@ const path = computed(() => {
   const p = props.points
   if (p.length < 2) return ''
   const min = Math.min(...p)
-  const span = Math.max(...p) - min || 1 // 全平时避免除零
+  const span = Math.max(...p) - min || 1 // avoid division by zero when the series is flat
   const dx = props.width / (p.length - 1)
-  const h = props.height - 4 // 上下各留 2px，极值点不贴边
+  const h = props.height - 4 // 2px margin top and bottom so the extremes do not touch the edge
   return p.map((v, i) => `${i ? 'L' : 'M'}${(i * dx).toFixed(1)},${(2 + h - ((v - min) / span) * h).toFixed(1)}`).join(' ')
 })
 const up = computed(() => props.points.length >= 2 && props.points[props.points.length - 1] >= props.points[0])

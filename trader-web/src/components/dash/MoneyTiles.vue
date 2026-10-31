@@ -5,17 +5,20 @@ import type { Session } from '../../composables/useMarketClock'
 import { fmtEt, money, signed, timeEt, trend } from '../../lib/format'
 
 /**
- * 资金区：五个大数字 + 副行 + 折叠"更多"。
+ * Funds area: five big numbers + a secondary row + a collapsible "more".
  *
- * <b>全部是盈透原值，不做折算</b>（2026-09-19 用户要求与盈透 App 一致）：净值、现金、可用资金、股票市值来自盈透账户汇总
- * （约 3 分钟一推，可能比 App 晚），当日 / 浮动 / 已实现盈亏来自盈透账户盈亏（按变化秒级推）。
- * 各部分更新时间不同步，"更多"里分开写，不强行对齐。
- * 拿不到实时（网关未连、未启用）时退回最近一份收盘快照，并在标题旁写明。
+ * <b>Everything is a raw IBKR value with no conversion</b> (user requirement on 2026-09-19: match the IBKR app):
+ * NAV, cash, available funds and stock market value come from the IBKR account summary (pushed about every 3
+ * minutes, possibly later than the app); daily / unrealized / realized P&L come from IBKR account P&L (pushed
+ * within seconds of a change). The parts update at different times, so "more" lists them separately instead of
+ * forcing them into one timestamp.
+ * Without live data (gateway not connected or not enabled) it falls back to the latest closing snapshot and says so
+ * next to the title.
  */
 const props = defineProps<{ view: SnapshotView | null; live: LiveView | null; session: Session; loaded: boolean }>()
 const more = ref(false)
 
-/** 有可显示的实时数据：LIVE，或断线但还留着最后收到的数。 */
+/** There is live data to show: LIVE, or disconnected but still holding the last values received. */
 const useLive = computed(() => {
   const l = props.live
   return !!l && !!l.money && (l.status === 'LIVE' || l.status === 'DISCONNECTED')
@@ -58,7 +61,7 @@ const lastUpdate = computed(() => {
       <router-link to="/account" class="more-link">账户详情 →</router-link>
     </div>
 
-    <!-- 实时 -->
+    <!-- live -->
     <template v-if="useLive">
       <div class="tiles">
         <div class="tile">
@@ -115,14 +118,14 @@ const lastUpdate = computed(() => {
           <span>购买力 <b class="num">{{ money(live!.money?.buyingPower) }}</b></span>
           <span>剩余流动性 <b class="num">{{ money(live!.money?.excessLiquidity) }}</b></span>
           <span>持仓总市值 <b class="num">{{ money(live!.money?.grossPositionValue) }}</b></span>
-          <!-- 三个时间分开写：它们本来就不同步，对齐反而是撒谎 -->
+          <!-- The timestamps are shown separately: they are genuinely out of sync, and aligning them would be a lie -->
           <span class="ts">资金 {{ timeEt(live!.money?.updatedAt) }}（约 3 分钟一推）· 盈亏 {{ timeEt(live!.pnl?.updatedAt) }}</span>
         </template>
       </div>
       <p v-if="live!.lastError" class="warn">{{ live!.lastError }}</p>
     </template>
 
-    <!-- 收盘快照 -->
+    <!-- closing snapshot -->
     <div v-else-if="!view" class="muted empty">{{ loaded ? '还没有账户快照（每个交易日美东 18:00 自动拍）' : '加载中…' }}</div>
     <template v-else>
       <div class="tiles">

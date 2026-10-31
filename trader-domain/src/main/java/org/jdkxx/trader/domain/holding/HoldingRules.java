@@ -3,35 +3,62 @@ package org.jdkxx.trader.domain.holding;
 import org.jdkxx.trader.domain.signal.SentinelThresholds;
 
 /**
- * 持仓风险面板（3.5.0，ARCHITECTURE §29）的趋势与复核口径。长均线、斜率回看、ATR、吊灯参数<b>沿用入场信号的 sentinel-v1</b>
- * （趋势状态与入场信号的趋势门是同一个判断，不另造一套）；短均线、破位确认天数、是否看死叉是本面板自己的参数（用户 10-30 认可）。
+ * Trend and review rules of the holdings risk panel (3.5.0, ARCHITECTURE §29). The long moving
+ * average, slope lookback, ATR and chandelier parameters <b>are taken over from the entry signal's
+ * sentinel-v1</b> (the trend state is the same judgement as the entry signal's trend gate, not a
+ * separate one); the short moving average, the number of days to confirm a break and whether to
+ * watch the death cross are this panel's own parameters (approved by the user on 10-30).
  *
- * @param smaShort              短均线（50 日）
- * @param smaLong               长均线（200 日，同 sentinel-v1）
- * @param slopeLookback         长均线「在上升」= 今天的值 > 这么多天前的值（同 sentinel-v1 的趋势门）
- * @param breakConfirmDays      连续这么多天收盘低于长均线才算破位确认（避免偶尔跌破一天就来回跳）
- * @param deathCross            短均线在长均线之下是否作为复核条件
- * @param atrPeriod             ATR 周期（Wilder，同 sentinel-v1）
- * @param chandelierPeriod      吊灯：最近这么多根 K 线的最高价（同 sentinel-v1 与模拟交易）
- * @param chandelierAtrMultiple 吊灯：最高价减去这么多倍 ATR
+ * @param smaShort short moving average (50 days)
+ * @param smaLong long moving average (200 days, as in sentinel-v1)
+ * @param slopeLookback the long average is "rising" when today's value &gt; the value this many
+ *     days ago (as in sentinel-v1's trend gate)
+ * @param breakConfirmDays the close must stay at or below the long average for this many
+ *     consecutive days for a confirmed break (so that a single dip does not make the state flip
+ *     back and forth)
+ * @param deathCross whether the short average below the long average is a review condition
+ * @param atrPeriod ATR period (Wilder, as in sentinel-v1)
+ * @param chandelierPeriod chandelier: highest high over this many latest bars (as in sentinel-v1
+ *     and the simulated trading)
+ * @param chandelierAtrMultiple chandelier: the highest high minus this many ATRs
  */
-public record HoldingRules(int smaShort, int smaLong, int slopeLookback, int breakConfirmDays, boolean deathCross,
-                           int atrPeriod, int chandelierPeriod, double chandelierAtrMultiple) {
+public record HoldingRules(
+    int smaShort,
+    int smaLong,
+    int slopeLookback,
+    int breakConfirmDays,
+    boolean deathCross,
+    int atrPeriod,
+    int chandelierPeriod,
+    double chandelierAtrMultiple) {
 
-    public HoldingRules {
-        if (smaShort < 2 || smaLong <= smaShort || slopeLookback < 1 || breakConfirmDays < 1 || atrPeriod < 2
-                || chandelierPeriod < 1 || chandelierAtrMultiple <= 0) {
-            throw new IllegalArgumentException("持仓复核参数不合法");
-        }
+  public HoldingRules {
+    if (smaShort < 2
+        || smaLong <= smaShort
+        || slopeLookback < 1
+        || breakConfirmDays < 1
+        || atrPeriod < 2
+        || chandelierPeriod < 1
+        || chandelierAtrMultiple <= 0) {
+      throw new IllegalArgumentException("持仓复核参数不合法");
     }
+  }
 
-    public static HoldingRules of(SentinelThresholds th, int smaShort, int breakConfirmDays, boolean deathCross) {
-        return new HoldingRules(smaShort, th.smaLong(), th.smaSlopeLookback(), breakConfirmDays, deathCross,
-                th.atrPeriod(), th.chandelierPeriod(), th.chandelierAtrMultiple());
-    }
+  public static HoldingRules of(
+      SentinelThresholds th, int smaShort, int breakConfirmDays, boolean deathCross) {
+    return new HoldingRules(
+        smaShort,
+        th.smaLong(),
+        th.smaSlopeLookback(),
+        breakConfirmDays,
+        deathCross,
+        th.atrPeriod(),
+        th.chandelierPeriod(),
+        th.chandelierAtrMultiple());
+  }
 
-    /** 判定所需的最少 K 线数：长均线 + 斜率回看。 */
-    public int minBars() {
-        return smaLong + slopeLookback;
-    }
+  /** Minimum number of bars needed for a verdict: long average + slope lookback. */
+  public int minBars() {
+    return smaLong + slopeLookback;
+  }
 }

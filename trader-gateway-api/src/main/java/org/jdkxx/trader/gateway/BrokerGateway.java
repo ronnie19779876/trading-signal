@@ -1,34 +1,44 @@
 package org.jdkxx.trader.gateway;
 
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import org.jdkxx.trader.domain.AccountRef;
 import org.jdkxx.trader.domain.Broker;
 
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
-
 /**
- * 券商网关的公共端口：身份、生命周期、状态、账户。行情、参考数据、交易等端口按分期设计逐步加入。
+ * Common port of a broker gateway: identity, lifecycle, status and accounts. Ports for market data,
+ * reference data, trading and so on are added phase by phase.
  */
 public interface BrokerGateway {
 
-    Broker broker();
+  Broker broker();
 
-    /** 配置里是否启用。未启用时 connect() 立即完成且状态保持 DISABLED。 */
-    boolean enabled();
+  /**
+   * Whether the broker is enabled in configuration. When disabled, connect() completes at once and
+   * the state stays DISABLED.
+   */
+  boolean enabled();
 
-    /** 启用后是否随应用启动自动连接。 */
-    boolean autoConnect();
+  /** Whether an enabled gateway connects automatically when the application starts. */
+  boolean autoConnect();
 
-    GatewayStatus status();
+  GatewayStatus status();
 
-    /** 幂等。返回的 Future 在下一次成功就绪时完成；连接失败不抛异常而是进入重连，disconnect() 会让它异常完成。 */
-    CompletableFuture<Void> connect();
+  /**
+   * Idempotent. The returned future completes the next time the connection becomes ready; a failed
+   * connection attempt does not throw but enters reconnection (so the future may stay pending for a
+   * long time), and disconnect() completes it exceptionally.
+   */
+  CompletableFuture<Void> connect();
 
-    /** 幂等、同步：断开并停止重连。 */
-    void disconnect();
+  /** Idempotent and synchronous: disconnects and stops reconnecting. */
+  void disconnect();
 
-    /** 盈透：受管账户；富途：交易业务账户。未连接时异常完成（NotConnectedException）。 */
-    CompletableFuture<List<AccountRef>> accounts();
+  /**
+   * IBKR: managed accounts; Futu: trading accounts. Completes exceptionally (NotConnectedException)
+   * when not connected.
+   */
+  CompletableFuture<List<AccountRef>> accounts();
 
-    void addListener(GatewayListener listener);
+  void addListener(GatewayListener listener);
 }

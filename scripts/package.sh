@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
-# 打发布包：前端 build → 打进 jar → dist/trading-signal-<版本>-<时间戳>.tar.gz
-# 解压后的布局：bin/trader.sh  config/application.yml  config/trader.env.example  lib/trader-app.jar  systemd/  logs/
-#   ./scripts/package.sh                   只接受正式版（部署到生产的必须是正式版）
-#   ./scripts/package.sh --allow-snapshot  本机试打包
+# Builds the release package: frontend build -> bundled into the jar -> dist/trading-signal-<version>-<timestamp>.tar.gz
+# Layout after extraction: bin/trader.sh  config/application.yml  config/trader.env.example  lib/trader-app.jar  systemd/  logs/
+# Only the files copied explicitly below go into the tarball; the real trader.env is never included.
+#   ./scripts/package.sh                   accepts release versions only (what is deployed to production must be a release)
+#   ./scripts/package.sh --allow-snapshot  local trial packaging
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/lib/jdk.sh

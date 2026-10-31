@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
 #
-# 计划内主备切换：把系统从当前主库那台切到 <目标>（ARCHITECTURE §27、OPERATIONS「主备切换」）。
+# Planned primary/standby switchover: moves the system from the node that is currently primary to <target>
+# (ARCHITECTURE §27, OPERATIONS "primary/standby switchover" section).
 #   ./scripts/replica/switchover.sh vps|shanghai
-# 要人在终端前：每台服务器上的 sudo 会提示输入口令。
+# Needs a human at the terminal: sudo prompts for a password on each server.
 #
-# 顺序（2026-10-19 在上海用两个临时集群往返演练过）：
-#   检查（两边可达、角色对、版本相同、备库 streaming）→ 停旧侧应用 → 旧侧 CHECKPOINT 取位置 → 等目标回放追平
-#   → 旧侧正常关闭 PG → 核对目标收到的位置越过旧侧的关闭检查点（越不过就停在这里，旧侧原样可回滚）
-#   → 提升目标、建复制槽、关目标的隧道 → 旧侧开隧道指向目标、以备库身份启动、删掉身上残留的槽
-#   → 核对旧侧已 streaming → 目标启动应用。
-# 计划内切换不需要 pg_rewind：旧主正常关闭时会把最后的 WAL（含关闭检查点）发完，新时间线正好从那里分叉。
+# Sequence (rehearsed round-trip with two temporary clusters on the Shanghai server on 2026-10-19):
+#   checks (both reachable, roles right, same version, standby streaming) -> stop the application on the old
+#   side -> CHECKPOINT on the old side and take its position -> wait for the target's replay to catch up
+#   -> clean shutdown of PG on the old side -> verify that the position received by the target is past the
+#   old side's shutdown checkpoint (if not, stop here; the old side can be rolled back untouched)
+#   -> promote the target, create the replication slot, close the target's tunnel -> on the old side open
+#   the tunnel towards the target, start as a standby, drop the slot left over on it
+#   -> verify the old side is streaming -> start the application on the target.
+# A planned switchover needs no pg_rewind: on a clean shutdown the old primary ships its last WAL
+# (including the shutdown checkpoint), and the new timeline forks exactly there.
 #
-# 不做的事（打印提醒，人工做）：网关（盈透同一用户名只能一个会话、富途同账号多台 OpenD 会互踢行情）、本机隧道改指。
+# Not done here (a reminder is printed; do it by hand): the gateways (IBKR allows one session per user
+# name; several Futu OpenD instances on one account kick each other's quotes) and re-pointing the local
+# tunnels.
+# Every destructive step happens only after the operator types the target name; each die message states
+# what has and has not been touched yet and how to roll back.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 source scripts/replica/lib.sh
@@ -21,7 +30,7 @@ TARGET="${1:-}"
 valid_node "${TARGET}" || { echo "用法: $0 vps|shanghai" >&2; exit 2; }
 OLD="$(other "${TARGET}")"
 
-# ------------------------------------------------------------------ 检查（只读）
+# ------------------------------------------------------------------ checks (read-only)
 say "检查：${OLD}（现主库）→ ${TARGET}（目标）"
 on "${OLD}" true || die "${OLD} 连不上。主库所在机器已不可用时不能走计划内切换，见 OPERATIONS「主库宕机」"
 on "${TARGET}" true || die "${TARGET} 连不上"
@@ -41,7 +50,9 @@ echo "将要：停 ${OLD} 的应用与数据库 → 提升 ${TARGET} 为主库 �
 ask "确认请输入目标名 ${TARGET}："
 [[ "${ANSWER}" == "${TARGET}" ]] || die "未确认（收到「${ANSWER}」，应为「${TARGET}」），什么都没做"
 
-# ------------------------------------------------------------------ 旧侧：停应用、取位置
+# ------------------------------------------------------------------ old side: stop the application, take the position
+# The CHECKPOINT/LSN result is written to a file on the node because on_tty output cannot be captured
+# (it carries the sudo prompt); the redirect runs as the SSH user, not as postgres.
 say "停 ${OLD} 的应用"
 on "${OLD}" '~/trading-signal/bin/trader.sh stop' || true
 for i in $(seq 1 30); do app_running "${OLD}" || break; sleep 2; done
@@ -61,7 +72,10 @@ done
   || die "${TARGET} 两分钟内没追到 ${LSN}；应用已停、数据库未动。恢复运行：在 ${OLD} 执行 ~/trading-signal/bin/trader.sh start"
 say "${TARGET} 已回放到 ${LSN}"
 
-# ------------------------------------------------------------------ 旧侧：正常关闭 PG，核对关闭检查点已到目标
+# ------------------------------------------------------------------ old side: clean PG shutdown, verify the shutdown checkpoint reached the target
+# pg_controldata after the stop gives the cluster state ("shut down" = clean) and the location of the
+# shutdown checkpoint; the target must have received WAL beyond that location before it may be promoted,
+# otherwise the two timelines would diverge and the old side could no longer follow as a standby.
 say "${OLD}：正常关闭数据库（输入 sudo 口令）"
 on_tty "${OLD}" "sudo bash -c 'systemctl stop ${PG_UNIT} && /usr/lib/postgresql/18/bin/pg_controldata ${PG_DATA}' > /tmp/pg-switch.ctl" \
   || die "${OLD} 关闭数据库失败；在 ${OLD} 查看 systemctl status ${PG_UNIT}"
@@ -75,7 +89,9 @@ if [[ "${recv}" != t ]]; then
     ${OLD} 的数据完整、可以原样回滚：在 ${OLD} 执行 sudo systemctl start ${PG_UNIT} 与 ~/trading-signal/bin/trader.sh start"
 fi
 
-# ------------------------------------------------------------------ 目标：提升、建槽、关隧道
+# ------------------------------------------------------------------ target: promote, create the slot, close the tunnel
+# pg_promote(true, 60) returns false (not an error) on timeout, so the recovery state is checked again
+# right after.
 say "${TARGET}：提升为主库并建复制槽（输入 ${TARGET} 的 sudo 口令）"
 on_tty "${TARGET}" "sudo -u postgres psql -AtX -v ON_ERROR_STOP=1 -c 'select pg_promote(true, 60)' -c \"select pg_drop_replication_slot(slot_name) from pg_replication_slots where slot_name = 'replica'\" -c \"select pg_create_physical_replication_slot('replica', true)\" >/dev/null" \
   || die "${TARGET} 提升失败——此时两边数据库都没在当主库，先在 ${TARGET} 查看日志"
@@ -83,7 +99,9 @@ on_tty "${TARGET}" "sudo -u postgres psql -AtX -v ON_ERROR_STOP=1 -c 'select pg_
 on "${TARGET}" "systemctl --user disable --now ${TUNNEL_UNIT} >/dev/null 2>&1 || true"
 say "${TARGET} 已是主库"
 
-# ------------------------------------------------------------------ 旧侧：改成备库
+# ------------------------------------------------------------------ old side: turn it into a standby
+# From here on the target is already the primary, so failures only warn and the switchover continues;
+# a standby that does not attach can be rebuilt later with reseed.sh.
 say "${OLD}：隧道指向 ${TARGET}，以备库身份启动（输入 sudo 口令）"
 on "${OLD}" "systemctl --user enable --now ${TUNNEL_UNIT} >/dev/null 2>&1" || die "${OLD} 隧道起不来；先跑 scripts/replica/install-node.sh ${OLD}"
 for i in $(seq 1 15); do on "${OLD}" 'pg_isready -q -h 127.0.0.1 -p 15432' && break; sleep 2; done
@@ -100,7 +118,7 @@ else
   say "⚠️ ${OLD} 没有接上；切换继续，之后用 scripts/replica/reseed.sh ${OLD} 重建备库"
 fi
 
-# ------------------------------------------------------------------ 目标：启动应用
+# ------------------------------------------------------------------ target: start the application
 say "${TARGET}：启动应用"
 on "${TARGET}" '~/trading-signal/bin/trader.sh start' || die "${TARGET} 应用启动失败，看 ~/trading-signal/logs"
 health="$(on "${TARGET}" "curl -s -m 10 http://127.0.0.1:8093/actuator/health" 2>/dev/null)"

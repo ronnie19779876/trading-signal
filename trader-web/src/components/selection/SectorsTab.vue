@@ -5,8 +5,9 @@ import { sectorCn } from '../../lib/sector'
 import { RATINGS, RATING_COLOR, RATING_LABEL, score } from '../../lib/selection'
 
 /**
- * 板块：每个板块各档评级的只数（横向堆叠）与合成分中位数。打分是板块内百分位，
- * 板块之间合成分的高低不代表「哪个板块更好」，这里只看分布。
+ * Sectors: number of instruments per rating tier in each sector (horizontally stacked) and the median composite
+ * score. Scores are within-sector percentiles, so a higher composite in one sector than another does not mean "a
+ * better sector"; this view only shows distributions.
  */
 const props = defineProps<{ rows: ScoreView[] }>()
 

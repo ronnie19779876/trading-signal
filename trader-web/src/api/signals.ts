@@ -1,7 +1,7 @@
 import { http } from './http'
 import type { AuditReport } from './account'
 
-/** 与 docs/API.md「入场信号（第 4 期）」一一对应。价位一律为判定日口径（当天真实可成交价）。 */
+/** Mirrors the "entry signals (phase 4)" section of docs/API.md. Price levels are always on the evaluation-date basis (prices actually tradable that day). */
 
 export type Gate = 'TREND' | 'LOCATION' | 'TRIGGER' | 'RISK'
 export type Verdict = 'PASS' | 'FAIL' | 'UNAVAILABLE'
@@ -22,7 +22,7 @@ export type ExitReason = 'STOP' | 'CHANDELIER' | 'TIME' | 'OPEN'
 export interface GateResult {
   gate: Gate
   verdict: Verdict
-  /** 代入了数值的判据原文 */
+  /** The criterion text with the actual values substituted */
   criteria: string
   values: Record<string, unknown>
 }
@@ -75,7 +75,7 @@ export interface EvaluationRow {
   status: EvaluationStatus
   statusDetail: string | null
   outcome: Outcome | null
-  /** 四门缩写：P 通过 / F 不过 / U 不可判定；不予判定时为 null */
+  /** The four gates abbreviated: P pass / F fail / U undeterminable; null when not evaluated */
   gates: string | null
   gatesPassed: number
   firstBlockingGate: Gate | null
@@ -87,7 +87,7 @@ export interface EvaluationRow {
   stop: number | null
   stopDistance: number | null
   inputFingerprint: string
-  /** 判定明细：只给池与持仓、至少过三门、结果不是 NO_SIGNAL 的存 */
+  /** Evaluation detail: stored only for pool and holdings rows that passed at least three gates with an outcome other than NO_SIGNAL */
   detail: { evaluation: SentinelEvaluation; droppedNonTradingDays: string[]; missingTradingDays: string[] } | null
   jobRunId: number | null
   evaluatedAt: string
@@ -141,11 +141,11 @@ export interface SignalTrack {
   returnPct: number | null
   mfeR: number | null
   maeR: number | null
-  /** 当前价（判定日口径，与 entryPrice 可直接比）；只有持有中（OPEN）才有 */
+  /** Current price (evaluation-date basis, directly comparable with entryPrice); only present while OPEN */
   lastClose: number | null
-  /** 当前价那根 K 线的日期；可能早于 updatedThrough（标的停牌或缺 K 线时会滞后） */
+  /** Date of the bar behind the current price; may be earlier than updatedThrough (it lags when the instrument is halted or bars are missing) */
   lastCloseDate: string | null
-  /** 浮动盈亏 ÷ R；R = 判定日收盘 − 本变体止损，所以两个变体通常不同 */
+  /** Unrealized P&L / R; R = evaluation-date close - this variant's stop, so the two variants usually differ */
   unrealizedR: number | null
   barsHeld: number | null
   updatedThrough: string | null
@@ -160,9 +160,9 @@ export interface SignalView {
 export interface SignalDetail {
   signal: EntrySignal
   evaluation: EvaluationRow | null
-  /** 按当前库里数据重算的输入指纹与存档一致与否；不一致说明 K 线或因子被重拉改过 */
+  /** Whether the input fingerprint recomputed from the current database matches the stored one; a mismatch means bars or adjustment factors were re-fetched and changed */
   fingerprintMatches: boolean
-  /** 存档没有判定明细时现场重算 */
+  /** Recomputed on the fly when the stored row has no evaluation detail */
   recomputed: Judgement | null
   tracks: SignalTrack[]
 }
@@ -170,7 +170,7 @@ export interface SignalDetail {
 export interface LedgerStats {
   variant: Variant
   origin: Origin
-  /** VETO 被否决 / ALLOW 调过模型并放行 / NONE 没有模型结论 */
+  /** VETO = vetoed / ALLOW = the model was called and let it through / NONE = no model conclusion */
   ai: 'VETO' | 'ALLOW' | 'NONE'
   total: number
   open: number
@@ -231,7 +231,7 @@ export interface Replay {
   trades: PaperTrade[] | null
 }
 
-/** 画图用 K 线：价格尺度折回 asOf 那天，与当天的信号价位对齐。 */
+/** Bars for charting: the price scale is adjusted back to the asOf date so it lines up with that day's signal levels. */
 export interface ChartBar {
   tradeDate: string
   open: number
@@ -248,7 +248,7 @@ export const signalsApi = {
   audit: async (date?: string) => (await http.get<AuditReport>('/api/signals/audit', { params: opt({ date }), timeout: 30_000 })).data,
   evaluations: async (p: { date?: string; outcome?: string; gate?: string; scope?: 'pool' | 'all' }) =>
     (await http.get<EvaluationRow[]>('/api/signals/evaluations', { params: opt(p) })).data,
-  /** 单只评估历史（倒序）；仪表盘用它找最近一个有评估的日子 */
+  /** Evaluation history of one instrument (newest first); the dashboard uses it to find the latest day with an evaluation */
   history: async (symbol: string, p: { from?: string; to?: string } = {}) =>
     (await http.get<EvaluationRow[]>(`/api/signals/evaluations/${encodeURIComponent(symbol)}`, { params: opt(p) })).data,
   evaluate: async (symbol: string, date?: string) =>

@@ -7,9 +7,12 @@ import SimEquityChart from './SimEquityChart.vue'
 import SimCriteriaPanel from './SimCriteriaPanel.vue'
 
 /**
- * 模拟交易（ARCHITECTURE §26）：验证选股准不准的纸面账户，不下单。规则版本 sim-v1：等权、止损封顶 10%、
- * 没有压力区用 +2R、成本按 0。止损与吊灯止损自动平仓（收盘判定、收盘成交），止盈只提示，由人点平仓。
- * 判断选股看对 SPY 的超额与样本数，不看绝对盈亏——页面上每个汇总数都带 n。
+ * Simulated trading (ARCHITECTURE §26): a paper account that tests whether the selection works; it places no
+ * orders. Rules version sim-v1: equal weight, stop capped at 10%, +2R when there is no resistance zone, zero costs.
+ * Stops and chandelier stops close automatically (decided on the close, filled at the close); take-profit only
+ * alerts and a human clicks to close.
+ * Judge the selection by excess return over SPY and by sample size, not by absolute P&L -- every summary figure on
+ * the page carries its n.
  */
 const props = defineProps<{ overview: SimOverview | null; names: Map<string, string | null> }>()
 const emit = defineEmits<{ changed: [] }>()
@@ -41,7 +44,7 @@ const active = computed(() => trades.value.filter((t) => t.status === 'PENDING_E
 const closed = computed(() => trades.value.filter((t) => t.status === 'CLOSED').sort((a, b) => (b.exitDate ?? '').localeCompare(a.exitDate ?? '')))
 const cancelled = computed(() => trades.value.filter((t) => t.status === 'CANCELLED'))
 
-/** 已平仓的汇总：n 照实给，不做显著性判断 */
+/** Summary of closed trades: n is reported as-is, no significance test. Trades without a return count as 0 in meanReturn. */
 const totals = computed(() => {
   const c = closed.value
   const wins = c.filter((t) => (t.pnl ?? 0) > 0).length
@@ -96,7 +99,7 @@ async function close(t: SimTrade) {
   }
 }
 
-// ---- 周报：列表不带正文，点开再取
+// ---- weekly reports: the list has no body; it is fetched when a week is opened
 const opened = ref<string | null>(null)
 const report = ref<SimWeekly | null>(null)
 const reportLoading = ref(false)

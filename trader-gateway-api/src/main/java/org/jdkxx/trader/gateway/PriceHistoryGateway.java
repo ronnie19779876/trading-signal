@@ -1,31 +1,38 @@
 package org.jdkxx.trader.gateway;
 
-import org.jdkxx.trader.domain.selection.SplitAdjustedBar;
-
 import java.time.LocalDate;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import org.jdkxx.trader.domain.selection.SplitAdjustedBar;
 
 /**
- * 历史日线端口（量化选股，ARCHITECTURE §25.6；盈透实现）。只读。
- * <p>返回<b>按拆股调整</b>的 TRADES 日线（盈透口径，截至请求当天），不进 {@code daily_bar}。
- * 盈透历史数据有节奏限制（10 分钟 60 次），实现方自行限流，调用方线程可能被阻塞数分钟，不得在 SDK 回调线程上调用。
+ * Historical daily bar port (quant selection, ARCHITECTURE §25.6; implemented by IBKR). Read-only.
+ *
+ * <p>Returns <b>split-adjusted</b> TRADES daily bars (IBKR basis, as of the request day); they
+ * never go into {@code daily_bar}. IBKR paces historical data requests (60 per 10 minutes); the
+ * implementation does its own rate limiting, so the calling thread may block for minutes. Never
+ * call it on an SDK callback thread.
  */
 public interface PriceHistoryGateway {
 
-    /**
-     * @param conId 盈透合约 id（先用 {@link ReferenceDataGateway#lookup} 解析）
-     * @param from  起始日（含）
-     * @param to    截止日（含）
-     */
-    CompletableFuture<List<SplitAdjustedBar>> splitAdjustedDailyBars(long conId, LocalDate from, LocalDate to);
+  /**
+   * @param conId IBKR contract id (resolve it first with {@link ReferenceDataGateway#lookup})
+   * @param from first day (inclusive)
+   * @param to last day (inclusive)
+   */
+  CompletableFuture<List<SplitAdjustedBar>> splitAdjustedDailyBars(
+      long conId, LocalDate from, LocalDate to);
 
-    /**
-     * 这只合约最早一根 TRADES 日线的日期（美东交易日），与 {@link #splitAdjustedDailyBars} 同一取法（主交易所、常规时段）。
-     * 取历史之前先问：窗口整段落在最早日之前时，盈透有时一直不回复、只能等超时（2026-10-17 实测 SKYD），
-     * 而不是回 162「没有数据」。券商说没有数据时以 {@code RequestRejectedException}（162）失败。
-     *
-     * @param conId 盈透合约 id
-     */
-    CompletableFuture<LocalDate> earliestDailyBar(long conId);
+  /**
+   * Date (US/Eastern trading day) of this contract's earliest TRADES daily bar, fetched the same
+   * way as {@link #splitAdjustedDailyBars} (primary exchange, regular trading hours). Ask this
+   * before requesting history: when a window lies entirely before the earliest date, IBKR sometimes
+   * never answers and the request can only time out (measured 2026-10-17 on SKYD) instead of
+   * returning 162 "no data". When the broker says there is no data, the future fails with {@code
+   * RequestRejectedException} (162). The reported date can be earlier than the real first bar, so
+   * use it only to skip or narrow windows, never as proof that data exists.
+   *
+   * @param conId IBKR contract id
+   */
+  CompletableFuture<LocalDate> earliestDailyBar(long conId);
 }

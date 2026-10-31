@@ -1,12 +1,12 @@
 import { http } from './http'
 
-/** 情景。三个缺一不可：期权型业务单点估值没有意义。 */
+/** Scenario. All three are required: a single-point valuation of an option-like business is meaningless. */
 export type Scenario = 'BEAR' | 'BASE' | 'BULL'
 
 export const SCENARIOS: Scenario[] = ['BEAR', 'BASE', 'BULL']
 export const SCENARIO_LABEL: Record<Scenario, string> = { BEAR: '熊', BASE: '基准', BULL: '牛' }
 
-/** 一条业务线在某个情景下的假设。netMargin 是**小数**（7% 传 0.07），写成百分数后端直接 400。 */
+/** Assumptions for one business line in one scenario. netMargin is a **decimal** (send 0.07 for 7%); sending a percentage gets a 400 from the backend. */
 export interface SegmentCase {
   volume: number | null
   price: number | null
@@ -16,7 +16,7 @@ export interface SegmentCase {
 
 export interface Segment {
   name: string
-  /** 口径备注，必填：用来挡住重复计算（同一批车既算卖车又算打车） */
+  /** Scope note, required: guards against double counting (the same cars counted both as car sales and as ride-hailing) */
   scopeNote: string
   cases: Partial<Record<Scenario, SegmentCase>>
 }
@@ -25,7 +25,7 @@ export interface ModelRequest {
   name?: string | null
   asOf: string
   targetYear: number
-  /** 要求回报率，小数 */
+  /** Required rate of return, decimal */
   discountRate: number
   targetShares: number
   targetNetCash: number
@@ -38,7 +38,7 @@ export interface ScenarioValue {
   segmentTotal: number
   equityValue: number
   targetPrice: number
-  /** 折回基准日的股价——和现价比只能比这个 */
+  /** Share price discounted back to the base date -- this is the only figure comparable with the current price */
   presentValue: number
   upsidePct: number | null
 }
@@ -47,10 +47,10 @@ export interface SotpResult {
   horizonYears: number
   discountFactor: number
   scenarios: Record<Scenario, ScenarioValue>
-  /** 单因子敏感度：只动一条业务线、其余保持基准，按摆幅倒序 */
+  /** One-factor sensitivity: move one business line only, keep the rest at base; sorted by swing, largest first */
   sensitivities: { segment: string; lowPresentValue: number; highPresentValue: number; swing: number }[]
   marginCheck: { impliedNetMargin: number; actualNetMargin: number | null; deviationPp: number | null; ok: boolean }
-  /** 缺本益比基准时整个为 null：不硬编倍数 */
+  /** null as a whole when there is no P/E baseline: no hard-coded multiple */
   reverse: {
     requiredTargetPrice: number
     requiredMarketCap: number
@@ -59,18 +59,18 @@ export interface SotpResult {
   } | null
 }
 
-/** 自动带入的公司级底座，全部只读。 */
+/** Company-level base figures filled in automatically; all read-only. */
 export interface SotpBasis {
   symbol: string
   name: string
   priceDate: string | null
   price: number | null
-  /** 三种口径都给，系统不替使用者选：实测同一只票三个数互不相同 */
+  /** All three definitions are given and the system does not choose for the user: measured, the three numbers differ for the same stock */
   shares: { outstanding: number | null; byMarketCap: number | null; byDilutedEps: number | null }
   netCash: {
     cashAndShortTerm: number | null
     borrowings: number | null
-    /** 融资租赁，默认不计入有息负债 */
+    /** Finance leases; not counted as interest-bearing debt by default */
     leases: number | null
     netCash: number | null
     periodText: string | null
@@ -78,16 +78,17 @@ export interface SotpBasis {
   ttmRevenue: number | null
   ttmNetIncome: number | null
   netMarginTtm: number | null
-  /** 近 5 年日 K 市盈率正值中位数；0 是无数据不是真值，已剔除 */
+  /** Median of the positive daily-bar P/E over the last 5 years; 0 means no data, not a real value, and is excluded */
   peMedian: number | null
   applicability: { verdict: 'APPLICABLE' | 'CAUTION' | 'NOT_APPLICABLE'; reasons: string[] }
 }
 
 /**
- * 已存的方案：落库的一定有名称，所以这里的 name 不是可空的。
- * asOf 是当初存下来的估值基准日（原样回显）；valuedAt 是本次实际折算到的日期
- * （= 现价所属交易日与 asOf 中较晚的那个）。两者不同说明方案存了一段时间，
- * 现值已经按现价所属日重算，好让「现值」与它比较的「现价」属于同一天。
+ * A saved model: anything persisted always has a name, so name is not nullable here.
+ * asOf is the valuation base date stored back then (echoed as-is); valuedAt is the date actually discounted to this
+ * time (= the later of the current price's trading day and asOf). When they differ the model was saved a while ago
+ * and the present value has been recomputed for the current price's date, so that the "present value" and the
+ * "current price" it is compared with belong to the same day.
  */
 export interface SavedModel {
   id: number
@@ -110,10 +111,10 @@ export const valuationApi = {
     (await http.get<SotpBasis>(`/api/valuation/sotp/${encodeURIComponent(symbol)}/inputs`)).data,
   models: async (symbol: string) =>
     (await http.get<SavedModel[]>(`/api/valuation/sotp/${encodeURIComponent(symbol)}`)).data,
-  /** 试算，不落库 */
+  /** Dry-run calculation, not persisted */
   calc: async (symbol: string, body: ModelRequest) =>
     (await http.post<SotpResult>(`/api/valuation/sotp/calc/${encodeURIComponent(symbol)}`, body)).data,
-  /** 按 name 覆盖保存 */
+  /** Save, overwriting any model with the same name */
   save: async (symbol: string, body: ModelRequest) =>
     (await http.post<SavedModel>(`/api/valuation/sotp/${encodeURIComponent(symbol)}`, body)).data,
   remove: async (id: number) => (await http.delete(`/api/valuation/sotp/${id}`)).data,

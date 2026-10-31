@@ -18,11 +18,13 @@ import {
 } from '../api/account'
 
 /**
- * 账户页：资金、净值历史、对账。持仓看持仓页。
+ * Account page: funds, NAV history, reconciliation. Positions are on the positions page.
  *
- * 资金区优先盈透实时（/api/account/live），全部是盈透原值、不做折算；拿不到时退回最近一份收盘快照。
- * 净值历史与对账来自每日美东 18:00 的快照（快照序列里每天都带着当天的对账明细）。
- * 拍快照、持仓同步、账户审计是偶尔才用的维护操作，收在页底折叠区。
+ * The funds area prefers IBKR live (/api/account/live), all raw IBKR values with no conversion; without it, it falls
+ * back to the latest closing snapshot. NAV history and reconciliation come from the daily 18:00 US/Eastern snapshot
+ * (each day's snapshot in the series carries that day's reconciliation detail).
+ * Taking a snapshot, syncing holdings and the account audit are occasional maintenance actions, kept in a collapsed
+ * section at the bottom.
  */
 const { live, start: startLive, stop: stopLive } = useLiveAccount()
 const view = ref<SnapshotView | null>(null)
@@ -31,7 +33,7 @@ const audit = ref<AuditReport | null>(null)
 const plan = ref<HoldingSyncResult | null>(null)
 const syncing = ref(false)
 
-// ---- 名称与状态 ----
+// ---- names and statuses ----
 const STATUS: Record<ReconStatus, { text: string; type: 'success' | 'warning' | 'danger' }> = {
   OK: { text: '通过', type: 'success' },
   WARN: { text: '提醒', type: 'warning' },
@@ -57,7 +59,7 @@ const ACTION_LABEL: Record<SyncAction, string> = {
   REMOVE: '移出池',
 }
 
-// ---- 资金：实时优先，退回快照 ----
+// ---- funds: live first, falling back to the snapshot ----
 const useLive = computed(() => {
   const l = live.value
   return !!l && !!l.money && (l.status === 'LIVE' || l.status === 'DISCONNECTED')
@@ -86,7 +88,7 @@ const funds = computed(() => {
 const accountMask = computed(() => live.value?.accountMask ?? snapshot.value?.accountMask ?? null)
 const currency = computed(() => live.value?.currency ?? snapshot.value?.currency ?? null)
 
-// ---- 净值历史 ----
+// ---- NAV history ----
 type Range = '90' | '180' | '365' | 'all'
 const range = ref<Range>('365')
 const RANGES: { value: Range; label: string }[] = [
@@ -101,7 +103,7 @@ const inRange = computed(() => {
   const from = d === null ? '' : daysAgoEt(d)
   return series.value.filter((s) => s.asOfDate >= from)
 })
-/** 表格：最近的在上；较前一日 = 与序列里前一份快照的净值差（含出入金）。 */
+/** Table: newest first; change vs previous = NAV difference to the previous snapshot in the series (includes deposits and withdrawals). */
 const dailyRows = computed(() => {
   const asc = [...series.value].sort((a, b) => a.asOfDate.localeCompare(b.asOfDate))
   const prev = new Map(asc.slice(1).map((s, i) => [s.asOfDate, asc[i]]))
@@ -120,7 +122,7 @@ function toggle(date: string) {
   expanded.value = expanded.value === date ? null : date
 }
 
-// ---- 估值明细（最新快照）----
+// ---- valuation detail (latest snapshot) ----
 const valuation = computed(() => {
   const list = view.value?.positions ?? []
   const total = list.reduce((sum, p) => sum + (p.marketValue ?? 0), 0)
@@ -131,14 +133,15 @@ const valuation = computed(() => {
 const opened = ref<string[]>([])
 const maintenance = ref<string[]>([])
 
-// ---- 取数 ----
-// 三块各自独立、失败自动重试；成功才覆盖，失败的保留上一次的数据（3.4.3，见 useRecoveringLoad）
+// ---- loading ----
+// The three blocks are independent and retried automatically on failure; only a success overwrites, a failure keeps
+// the previous data (3.4.3, see useRecoveringLoad)
 const daily = useRecoveringLoad((): Stages => [{
   快照序列: async () => { series.value = await accountApi.snapshots('2000-01-01', isoEt()) },
   账户审计: async () => { audit.value = await accountApi.audit() },
   最新快照: async () => {
     view.value = await accountApi.latest().catch((e) => {
-      if ((e as { response?: { status?: number } }).response?.status === 404) return null // 还没拍过快照
+      if ((e as { response?: { status?: number } }).response?.status === 404) return null // no snapshot taken yet
       throw e
     })
   },
@@ -190,7 +193,8 @@ async function applySync() {
   }
 }
 
-// ---- 刷新节奏：实时见 useLiveAccount（盘中 1 秒），快照与审计 5 分钟；页面切到后台即暂停 ----
+// ---- refresh cadence: live data see useLiveAccount (1 s during the session), snapshots and audit every 5 minutes;
+// everything pauses while the page is in the background ----
 let running = false
 function start() {
   if (running) return
@@ -226,7 +230,7 @@ onBeforeUnmount(() => {
     </PageHeader>
     <RecoveryAlert :error="daily.errorText.value" :retry-in="daily.retryIn.value" :busy="daily.busy.value" @retry="daily.retryNow" />
 
-    <!-- 资金 -->
+    <!-- funds -->
     <section class="panel">
       <div class="panel__head">
         <h3>资金</h3>
@@ -273,7 +277,7 @@ onBeforeUnmount(() => {
       <el-empty v-else :image-size="60" :description="loaded ? '盈透实时不可用，也还没有账户快照' : '加载中…'" />
     </section>
 
-    <!-- 净值历史 -->
+    <!-- NAV history -->
     <EquityPanel :series="inRange" :days="rangeDays" :live-nav="useLive ? funds?.netLiquidation ?? null : null" :height="260">
       <template #actions>
         <el-radio-group v-model="range" size="small">
@@ -328,7 +332,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <!-- 对账（最新快照） -->
+    <!-- reconciliation (latest snapshot) -->
     <section v-if="snapshot" class="panel">
       <div class="panel__head">
         <h3>对账</h3>
@@ -382,7 +386,7 @@ onBeforeUnmount(() => {
       </el-collapse>
     </section>
 
-    <!-- 维护 -->
+    <!-- maintenance -->
     <el-collapse v-model="maintenance" class="panel maintenance">
       <el-collapse-item name="m">
         <template #title>
@@ -441,7 +445,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .kv--main b { font-size: 18px; }
-/* 两行用 auto-fill：列数只取决于宽度，盈亏行的三格与资金行的列对齐（auto-fit 会把三格拉满整行） */
+/* Both rows use auto-fill: the column count depends only on the width, so the three P&L cells line up with the funds row (auto-fit would stretch the three cells across the whole row) */
 .funds, .pnl { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 .pnl { margin-top: 8px; }
 .daily { max-height: 420px; overflow-y: auto; }

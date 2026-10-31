@@ -6,8 +6,9 @@ import { auditCheckLabel } from '../../lib/audit'
 import { errMsg } from '../../lib/format'
 
 /**
- * 数据与审计：评分输入的覆盖（6.1 验收口径）与当天审计全部检查项，连同已知偏差原文。
- * 回补、重放都不在这里做——页面只读，要动数据走接口（见 docs/API.md）。
+ * Data and audit: coverage of the scoring inputs (the 6.1 acceptance definition) and every check of the day's audit,
+ * including the known-bias text verbatim. Backfill and replay are not done here -- the page is read-only; to change
+ * data use the API (see docs/API.md).
  */
 const props = defineProps<{ audit: AuditReport | null }>()
 

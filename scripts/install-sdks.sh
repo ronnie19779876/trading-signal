@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 #
-# 安装两个不在 Maven Central 上的构件到本地仓库（克隆仓库后跑一次；升级版本后重跑）：
-#   1. com.interactivebrokers:tws-api        盈透 TWS API（版本取根 pom 的 tws-api.version）
-#   2. org.jdkxx.trader:futu-api-shaded      富途 SDK 的 protobuf 重定位版本（版本取根 pom 的 futu-api-shaded.version）
+# Installs two artifacts that are not on Maven Central into the local repository (run once after cloning;
+# re-run after a version upgrade):
+#   1. com.interactivebrokers:tws-api        IBKR TWS API (version from tws-api.version in the root pom);
+#                                            its license does not allow redistribution, so the jar is never committed
+#   2. org.jdkxx.trader:futu-api-shaded      the Futu SDK with protobuf relocated (version from
+#                                            futu-api-shaded.version in the root pom)
 #
-# 用法：./scripts/install-sdks.sh            已安装则跳过
-#       FORCE=1 ./scripts/install-sdks.sh    强制重装
-#       TWS_API_JAR=/path/TwsApi.jar ./scripts/install-sdks.sh   离线：指定已下载的 jar
+# Usage: ./scripts/install-sdks.sh            skips what is already installed
+#        FORCE=1 ./scripts/install-sdks.sh    forces a reinstall
+#        TWS_API_JAR=/path/TwsApi.jar ./scripts/install-sdks.sh   offline: use an already downloaded jar
+# Note: a cached sdk/tws-api/TwsApi.jar from an earlier run is reused as-is, whatever version it is.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/lib/jdk.sh
@@ -25,7 +29,7 @@ if [[ -f "$TWS_IN_REPO" && -z "${FORCE:-}" ]]; then
 else
     JAR="${TWS_API_JAR:-sdk/tws-api/TwsApi.jar}"
     if [[ ! -f "$JAR" ]]; then
-        # 官方文件名：twsapi_macunix.1030.01.zip（10.30.01 → 1030.01）
+        # Official file name: twsapi_macunix.1030.01.zip (10.30.01 -> 1030.01)
         MM="${TWS_VER%.*}"; PATCH="${TWS_VER##*.}"
         ZIP_NAME="twsapi_macunix.${MM//./}.${PATCH}.zip"
         URL="https://interactivebrokers.github.io/downloads/$ZIP_NAME"

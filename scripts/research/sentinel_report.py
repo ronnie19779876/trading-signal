@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""入场哨兵 sentinel-v1 回放统计（ARCHITECTURE §18 步骤 2）。
+"""Replay statistics for the entry sentinel sentinel-v1 (ARCHITECTURE §18, step 2).
 
-只调只读 GET 接口（默认开发实例 :8083），不写任何数据；只用标准库。结论可重跑核对：
+Calls read-only GET endpoints only (dev instance :8083 by default), writes no data, uses only the standard
+library. The conclusions can be re-run and checked:
 
     python3 scripts/research/sentinel_report.py [--base http://127.0.0.1:8083] [--from 2007-08-01] [--to 2026-09-02] SYM ...
 
-方法约束（沿用 futu-trader 分享稿 §6.6 的教训）：
-- 未平仓的纸面交易不计入（浮盈计零）；
-- 跨止损宽度的比较用百分比收益，不用 R（止损越紧 R 越小，同等波动的 R 倍数越大）；
-- 同一市场同一区间的交易高度相关，显著性一律按"年份"分块重抽（整年重抽，保留年内相关），不按交易独立计算；
-- 信号数 ≠ 交易数：并列一份"持仓期间不重复入场"的口径，与分享稿的成交回测可比。
+Method constraints (following the lessons of §6.6 of the futu-trader write-up):
+- open paper trades are not counted (unrealized P&L counts as zero);
+- comparisons across stop widths use percentage returns, not R (the tighter the stop, the smaller R, and the
+  larger the R multiple for the same move);
+- trades in the same market over the same period are highly correlated, so significance is always resampled
+  in "year" blocks (whole-year bootstrap, keeping within-year correlation), never computed as if trades were
+  independent;
+- signals != trades: a "no re-entry while holding" variant is reported alongside, comparable with the
+  write-up's fill-based backtest.
 """
 import argparse, json, math, random, statistics, sys, urllib.request
 from collections import defaultdict, Counter
@@ -39,7 +44,8 @@ def closes(sym):
 
 
 def year_block_ci(values_by_year, stat=statistics.fmean, n=a.boot, seed=20260917):
-    """整年重抽：每轮从有样本的年份里有放回抽同样多个年份，合并其全部样本后求统计量。"""
+    """Whole-year bootstrap: each round draws, with replacement, as many years as there are years with samples,
+    pools all their samples and computes the statistic."""
     rnd = random.Random(seed)
     years = [y for y, v in values_by_year.items() if v]
     if len(years) < 2:
@@ -63,7 +69,8 @@ def fmt_ci(ci, digits=3, pct=False):
 
 
 def ret(t):
-    """已实现收益率（含减半仓那一半）：R 倍数 × 每股风险 ÷ 入场价。每股风险 = +1R − 判定日收盘 = (+1R − 止损) / 2。"""
+    """Realized return (including the half closed at +1R when scaling out): R multiple × risk per share ÷ entry
+    price. Risk per share = +1R − close on the decision day = (+1R − stop) / 2."""
     if t['r'] is None:
         return None
     risk = (t['plusOneR'] - t['stop']) / 2
@@ -85,7 +92,7 @@ print(f'# sentinel-v1 回放统计（{a.frm} ~ {a.to}，{len(a.symbols)} 只）\
 print('纸面交易：次日开盘入场；收盘跌破止损离场；盘中触及 +1R 后吊灯止损（22 日高 − 3×ATR）生效；20 个交易日未触及 +1R 时间止损；'
       '不计成本；未平仓不计。\n')
 
-# ---- 1. 分标的 ----
+# ---- 1. per symbol ----
 print('## 1. 分标的（全部信号，允许持仓期间重复入场）\n')
 print('| 标的 | 信号 | 已平 | 胜率 | 每笔 R | ΣR |')
 print('| --- | --- | --- | --- | --- | --- |')
@@ -138,7 +145,7 @@ for y in sorted(by_year):
     print(f'| {y} | {len(v)} | {statistics.fmean(v):+.3f} |')
 
 
-# ---- 4. 配对比较（同一批信号，只换出场；用百分比收益）----
+# ---- 4. paired comparison (same signals, only the exit changes; percentage returns) ----
 def paired(title, variant):
     diffs = defaultdict(list)
     count = better = 0
@@ -161,7 +168,7 @@ def paired(title, variant):
 paired('4. 配对：+1R 减半仓 对 不减半仓', half)
 paired('5. 配对：止损 2.5×ATR 对 2.0×ATR（只改出场）', wide)
 
-# ---- 6. 事件研究：入场后 N 日收益与相对 SPY 超额 ----
+# ---- 6. event study: N-day return after entry and excess over SPY ----
 print('\n## 6. 事件研究：入场开盘后 N 个交易日的收益（前复权，含分红）\n')
 print('| N | 样本 | 平均收益 | 平均超额（对 SPY） | 超额的年份分块 95% 区间 |')
 print('| --- | --- | --- | --- | --- |')
@@ -189,9 +196,10 @@ for n in (5, 20, 60):
     if flat_r:
         print(f'| {n} | {len(flat_r)} | {statistics.fmean(flat_r):+.2%} | {statistics.fmean(flat_e):+.2%} | {fmt_ci(year_block_ci(ex_by_year), 2, pct=True)} |')
 
-# ---- 7. 选择偏差对照：同一标的、同一年份"任意一天入场"的超额作基准 ----
-# 池与持仓是今天挑出来的（事后看的赢家），任何入场规则在它们身上都会显得跑赢 SPY。
-# 信号的价值只能用"信号入场 − 同标的同年份随便哪天入场"来衡量。
+# ---- 7. selection-bias control: the excess of entering on "any day" of the same symbol and year is the baseline ----
+# The pool and holdings were picked today (winners in hindsight), so any entry rule looks like it beats SPY
+# on them. The value of a signal can only be measured as "signal entry − entry on an arbitrary day of the
+# same symbol and year".
 print('\n## 7. 选择偏差对照：信号超额 − 同标的同年份任意一天入场的超额\n')
 print('| N | 配对样本 | 信号超额 | 同标的同年份基准 | 差值 | 差值的年份分块 95% 区间 |')
 print('| --- | --- | --- | --- | --- | --- |')

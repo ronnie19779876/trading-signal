@@ -1,15 +1,18 @@
 package org.jdkxx.trader.core.selection;
 
-/** 量化选股输入回补的四个部分（§25.6）。 */
+/** The four parts of quant selection input backfill (§25.6). */
 public enum BackfillPart {
-    /** 盈透拆股调整日线 + 接缝核对 */
-    PRICES,
-    /** 富途估值历史 PE / PB / PS */
-    VALUATION,
-    /** 富途财报公告日 */
-    EARNINGS,
-    /** 富途季报（利润表、资产负债表、现金流量表） */
-    FINANCIALS,
-    /** 盈透证券类型（stockType：COMMON / ADR / REIT / NY REG SHRS），排除 ADR 与 REITs 用 */
-    TYPES
+  /** IBKR split-adjusted daily bars plus the seam check */
+  PRICES,
+  /** Futu valuation history PE / PB / PS */
+  VALUATION,
+  /** Futu earnings announcement dates */
+  EARNINGS,
+  /** Futu quarterly reports (income statement, balance sheet, cash flow statement) */
+  FINANCIALS,
+  /**
+   * IBKR security type (stockType: COMMON / ADR / REIT / NY REG SHRS), used to exclude ADRs and
+   * REITs
+   */
+  TYPES
 }

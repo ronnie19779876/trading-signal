@@ -15,10 +15,13 @@ import ScoreDrawer from '../components/selection/ScoreDrawer.vue'
 import SimTab from '../components/selection/SimTab.vue'
 
 /**
- * 量化选股页（§25.9 第 6.3 期）：顶部是评分日的概况与审计（有问题才列），下面五个标签页：
- * 评分榜、评级变动（与上一个评分日比）、板块、数据与审计、模拟交易（§26）。点任一行打开详情抽屉。
- * 评分部分只读；唯一的写操作是模拟交易的加入（评分榜最新评分日前 N 名上的「模拟」）与平仓。
- * 日期只能选库里有评分的交易日；评级变动的「上一日」也取自评分日列表，而不是日历上的前一天。
+ * Quant selection page (§25.9, phase 6.3): the score date's summary and audit on top (failed checks only), then
+ * five tabs: ranking, rating changes (vs the previous score date), sectors, data and audit, simulated trading
+ * (§26). Clicking any row opens the detail drawer.
+ * Scoring is read-only; the only write operations are adding a simulated trade (the "simulate" action on the top N
+ * of the latest score date's ranking) and closing one.
+ * Only trading days that have scores in the database can be selected; the "previous day" of rating changes also
+ * comes from the list of score dates, not from the calendar.
  */
 const days = ref<string[]>([])
 const date = ref<string | null>(null)
@@ -35,13 +38,13 @@ let loadSeq = 0
 const daySet = computed(() => new Set(days.value))
 const prevDate = computed(() => {
   if (!date.value) return null
-  return days.value.find((d) => d < date.value!) ?? null   // days 按日期倒序
+  return days.value.find((d) => d < date.value!) ?? null   // days are sorted newest first
 })
 
 const inputsTab = useTemplateRef<{ load: () => void }>('inputsTab')
 const simTab = useTemplateRef<{ load: () => void }>('simTab')
 
-// ---- 模拟交易：概况单独取，失败不影响评分部分
+// ---- simulated trading: the overview is loaded separately so a failure does not affect scoring
 const sim = ref<SimOverview | null>(null)
 async function loadSim() {
   try {
@@ -51,11 +54,12 @@ async function loadSim() {
     ElMessage.error('模拟交易概况取数失败：' + errMsg(e))
   }
 }
-/** 只在看的就是最新评分日时，评分榜上才出现「模拟」列 */
+/** The "simulate" column only appears on the ranking when the latest score date is the one being viewed */
 const simTop = computed(() => (sim.value && sim.value.candidates.scoreDate === date.value ? sim.value.candidates.top : null))
 
 async function simAdd(symbol: string) {
-  // 预览要按评分日的 K 线现算止损（开发库走隧道要几秒），先给个提示
+  // the preview computes the stop from the score date's bars on the fly (several seconds for the dev database through
+  // the tunnel), so show a hint first
   const hint = ElMessage({ message: `正在计算 ${symbol} 的止损与入场日…`, type: 'info', duration: 0 })
   try {
     const p = await simApi.preview(symbol).finally(() => hint.close())
@@ -94,7 +98,9 @@ async function load() {
       audit.value = await selectionApi.audit()
       return
     }
-    // 上一评分日只给「评级变动」用，单独取、不挡当天（开发库走隧道，一天 494 行约 360 kB）
+    // The previous score date is only used by "rating changes", so it is loaded separately and does not block the current
+    // day (dev database through the tunnel: 494 rows a day, about 360 kB). loadSeq discards responses from
+    // superseded loads, so a slow earlier date cannot overwrite a newer one.
     const seq = ++loadSeq
     const p = prevDate.value
     prev.value = null
@@ -142,7 +148,7 @@ function open(row: ScoreView) {
 onMounted(() => {
   void load()
   void loadSim()
-  getUniverse().then((u) => (names.value = new Map(u.map((i) => [i.symbol, i.nameCn ?? i.name])))).catch(() => { /* 中文名只是锦上添花 */ })
+  getUniverse().then((u) => (names.value = new Map(u.map((i) => [i.symbol, i.nameCn ?? i.name])))).catch(() => { /* Chinese names are just a nice-to-have */ })
 })
 </script>
 

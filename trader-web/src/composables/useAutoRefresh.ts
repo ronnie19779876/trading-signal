@@ -1,10 +1,12 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 
 /**
- * 定时刷新。此前四个页面各写一份 setInterval，规则还不一样
- * （基本面页不看可见性，切到后台标签页照样每 5 秒打后端）。
+ * Periodic refresh. Four pages used to have their own setInterval with different rules (the fundamentals page
+ * ignored visibility and kept hitting the backend every 5 seconds from a background tab).
  *
- * 统一规则：页面不可见时跳过这一拍；重新可见时立刻补一次，不用等下一个周期。
+ * Common rule: skip the tick while the page is hidden; when it becomes visible again run once immediately instead
+ * of waiting for the next period. The timer is created on mount and cleared on unmount, so it cannot leak.
+ * Note there is no in-flight guard: `fn` is called on every tick even if the previous call has not finished.
  */
 export function useAutoRefresh(fn: () => unknown, ms: number, options: { immediate?: boolean } = {}) {
   let timer: ReturnType<typeof setInterval> | null = null

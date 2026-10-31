@@ -12,12 +12,16 @@ import { accountApi, type HoldingReview, type HoldingReviewItem, type SnapshotVi
 import { getPool, type InstrumentView } from '../api/marketdata'
 
 /**
- * 持仓页：整宽持仓列表，点一行从右侧滑出详情抽屉（头部数据、日 K 加成本线、基本面摘要）。
+ * Positions page: a full-width position list; clicking a row slides in a detail drawer from the right (header
+ * figures, daily bars with a cost line, fundamentals summary).
  *
- * 数据口径与仪表盘一致：优先盈透实时（/api/account/live），全部是盈透原值，不做折算；拿不到时退回最近一份收盘快照。
- * 选中的标的放在 ?symbol= 里，刷新与分享都能回到同一只（不用 /positions/BRK.B：前端路由只用单段、不带点）。
+ * Same data rules as the dashboard: IBKR live first (/api/account/live), all raw IBKR values with no conversion;
+ * otherwise the latest closing snapshot.
+ * The selected instrument lives in ?symbol=, so refreshing or sharing returns to the same one (not /positions/BRK.B:
+ * frontend routes are single-segment and contain no dot).
  *
- * 刷新：实时账户盘中 1 秒、其余 5 秒（见 useLiveAccount）；池与快照 5 分钟一轮；页面切到后台即暂停。
+ * Refresh: the live account every 1 s during the session and 5 s otherwise (see useLiveAccount); pool and snapshot
+ * one round every 5 minutes; everything pauses while the page is in the background.
  */
 const route = useRoute()
 const router = useRouter()
@@ -26,7 +30,7 @@ const { live, start: startLive, stop: stopLive } = useLiveAccount()
 const view = ref<SnapshotView | null>(null)
 const pool = ref<InstrumentView[]>([])
 
-/** 盈透的类别股带空格（BRK B），富途与库里是点（BRK.B）。 */
+/** IBKR share classes contain a space (BRK B); Futu and the database use a dot (BRK.B). Only the first space is replaced. */
 const norm = (s: string) => s.replace(' ', '.')
 
 const isLive = computed(() => {
@@ -37,7 +41,7 @@ const source = computed<'LIVE' | 'SNAPSHOT'>(() => (isLive.value ? 'LIVE' : 'SNA
 
 const instruments = computed(() => new Map(pool.value.map((p) => [p.symbol, p])))
 
-/** 市值降序，现金工具排最后（它占比大，但不是要逐只看的持仓）。 */
+/** Market value descending, cash instruments last (they are a large share but not positions to review one by one). */
 const rows = computed<PositionRow[]>(() => {
   const list: PositionRow[] = isLive.value
     ? live.value!.positions.map((p) => ({
@@ -78,7 +82,7 @@ const rows = computed<PositionRow[]>(() => {
 const stockCount = computed(() => rows.value.filter((r) => !r.cashEquivalent).length)
 const cashCount = computed(() => rows.value.length - stockCount.value)
 
-// ---- 抽屉：选中状态在 URL 里 ----
+// ---- drawer: the selection lives in the URL ----
 const picked = computed(() => (typeof route.query.symbol === 'string' ? route.query.symbol : null))
 const pickedRow = computed(() => rows.value.find((r) => r.symbol === picked.value) ?? null)
 const drawer = computed({
@@ -97,9 +101,10 @@ function signedNum(v: number | null): string {
   return v === null ? '—' : (v > 0 ? '+' : '') + num(v)
 }
 
-// ---- 取数 ----
-// 两块各自独立、失败自动重试；成功才覆盖，失败的保留上一次的数据（3.4.3，见 useRecoveringLoad）
-/** 持仓风险面板（3.5.0，§29）：只取趋势与下次财报两列，详情在仪表盘的「持仓风险」 */
+// ---- loading ----
+// The blocks are independent and retried automatically on failure; only a success overwrites, a failure keeps the
+// previous data (3.4.3, see useRecoveringLoad)
+/** Holdings risk panel (3.5.0, §29): only the trend and next-earnings columns are used here; the details are in the dashboard's holdings risk panel */
 const review = ref<HoldingReview | null>(null)
 const reviewBySymbol = computed(() => new Map((review.value?.items ?? []).map((i) => [i.symbol, i])))
 const TIMING: Record<string, string> = { PRE_MARKET: '盘前', DURING_MARKET: '盘中', AFTER_MARKET: '盘后', UNKNOWN: '时段未知' }
@@ -115,7 +120,7 @@ const daily = useRecoveringLoad((): Stages => [{
   持仓风险: async () => { review.value = await accountApi.holdingsReview() },
   最新快照: async () => {
     view.value = await accountApi.latest().catch((e) => {
-      if ((e as { response?: { status?: number } }).response?.status === 404) return null // 还没拍过快照
+      if ((e as { response?: { status?: number } }).response?.status === 404) return null // no snapshot taken yet
       throw e
     })
   },

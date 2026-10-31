@@ -4,19 +4,20 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * 由分形点聚类出的价格区间：支撑区来自分形低点，压力区来自分形高点。
- * 区宽不做归一化，它本身就是"该价位被反复测试的密集程度"。
+ * Price zone clustered from fractal points: support zones come from fractal lows, resistance zones
+ * from fractal highs. The zone width is not normalized; it is itself a measure of how densely the
+ * price level was retested.
  *
- * @param touches 成员分形点个数（触及次数）
- * @param members 成员分形点的日期，升序
+ * @param touches number of member fractal points (number of touches)
+ * @param members dates of the member fractal points, ascending
  */
 public record PriceZone(double bottom, double top, int touches, List<LocalDate> members) {
 
-    public PriceZone {
-        members = List.copyOf(members);
-    }
+  public PriceZone {
+    members = List.copyOf(members);
+  }
 
-    public boolean contains(double price, double tolerance) {
-        return price >= bottom - tolerance && price <= top + tolerance;
-    }
+  public boolean contains(double price, double tolerance) {
+    return price >= bottom - tolerance && price <= top + tolerance;
+  }
 }

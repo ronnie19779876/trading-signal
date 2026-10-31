@@ -5,15 +5,17 @@ import { getJobs, type RunningJob } from '../api/marketdata'
 import { errMsg } from '../lib/format'
 
 /**
- * 全站共用的运行状态：环境标记、健康、当前作业。
+ * Site-wide runtime state: environment marker, health, current job.
  *
- * 之前行情页与基本面页各自 5 秒轮询一次 /api/jobs，页头又没地方显示"有作业在跑"。
- * 这里统一拉一次，页头常驻显示，页面按需取用。
+ * Previously the market-data and fundamentals pages each polled /api/jobs every 5 seconds, and the header had
+ * nowhere to show "a job is running". This store fetches it once for everyone; the header always shows it and pages
+ * read it as needed.
+ * The three requests are combined with Promise.all, so if any one fails nothing is updated and `error` is set.
  */
 export const useAppStore = defineStore('app', () => {
   const info = ref<SystemInfo | null>(null)
   const health = ref<string>('未知')
-  /** 健康检查全文：各组件与每类作业最近一次（系统页概况用） */
+  /** The full health response: every component and the latest run of each job type (used by the system overview) */
   const healthDetail = ref<Health | null>(null)
   const running = ref<RunningJob | null>(null)
   const error = ref<string | null>(null)

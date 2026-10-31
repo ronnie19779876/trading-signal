@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# 主备互换脚本的公共部分（供 source；ARCHITECTURE §27、OPERATIONS「主备切换」）。在本机（运维机）上跑，经 SSH 操作两台服务器。
+# Shared part of the primary/standby switchover scripts (sourced; ARCHITECTURE §27, OPERATIONS
+# "primary/standby switchover" section).
+# Runs on the local operator machine and drives the two servers over SSH.
+# Must stay compatible with macOS's bundled bash 3.2: no associative arrays, and always write variables as
+# ${...} -- under a UTF-8 locale bash 3.2 treats the bytes of an adjacent full-width character as part of
+# the variable name (unbound variable).
 #
-# 主机信息只放本机 ~/.config/trading-signal/replica.env（不进仓库），格式：
-#   vps_ssh=admin@<地址>           vps_port=22
-#   shanghai_ssh=devops@<地址>     shanghai_port=2022
-# 两台服务器之间的隧道也用这两行：备库那边连主库那边，用的就是对方的 *_ssh / *_port。
+# Host details live only in the local ~/.config/trading-signal/replica.env (never in the repository):
+#   vps_ssh=admin@<address>           vps_port=22
+#   shanghai_ssh=devops@<address>     shanghai_port=2022
+# The tunnel between the two servers uses the same entries: the standby connects to the primary using the
+# other node's *_ssh / *_port.
 
 REPLICA_ENV="${REPLICA_ENV:-${HOME}/.config/trading-signal/replica.env}"
 NODES=(vps shanghai)
@@ -31,21 +37,27 @@ other() { [[ "$1" == vps ]] && echo shanghai || echo vps; }
 ssh_target() { local v="${1}_ssh"; echo "${!v}"; }
 ssh_port() { local v="${1}_port"; echo "${!v:-22}"; }
 
-# 在节点上执行，不分配终端（不能有交互）。<b>不读本机标准输入</b>（ssh -n）：2026-10-25 演练时
-# 检查阶段的 ssh 把用户提前敲进终端的「shanghai」吞掉了，确认提示读到的就不是它。要往远端喂数据用 on_in。
+# Runs a command on a node without allocating a terminal (no interaction possible). It does <b>not read
+# local standard input</b> (ssh -n): in the 2026-10-25 drill an ssh call during the check phase swallowed
+# the "shanghai" the user had typed into the terminal ahead of time, so the confirmation prompt never saw
+# it. Use on_in to feed data to the remote side.
+# ssh joins the arguments into one remote shell command line, so callers only pass constant strings plus
+# values that were validated beforehand (node names, LSNs matched against a regex).
 on() {
   local n="$1"; shift
   ssh -n -o BatchMode=yes -o ConnectTimeout=20 -p "$(ssh_port "${n}")" "$(ssh_target "${n}")" "$@"
 }
 
-# 同 on，但把本机标准输入转给远端（管道 / 重定向喂数据时用）。
+# Like on, but forwards local standard input to the remote side (for feeding data via a pipe / redirect).
 on_in() {
   local n="$1"; shift
   ssh -o BatchMode=yes -o ConnectTimeout=20 -p "$(ssh_port "${n}")" "$(ssh_target "${n}")" "$@"
 }
 
-# 向人要确认：直接从终端读（有终端时），读之前清掉提前敲进去的内容——免得没看到摘要就被自动确认。
-# 没有终端（脚本被管道驱动）时退回读标准输入。结果放在全局 ANSWER。
+# Asks the human for confirmation: reads straight from the terminal (when there is one), after draining
+# anything typed ahead of time -- so nothing gets confirmed automatically before the summary was read.
+# Without a terminal (script driven by a pipe) it falls back to standard input. The answer goes into the
+# global ANSWER.
 ask() {
   ANSWER=""
   if { exec 9</dev/tty; } 2>/dev/null; then
@@ -58,28 +70,36 @@ ask() {
   fi
 }
 
-# 需要人输入 sudo 口令时用：分配终端。输出会混进 sudo 提示，所以**不要捕获它的输出**——
-# 要取结果就让远端写文件，再用 on 读回来。
+# Allocates a terminal, for steps where a human has to type the sudo password. The sudo prompt gets mixed
+# into the output, so **never capture its output** -- to get a result, have the remote side write a file
+# and read it back with on.
 on_tty() {
   local n="$1"; shift
   ssh -t -o ConnectTimeout=20 -p "$(ssh_port "${n}")" "$(ssh_target "${n}")" "$@"
 }
 
-# 以 trader 在节点上执行一条只读 SQL（走节点本机 ~/.pgpass；trader 有 pg_monitor，能看复制状态）。
-# 用开发库连接：查的都是集群级状态，与连哪个库无关。SQL 走标准输入，免得穿过两层引号。
+# Runs one read-only SQL statement on a node as trader (password from the node's own ~/.pgpass; trader
+# has pg_monitor, so it can see replication state).
+# Connects to the dev database: everything queried is cluster-level state, independent of the database.
+# The SQL goes through standard input so it does not have to survive two layers of quoting.
+# Prints nothing when the query fails for any reason (SSH, connection, auth): callers must not read an
+# empty result as "the database is down".
 sql() {
   local n="$1" q="$2"
   printf '%s\n' "${q}" | on_in "${n}" "psql -h localhost -U trader -d db_trader_dev -w -AtX -F'|' -v ON_ERROR_STOP=1 -f -"
 }
 
-# 节点上应用是否在跑：有 trader-app.jar 的 java 进程或 8093 在监听，任一即算在跑。
-# 判断进程别用 pgrep -f：远端命令行里含模式，会匹配到自己（迁移时误报过一次）。
+# Whether the application is running on a node: a java process with trader-app.jar, or something listening
+# on 8093 -- either one counts as running.
+# Do not use pgrep -f to find the process: the remote command line contains the pattern and matches itself
+# (that caused one false positive during the migration).
+# If SSH fails there is no output and this returns false ("not running").
 app_running() {
   on "$1" "ps -eo comm,args | awk '\$1==\"java\" && /trader-app\\.jar/' | grep -c . ; ss -ltn | grep -c ':8093 '" 2>/dev/null \
     | awk 'NR==1{p=$1} NR==2{l=$1} END{exit !((p+0)>0 || (l+0)>0)}'
 }
 
-# 节点上软链指向的应用目录名（trading-signal-<版本>-<时间戳>）。
+# Name of the application directory the node's symlink points to (trading-signal-<version>-<timestamp>).
 app_dir() { on "$1" 'basename "$(readlink -f ~/trading-signal 2>/dev/null)"' 2>/dev/null; }
 
 say() { printf '[%s] %s\n' "$(date +%T)" "$*"; }

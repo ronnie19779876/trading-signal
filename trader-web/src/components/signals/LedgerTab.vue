@@ -7,16 +7,18 @@ import { usePager } from '../../composables/usePager'
 import { EXIT_LABEL, ROLE_LABEL, TRACK_LABEL, errMsg, num, pct, signedR, trend } from './format'
 
 /**
- * 纸面账本：按变体 × 来源 × AI 裁决分组的汇总（只列有信号的组）、两个变体的配对差、明细（分页）。
- * 变体：BASE 止损 2.0×ATR，STOP_2_5 止损 2.5×ATR，都不减半仓。胜率与期望只算已平仓。
+ * Paper ledger: a summary grouped by variant x origin x AI verdict (only groups with signals), the paired
+ * difference between the two variants, and the detail (paginated).
+ * Variants: BASE stop at 2.0 x ATR, STOP_2_5 stop at 2.5 x ATR, neither takes half off. Win rate and expectancy
+ * count closed trades only.
  */
 const props = defineProps<{ universe: InstrumentView[] }>()
 
-/** 浮动收益率：两个变体必然相同（同入场价、同当前价），浮动 R 则因 R 不同而不同。 */
+/** Unrealized return: necessarily identical for both variants (same entry and current price), while unrealized R differs because R differs. */
 const unrealizedPct = (t: SignalTrack) =>
   t.lastClose === null || t.entryPrice === null || t.entryPrice === 0 ? null : (t.lastClose - t.entryPrice) / t.entryPrice
 
-/** 当前价是否滞后于账本算到的日期（停牌、缺 K 线）。 */
+/** Whether the current price lags the date the ledger has been computed through (halt, missing bars). ISO date strings compare correctly as text. */
 const stale = (t: SignalTrack) =>
   t.lastCloseDate !== null && t.updatedThrough !== null && t.lastCloseDate < t.updatedThrough
 
@@ -137,7 +139,7 @@ defineExpose({ load })
               <td>{{ TRACK_LABEL[row.track.status] }}</td>
               <td class="num">{{ row.track.entryDate ?? '—' }} {{ row.track.entryPrice === null ? '' : num(row.track.entryPrice) }}</td>
               <td class="r num">
-                <!-- 当前价只有持有中才有；日期必须一起给——停牌时它会早于算到的日期，不给就看不出价是陈旧的 -->
+                <!-- The current price exists only while OPEN; its date must be shown with it -- during a halt it is earlier than the computed-through date, and without it a stale price would not be recognizable -->
                 {{ num(row.track.stop) }}
               </td>
               <td class="num" :class="trend(row.track.unrealizedR)">

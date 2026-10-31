@@ -1,8 +1,11 @@
 package org.jdkxx.trader.domain.selection;
 
-/** 富途估值历史的三种口径。PE 是 TTM（与估值快照的 {@code pe_ttm} 逐位一致，2026-09-08 实测三只）。 */
+/**
+ * The three measures of Futu's valuation history. PE is TTM (identical digit for digit to the
+ * valuation snapshot's {@code pe_ttm}, measured on three instruments on 2026-09-08).
+ */
 public enum ValuationMetric {
-    PE,
-    PB,
-    PS
+  PE,
+  PB,
+  PS
 }

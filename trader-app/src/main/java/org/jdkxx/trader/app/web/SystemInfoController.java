@@ -7,20 +7,21 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 系统信息：版本、环境、数据库、各网关状态。前端骨架页的唯一数据源。
+ * System information: version, environment, database, status of each gateway. The only data source
+ * of the frontend's skeleton page.
  */
 @RestController
 @RequestMapping("/api/system")
 public class SystemInfoController {
 
-    private final SystemInfoService service;
+  private final SystemInfoService service;
 
-    public SystemInfoController(SystemInfoService service) {
-        this.service = service;
-    }
+  public SystemInfoController(SystemInfoService service) {
+    this.service = service;
+  }
 
-    @GetMapping("/info")
-    public SystemInfo info() {
-        return service.current();
-    }
+  @GetMapping("/info")
+  public SystemInfo info() {
+    return service.current();
+  }
 }

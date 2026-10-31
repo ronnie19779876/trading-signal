@@ -6,8 +6,10 @@ import { big, negative, numMax } from '../../lib/format'
 import { sectorCn } from '../../lib/sector'
 
 /**
- * 全市场估值筛选表：某一天全部标的的估值（/api/fundamentals/valuations），名称、行业、指数、池角色从标的列表合并。
- * 全是券商原值：亏损股的市盈率为负是真实数据，照常显示、排序时按数值排。分页显示，筛选与排序作用于全部标的。
+ * Market-wide valuation screen: valuations of every instrument on one day (/api/fundamentals/valuations), merged with
+ * name, sector, index membership and pool role from the instrument list.
+ * All raw broker values: a negative P/E for a loss-making stock is genuine data, shown as usual and sorted by value.
+ * Paginated; filtering and sorting apply to all instruments.
  */
 const props = defineProps<{
   date: string | null
@@ -61,13 +63,13 @@ const filtered = computed(() => {
     const x = a.v[key]
     const y = b.v[key]
     if (x === null && y === null) return 0
-    if (x === null) return 1 // 空值总在最后
+    if (x === null) return 1 // nulls always sort last, regardless of direction
     if (y === null) return -1
     return dir * (x - y)
   })
 })
 
-// ---- 分页：默认每页 20 只；筛选或排序一变回到第 1 页 ----
+// ---- pagination: 20 per page by default; any change of filter or sort goes back to page 1 ----
 const page = ref(1)
 const pageSize = ref(20)
 const paged = computed(() => filtered.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))

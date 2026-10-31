@@ -1,9 +1,13 @@
-# 生产实例的外置配置模板。随发布包一起分发到 <部署目录>/config/application.yml。
-# 敏感值（数据库密码、网关 host/port/client-id、OpenAI key）来自同目录的 trader.env（不入库），
-# 由 bin/trader.sh 在启动前 source 成环境变量，Spring 宽松绑定自动映射（TRADER_IBKR_HOST → trader.ibkr.host）。
+# External configuration template for the production instance. Shipped with the release package to
+# <deploy dir>/config/application.yml; it is replaced on every upgrade (new cron settings live here).
+# Secret values (database password, gateway host/port/client-id, OpenAI key) come from trader.env in the same
+# directory (never committed), which bin/trader.sh sources into environment variables before starting;
+# Spring's relaxed binding maps them automatically (TRADER_IBKR_HOST -> trader.ibkr.host). Environment
+# variables take precedence over this file, so TRADER_IBKR_ENABLED=true overrides the enabled: false below.
 server:
   port: 8093
-  # 只监听本机；外部访问走 SSH 隧道
+  # Listen on loopback only; outside access goes through an SSH tunnel. The REST API has no authentication
+  # and /actuator/shutdown is exposed, so this must never bind to other interfaces.
   address: 127.0.0.1
 
 spring:
@@ -12,7 +16,7 @@ spring:
   datasource:
     url: jdbc:postgresql://${TRADER_DB_HOST:127.0.0.1}:${TRADER_DB_PORT:5432}/db_trader
     username: trader
-    # 留空则由服务用户的 ~/.pgpass 提供
+    # When empty, the password comes from the service user's ~/.pgpass
     password: ${TRADER_DB_PASSWORD:}
 
 trader:
@@ -20,7 +24,8 @@ trader:
   storage:
     enabled: true
   marketdata:
-    # 生产实例：定时跑批 + 启动即订阅池与持仓的实时报价（同一台服务器只允许一个实例开这两项）
+    # Production instance: scheduled batch jobs + subscribe to real-time quotes for the pool and holdings at
+    # startup (only one instance per server may enable these two; the quote subscription quota is per account)
     schedule-enabled: true
     realtime:
       auto-subscribe: true
@@ -29,15 +34,17 @@ trader:
   futu:
     enabled: false
   ai:
-    # 信号评估里调模型做否决（第 4 期）：只在生产实例打开。密钥 OPENAI_API_KEY 在 trader.env；
-    # 没配密钥时照常出信号，每个候选记一行 SKIPPED_BUDGET（未配置），信号审计会提示
+    # Model veto during signal evaluation (phase 4): enabled on the production instance only. The key
+    # OPENAI_API_KEY is in trader.env; without a key, signals are still produced, each candidate records one
+    # SKIPPED_BUDGET row (not configured), and the signal audit reports it
     signal-veto-enabled: true
 
 management:
   endpoints:
     web:
       exposure:
-        # shutdown 是 bin/trader.sh stop 的关闭通道；前提是 server.address 只绑回环
+        # shutdown is the stop channel used by bin/trader.sh stop; safe only because server.address binds
+        # to loopback
         include: health,info,shutdown
   endpoint:
     shutdown:

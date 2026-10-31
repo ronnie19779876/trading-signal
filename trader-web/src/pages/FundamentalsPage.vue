@@ -14,8 +14,10 @@ import { fundamentalsApi, type FundamentalsCoverage, type FundamentalsOverview, 
 import { getJobs, getUniverse, type InstrumentView, type RunningJob } from '../api/marketdata'
 
 /**
- * 基本面页：上面全市场估值筛选表，下面单只详情（估值、市盈率走势、财报）；维护操作收在页底。
- * 选中的标的放在 ?symbol=（持仓抽屉的"基本面页 →"也是这样跳过来的）。全部是券商原值，分位与中位数是本系统算的，图上写明。
+ * Fundamentals page: the market-wide valuation screen on top, single-instrument detail below (valuation, P/E
+ * history, financial reports); maintenance actions at the bottom.
+ * The selected instrument lives in ?symbol= (the position drawer's link to the fundamentals page arrives the same
+ * way). Everything is a raw broker value; percentiles and medians are computed by this system, as the charts say.
  */
 const route = useRoute()
 const router = useRouter()
@@ -75,7 +77,7 @@ async function pick(s: string, scroll = true) {
 const v = computed(() => overview.value?.valuation ?? null)
 const displayName = computed(() => instrument.value?.nameCn ?? instrument.value?.name ?? overview.value?.name ?? null)
 
-// ---- 维护：覆盖统计与刷新作业 ----
+// ---- maintenance: coverage statistics and refresh jobs ----
 const coverage = ref<FundamentalsCoverage | null>(null)
 const running = ref<RunningJob | null>(null)
 const maintenance = ref<string[]>([])
@@ -85,7 +87,7 @@ async function refreshStatus() {
     const r = (await getJobs(1)).running
     running.value = r && 'id' in r ? (r as RunningJob) : null
   } catch {
-    // 状态轮询失败不打扰用户，下一轮会再试
+    // a failed status poll does not bother the user; the next round tries again
   }
 }
 useAutoRefresh(refreshStatus, 5000)
@@ -120,7 +122,7 @@ void loadAll()
 
     <ValuationScreen :date="dayDate" :valuations="dayRows" :universe="universe" :selected="symbol" :loaded="loaded" @select="pick" />
 
-    <!-- 单只详情 -->
+    <!-- single-instrument detail -->
     <div ref="detail" class="detail">
       <section v-loading="loadingOverview" class="panel">
         <div class="head">
@@ -171,7 +173,7 @@ void loadAll()
       <SotpPanel :symbol="symbol" />
     </div>
 
-    <!-- 维护 -->
+    <!-- maintenance -->
     <el-collapse v-model="maintenance" class="panel maintenance">
       <el-collapse-item name="m">
         <template #title>

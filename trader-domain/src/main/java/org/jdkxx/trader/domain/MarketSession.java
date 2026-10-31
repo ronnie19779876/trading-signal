@@ -1,6 +1,10 @@
 package org.jdkxx.trader.domain;
 
-/** 美股交易时段。 */
+/** US equity trading session. */
 public enum MarketSession {
-    PRE, RTH, AFTER, OVERNIGHT, CLOSED
+  PRE,
+  RTH,
+  AFTER,
+  OVERNIGHT,
+  CLOSED
 }

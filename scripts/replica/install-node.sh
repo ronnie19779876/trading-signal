@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 #
-# 把主备互换的节点侧部件装到一台服务器上（幂等，可重复跑；不需要 sudo）：
-#   ~/pg-replica/bin/{watchdog.sh,backup.sh}、systemd 用户单元（隧道、看门狗定时器）、
-#   ~/.config/pg-replica/peer.env（对端 = 另一台）、对端主机密钥（先与本机已信任的指纹核对）、每日备份的 crontab。
-# 按节点当前角色：备库开隧道，主库关隧道。
+# Installs the node-side parts of the primary/standby setup on one server (idempotent, safe to re-run;
+# needs no sudo):
+#   ~/pg-replica/bin/{watchdog.sh,backup.sh}, the systemd user units (tunnel, watchdog timer),
+#   ~/.config/pg-replica/peer.env (peer = the other server), the peer's host key (checked first against the
+#   fingerprint already trusted on this machine), and the crontab entry for the daily backup.
+# Depending on the node's current role: the tunnel is enabled on a standby and disabled on a primary.
 #   ./scripts/replica/install-node.sh vps|shanghai
 #
-# 前提（一次性、要 sudo，见 OPERATIONS「主备切换」）：两边已有 ~/.ssh/id_pg_replica 且公钥带限制加进了对方的
-# authorized_keys、loginctl enable-linger、/etc/postgresql/18/main/conf.d/replica.conf、postgres 的 ~/.pgpass。
+# Prerequisites (one-off, need sudo, see OPERATIONS "primary/standby switchover" section): both sides
+# already have ~/.ssh/id_pg_replica with the public key added, with restrictions, to the other side's
+# authorized_keys; loginctl enable-linger; /etc/postgresql/18/main/conf.d/replica.conf; postgres's ~/.pgpass.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 source scripts/replica/lib.sh
@@ -21,7 +24,10 @@ PEER_USER="${PEER_TARGET%@*}"
 PEER_HOST="${PEER_TARGET#*@}"
 PEER_PORT="$(ssh_port "${PEER}")"
 
-# 对端主机密钥：节点上 ssh-keyscan 看到的，必须与本机 known_hosts 里已信任的一致，否则不写（防中间人）。
+# Peer host key: what ssh-keyscan sees from the node must match the key already trusted in this machine's
+# known_hosts, otherwise nothing is written (protection against a man in the middle).
+# Note: the key appended to the node's known_hosts further down comes from a second ssh-keyscan, not from
+# the scan verified here, and an existing entry on the node is left as it is.
 if [[ "${PEER_PORT}" == 22 ]]; then KH="${PEER_HOST}"; else KH="[${PEER_HOST}]:${PEER_PORT}"; fi
 TRUSTED="$(ssh-keygen -F "${KH}" 2>/dev/null | grep -v '^#' | ssh-keygen -lf - 2>/dev/null | awk '$NF=="(ED25519)"{print $2}')"
 [[ -n "${TRUSTED}" ]] || die "本机 known_hosts 里没有 ${PEER} 的 ED25519 主机密钥，先从本机 ssh 登录一次 ${PEER}"

@@ -1,26 +1,43 @@
 package org.jdkxx.trader.ai.veto;
 
 /**
- * 模型第二意见的调用端口。上层（core）只认这个接口，{@code com.openai.*} 只出现在实现类 {@link OpenAiVetoClient} 里。
- * 实现不抛异常：一切失败都归类进 {@link Call#status()}。
+ * Port for asking the model for a second opinion. The upper layer (core) only knows this interface;
+ * {@code com.openai.*} appears only in the implementation {@link OpenAiVetoClient}. Implementations
+ * do not throw: every failure is classified into {@link Call#status()}.
  */
 public interface VetoClient {
 
-    enum Status {
-        OK, REFUSED, TRUNCATED, INVALID, FAILED
-    }
+  enum Status {
+    OK,
+    REFUSED,
+    TRUNCATED,
+    INVALID,
+    FAILED
+  }
 
-    /**
-     * @param rawOutput 模型原文（结构非法时用于排查）；拒答时为拒答文本
-     */
-    record Call(Status status, VetoJudgment judgment, String rawOutput, String model, String responseId,
-                long inputTokens, long cachedTokens, long outputTokens, long reasoningTokens, long latencyMs,
-                String error) {
-    }
+  /**
+   * Result of one model call, persisted with the analysis row.
+   *
+   * @param judgment the parsed judgment; non-null only when status is OK
+   * @param rawOutput the model's raw text (for troubleshooting when the structure is invalid); the
+   *     refusal text on refusal
+   */
+  record Call(
+      Status status,
+      VetoJudgment judgment,
+      String rawOutput,
+      String model,
+      String responseId,
+      long inputTokens,
+      long cachedTokens,
+      long outputTokens,
+      long reasoningTokens,
+      long latencyMs,
+      String error) {}
 
-    String model();
+  String model();
 
-    String reasoningEffort();
+  String reasoningEffort();
 
-    Call analyze(String promptVersion, String inputJson);
+  Call analyze(String promptVersion, String inputJson);
 }

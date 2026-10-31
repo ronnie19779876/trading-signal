@@ -5,7 +5,7 @@ import { errMsg, fmtEt } from '../../lib/format'
 import { EVENT_LABEL } from '../../lib/system'
 import { getEvents, type EventView } from '../../api/gateways'
 
-/** 网关连接事件：最近 500 条，可按券商与事件类型筛，分页。每次部署重启都会留一对"断开 / 连上"。 */
+/** Gateway connection events: the latest 500, filterable by broker and event type, paginated. Every deployment restart leaves a "disconnected / connected" pair. */
 const props = defineProps<{ active: boolean }>()
 
 const events = ref<EventView[]>([])

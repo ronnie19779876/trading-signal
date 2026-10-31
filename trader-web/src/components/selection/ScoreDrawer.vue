@@ -8,8 +8,9 @@ import RatingTag from './RatingTag.vue'
 import ScoreHistoryChart from './ScoreHistoryChart.vue'
 
 /**
- * 单只标的的评分详情：当天的评级、合成分与四个因子分，11 个指标的原值与板块内百分位，以及评分历史曲线。
- * 指标原值都是比例，按百分数显示；百分位越大越好（板块内排名）。
+ * Score detail for one instrument: the day's rating, composite and four factor scores, the raw values and
+ * within-sector percentiles of the 11 metrics, and the score history chart.
+ * Raw metric values are ratios shown as percentages; a higher percentile is better (rank within the sector).
  */
 const props = defineProps<{ row: ScoreView | null; name: string | null }>()
 const visible = defineModel<boolean>({ default: false })

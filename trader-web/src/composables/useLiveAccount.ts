@@ -3,11 +3,20 @@ import { accountApi, type LiveView } from '../api/account'
 import { useMarketClock } from './useMarketClock'
 
 /**
- * 盈透实时账户的轮询（仪表盘、持仓页、账户页共用）。后端只读内存、不打网关，第一次读发起订阅，5 分钟没人读自动退订。
+ * Polling of the IBKR live account (shared by the dashboard, positions and account pages). The backend only reads
+ * memory and never calls the gateway; the first read starts the subscription, and it unsubscribes automatically
+ * after 5 minutes without readers.
  *
- * 间隔：常规交易时段 1 秒（价格与逐只盈亏在变，贴近盈透 App 的刷新感）；刚订阅、数据还没到齐时 1.5 秒；
- * 盘前盘后与休市 5 秒。账户汇总（净值、现金）是盈透自己约 3 分钟推一批，轮询再快也不会更新得更快。
- * 上一轮返回后才排下一轮，接口慢时不会叠请求。页面切到后台时由页面调用 stop()。
+ * Interval: 1 s during the regular session (prices and per-position P&L are moving; close to the refresh feel of
+ * the IBKR app); 1.5 s right after subscribing while data is still arriving; 5 s pre-/after-market and when
+ * closed. The account summary (NAV, cash) is pushed by IBKR itself roughly every 3 minutes, so faster polling
+ * cannot make it update sooner.
+ * The next poll is scheduled only after the previous one returns, so a slow endpoint never stacks requests. The
+ * page calls stop() when it goes to the background.
+ *
+ * `running` is the run guard for the self-rescheduling setTimeout chain: stop() during an in-flight request clears
+ * the flag, so the callback's schedule() returns instead of re-arming the chain. schedule() also clears the single
+ * timer handle first, so a quick stop()/start() never leaves two chains running.
  */
 export function useLiveAccount() {
   const live = ref<LiveView | null>(null)
@@ -19,7 +28,7 @@ export function useLiveAccount() {
     try {
       live.value = await accountApi.live()
     } catch {
-      live.value = null // 接口不可达：页面退回收盘快照
+      live.value = null // endpoint unreachable: the page falls back to the closing snapshot
     }
   }
 

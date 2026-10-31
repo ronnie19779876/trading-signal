@@ -6,7 +6,7 @@ import { useTheme } from '../../composables/useTheme'
 import { simApi, type SimEquityRow } from '../../api/selection'
 import { errMsg, money, pct } from '../../lib/format'
 
-/** 模拟账户的逐日权益（收盘后），虚线是初始资金。 */
+/** Daily equity of the simulated account (after the close); the dashed line is the initial capital. */
 const props = defineProps<{ initial: number }>()
 
 const rows = ref<SimEquityRow[]>([])

@@ -11,8 +11,9 @@ import {
 } from '../../api/marketdata'
 
 /**
- * 跑批：当前作业（可取消）、手动触发、作业记录（中文名、耗时、分页，可按作业类型筛）。5 秒刷新。
- * 同一时刻只跑一个作业，冲突时后端 409。
+ * Batch jobs: the current job (cancellable), manual triggers, job history (Chinese names, duration, paginated,
+ * filterable by job type). Refreshes every 5 seconds.
+ * Only one job runs at a time; on a conflict the backend answers 409.
  */
 const running = ref<RunningJob | null>(null)
 const jobs = ref<JobRun[]>([])
@@ -25,7 +26,7 @@ async function refresh() {
     running.value = j.running && 'id' in j.running ? (j.running as RunningJob) : null
     jobs.value = j.recent
   } catch {
-    // 下一轮再试
+    // try again next round
   }
 }
 useAutoRefresh(refresh, 5000)
@@ -57,7 +58,7 @@ async function cancel() {
   }
 }
 
-/** 标的数量取自覆盖统计，别在文案里写死——写死的那个数字已经过期过一次。 */
+/** The instrument count comes from the coverage statistics; do not hard-code it in the text -- a hard-coded number already went stale once. */
 const rehabHint = computed(() => `对全量 ${universeSize.value ?? '—'} 只各调一次复权因子，约 5 分钟，不占历史额度。`)
 
 const kinds = computed(() => [...new Set(jobs.value.map((j) => j.job))].sort((a, b) => jobLabel(a).localeCompare(jobLabel(b), 'zh')))

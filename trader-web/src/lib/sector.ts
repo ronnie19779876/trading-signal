@@ -1,6 +1,7 @@
 /**
- * 行业中文名。成分股来自 Wikipedia：标普 500 用 GICS 十一大行业，纳指 100 里有几只用的是 ICB 口径
- * （Technology、Telecommunications），一并映射。不认识的原样显示，不猜。
+ * Chinese sector names. Index constituents come from Wikipedia: the S&P 500 uses the eleven GICS sectors, while a
+ * few Nasdaq-100 members use ICB naming (Technology, Telecommunications); both are mapped. Unknown names are shown
+ * as-is, never guessed.
  */
 const SECTOR_CN: Record<string, string> = {
   'Communication Services': '通信服务',
@@ -14,7 +15,7 @@ const SECTOR_CN: Record<string, string> = {
   Materials: '原材料',
   'Real Estate': '房地产',
   Utilities: '公用事业',
-  // ICB 口径（纳指 100）
+  // ICB naming (Nasdaq-100)
   Technology: '信息技术',
   Telecommunications: '通信服务',
 }

@@ -1,13 +1,19 @@
 package org.jdkxx.trader.common.ratelimit;
 
 /**
- * 限流器。调用方永远是我们自己的服务线程（绝不是 SDK 的回调线程），所以允许 {@link #acquire()} 短暂阻塞。
+ * Rate limiter. Callers are always our own service threads (never an SDK callback thread), which is
+ * why {@link #acquire()} is allowed to block briefly. Calling it from an SDK callback or dispatch
+ * thread would stall every other reply queued behind it (see the gateway thread discipline in
+ * CLAUDE.md).
  */
 public interface RateLimiter {
 
-    /** 取得一个许可；需要等待时阻塞，超过实现设定的最长等待则抛 {@link RateLimitExceededException}。 */
-    void acquire();
+  /**
+   * Takes one permit, blocking while a wait is needed; throws {@link RateLimitExceededException}
+   * once the implementation's maximum wait is exceeded.
+   */
+  void acquire();
 
-    /** 不阻塞：拿得到就拿，拿不到返回 false。 */
-    boolean tryAcquire();
+  /** Non-blocking: takes a permit if one is available right now, otherwise returns false. */
+  boolean tryAcquire();
 }

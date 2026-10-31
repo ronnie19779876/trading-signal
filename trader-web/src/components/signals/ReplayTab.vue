@@ -8,8 +8,9 @@ import { usePager } from '../../composables/usePager'
 import { EXIT_LABEL, OUTCOME_LABEL, STATUS_LABEL, daysAgo, errMsg, iso, num, signedR, trend } from './format'
 
 /**
- * 区间回放：逐日判定 + 边沿与冷却（历史没有 AI 结论）+ 纸面交易；只读，不落库。
- * 打开时默认选第一只持仓回放一次，免得一进来是空白。
+ * Range replay: day-by-day evaluation + edge and cooldown suppression (history has no AI conclusions) + paper
+ * trades; read-only, nothing is persisted. On open it replays the first holding once by default so the tab is not
+ * empty.
  */
 const props = defineProps<{ universe: InstrumentView[] }>()
 
@@ -32,7 +33,7 @@ async function run() {
     const s = symbol.value.trim().toUpperCase()
     symbol.value = s
     replay.value = await signalsApi.replay(s, { from: range.value[0], to: range.value[1], stopAtr: stopAtr.value, half: half.value })
-    // 图最多 3 年，价格尺度折回区间末日
+    // the chart covers at most 3 years, with the price scale adjusted back to the end of the range
     const chartFrom = new Date(replay.value.to).getTime() - 3 * 365 * 86_400_000 > new Date(replay.value.from).getTime()
       ? iso(new Date(new Date(replay.value.to).getTime() - 3 * 365 * 86_400_000 + 86_400_000)) : replay.value.from
     bars.value = await signalsApi.bars(s, { from: chartFrom, to: replay.value.to, asOf: replay.value.to })
@@ -45,7 +46,7 @@ async function run() {
   }
 }
 
-// 标的列表到了、还没选过就默认第一只持仓
+// once the instrument list arrives and nothing has been picked yet, default to the first holding
 watch(() => props.universe, (u) => {
   if (symbol.value || !u.length) return
   const first = u.find((x) => x.role === 'HOLDING') ?? u.find((x) => x.role === 'POOL')

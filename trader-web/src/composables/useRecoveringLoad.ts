@@ -1,34 +1,43 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { errMsg } from '../lib/format'
 
-/** 一块数据的取数：成功时自己把结果写进页面的 ref；失败就抛出，页面上那块保留上一次成功的数据。 */
+/**
+ * Loading one block of data: on success the task writes the result into the page's ref itself; on failure it
+ * throws, and that block of the page keeps the data from the last successful load.
+ */
 export type Task = () => Promise<unknown>
 /**
- * 一轮加载分几段：同一段的任务并发，下一段在上一段全部结束（无论成败）后开始，可以读上一段刚写好的数据
- * （例如先取池，再按池取日 K）。键是这块数据的中文名，失败时原样显示给用户。
+ * One load round consists of stages: tasks in the same stage run concurrently; the next stage starts after every
+ * task of the previous stage has settled (success or failure) and may read data the previous stage just wrote
+ * (e.g. load the pool first, then the daily bars for the pool). Keys are the Chinese names of the blocks and are
+ * shown to the user verbatim on failure.
  */
 export type Stages = Array<Record<string, Task>>
 
-/** 失败后的重试间隔（秒）：10、20、40，之后每 60 秒一次，直到全部成功 */
+/** Retry delays after a failure (seconds): 10, 20, 40, then every 60 seconds until everything succeeds */
 export const BACKOFF_SECONDS = [10, 20, 40, 60]
 
 /**
- * 日级数据的加载与自动恢复（3.4.3，仪表盘、账户、持仓共用）。
+ * Loading and automatic recovery for daily-granularity data (3.4.3, shared by the dashboard, account and
+ * positions pages).
  *
- * - **各块独立**：一块失败不影响其他块（原先 Promise.all 一个超时整批作废，净值、池一起显示成空，2026-10-13）；
- * - **自动恢复**：有失败就按 {@link BACKOFF_SECONDS} 退避重试，直到全部成功，提示自动消失；
- *   网络恢复（online 事件）时立刻补一轮；
- * - 平时每 refreshMs 刷新一轮。页面切到后台由页面调 stop()（与实时轮询一起停），回到前台再 start()，立刻补一轮。
+ * - **Blocks are independent**: one failing block does not affect the others (previously a single timeout inside
+ *   a Promise.all discarded the whole batch and NAV and pool both showed as empty, 2026-10-13);
+ * - **Automatic recovery**: on any failure it retries with the {@link BACKOFF_SECONDS} backoff until everything
+ *   succeeds, and the alert disappears by itself; when the network comes back (`online` event) a round runs at once;
+ * - Otherwise it refreshes one round every refreshMs. When the page goes to the background the page calls stop()
+ *   (together with the live polling); back in the foreground start() runs a round immediately.
  *
- * 同一时刻只跑一轮：上一轮没结束时再触发，直接复用那一轮。
+ * Only one round runs at a time: a trigger while a round is still in flight reuses that round, so a slow response
+ * can never be overwritten by an older one.
  */
 export function useRecoveringLoad(stages: () => Stages, refreshMs: number) {
   const failures = ref<Record<string, string>>({})
-  /** 至少跑完过一轮（无论成败） */
+  /** At least one round has completed (successfully or not) */
   const loaded = ref(false)
-  /** 距下一次自动重试的秒数；没有待重试的为 null */
+  /** Seconds until the next automatic retry; null when no retry is pending */
   const retryIn = ref<number | null>(null)
-  /** 正在取数（一轮进行中） */
+  /** Loading (a round is in progress) */
   const busy = ref(false)
 
   let active = false
@@ -60,7 +69,11 @@ export function useRecoveringLoad(stages: () => Stages, refreshMs: number) {
     }, seconds * 1_000)
   }
 
-  /** 每块一结束就更新自己的状态：成功的立刻从提示里去掉，不必等同一轮里最慢的那块（开发库上 /api/pool 要 20~30 秒） */
+  /**
+ * Each block updates its own status as soon as it settles: a success is removed from the alert immediately
+ * instead of waiting for the slowest block of the round (/api/pool takes 20~30 s on the dev database).
+ * The map is replaced rather than mutated so the computed views re-evaluate.
+ */
   function settle(name: string, error: unknown | null) {
     const next = { ...failures.value }
     if (error === null) delete next[name]
@@ -99,7 +112,10 @@ export function useRecoveringLoad(stages: () => Stages, refreshMs: number) {
     return inflight
   }
 
-  /** 立即重试（「立即重试」与「刷新」按钮、网络恢复时用）：退避计数不清零，失败了继续往后退 */
+  /**
+ * Retry now (used by the "retry now" and "refresh" buttons and when the network comes back): the backoff counter
+ * is not reset, so another failure keeps backing off further.
+ */
   function retryNow(): Promise<void> {
     clearRetry()
     return run()
@@ -114,7 +130,7 @@ export function useRecoveringLoad(stages: () => Stages, refreshMs: number) {
     active = true
     void run()
     refreshTimer = window.setInterval(() => {
-      if (!retryTimer) void run()   // 有待重试的就交给重试，不叠一轮
+      if (!retryTimer) void run()   // a pending retry takes precedence; do not stack another round on top
     }, refreshMs)
     window.addEventListener('online', onOnline)
   }
@@ -130,7 +146,7 @@ export function useRecoveringLoad(stages: () => Stages, refreshMs: number) {
   onBeforeUnmount(stop)
 
   const failedNames = computed(() => new Set(Object.keys(failures.value)))
-  /** 顶部提示：相同的错误合并成一条（「最新快照、池：timeout…；评估：…」），全部成功为 null */
+  /** The alert text: identical errors are merged into one entry ("block A, block B: timeout...; block C: ..."); null when everything succeeded */
   const errorText = computed(() => {
     const byMessage = new Map<string, string[]>()
     for (const [name, message] of Object.entries(failures.value)) {

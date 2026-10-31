@@ -13,8 +13,9 @@ import {
 } from './format'
 
 /**
- * 评估日的全部情况：当天新信号（卡片，点开看详情）、四门漏斗与分布、评估表（回答"为什么没信号、卡在哪道门"）。
- * 默认只看池与持仓；切到"全部"才列出池外的信号与评估。
+ * Everything about the evaluation date: the day's new signals (cards, click for details), the four-gate funnel and
+ * distributions, and the evaluation table (answers "why no signal, which gate blocked it").
+ * Only pool and holdings by default; switching to "all" also lists signals and evaluations outside the pool.
  */
 const props = defineProps<{ date: string | null; universe: InstrumentView[] }>()
 
@@ -36,7 +37,8 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    // 都取全部，池与持仓在前端筛：切换范围不用再请求，还能告诉用户池外有多少
+    // fetch everything and filter pool/holdings client-side: switching scope needs no new request and the user can be
+    // told how many there are outside the pool
     const [e, s] = await Promise.all([
       signalsApi.evaluations({ date: props.date, scope: 'all' }),
       signalsApi.list({ from: props.date, to: props.date, scope: 'all' }),
@@ -57,7 +59,7 @@ const names = computed(() => new Map(props.universe.map((u) => [u.symbol, u])))
 const nameOf = (s: string) => names.value.get(s)?.nameCn ?? names.value.get(s)?.name ?? null
 const inScope = (role: string) => scope.value === 'all' || role !== 'UNIVERSE'
 
-// ---- 当天新信号：持仓、池、池外依次 ----
+// ---- the day's new signals: holdings, pool, outside the pool, in that order ----
 const ROLE_ORDER: Record<string, number> = { HOLDING: 0, POOL: 1, UNIVERSE: 2 }
 const cards = computed(() =>
   signals.value
@@ -70,7 +72,7 @@ function openSignal(id: number) {
   signalDrawer.value = true
 }
 
-// ---- 漏斗与分布 ----
+// ---- funnel and distributions ----
 const scoped = computed(() => rows.value.filter((r) => inScope(r.role)))
 const evaluated = computed(() => scoped.value.filter((r) => r.gates))
 const funnel = computed(() =>
@@ -92,7 +94,7 @@ function count(values: string[]): [string, number][] {
 const statusCounts = computed(() => count(scoped.value.map((r) => STATUS_LABEL[r.status])))
 const outcomeCounts = computed(() => count(scoped.value.filter((r) => r.outcome).map((r) => OUTCOME_LABEL[r.outcome!])))
 
-// ---- 评估表：过门多的在前，分页 ----
+// ---- evaluation table: most gates passed first, paginated ----
 const filtered = computed(() =>
   scoped.value
     .filter((r) => !outcome.value || r.outcome === outcome.value || r.status === outcome.value)
@@ -120,7 +122,7 @@ defineExpose({ load })
       <span class="muted">{{ date }} · 评估 {{ scoped.length }} 只</span>
     </div>
 
-    <!-- 当天新信号 -->
+    <!-- the day's new signals -->
     <section class="panel">
       <div class="panel__head">
         <h3>当天新信号</h3>
@@ -156,7 +158,7 @@ defineExpose({ load })
       <el-empty v-else :image-size="50" :description="hiddenSignals ? '池与持仓这一天没有新信号' : '这一天没有新信号'" />
     </section>
 
-    <!-- 漏斗与分布 -->
+    <!-- funnel and distributions -->
     <div class="two">
       <section class="panel">
         <div class="panel__head"><h3>四门漏斗</h3><span class="panel__src">依次通过前几道门的只数（四门各自判定，不短路）</span></div>
@@ -181,7 +183,7 @@ defineExpose({ load })
       </section>
     </div>
 
-    <!-- 评估表 -->
+    <!-- evaluation table -->
     <section class="panel">
       <div class="panel__head">
         <h3>评估明细</h3>

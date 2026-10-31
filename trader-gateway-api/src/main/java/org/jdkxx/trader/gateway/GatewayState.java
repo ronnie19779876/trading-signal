@@ -1,14 +1,16 @@
 package org.jdkxx.trader.gateway;
 
 /**
- * 网关连接状态。DISABLED 表示配置里没有启用这家券商，不算故障；
- * RECONNECTING 表示曾经连上（或首次连接失败后）正在按退避重试；ERROR 只用于不可重试的情况。
+ * Gateway connection state. DISABLED means the broker is not enabled in configuration, which is not
+ * a fault; RECONNECTING means the gateway was connected before (or the first connection attempt
+ * failed) and is retrying with backoff; ERROR is used only for non-retryable situations (and when
+ * the reconnect attempts are exhausted).
  */
 public enum GatewayState {
-    DISABLED,
-    DISCONNECTED,
-    CONNECTING,
-    CONNECTED,
-    RECONNECTING,
-    ERROR
+  DISABLED,
+  DISCONNECTED,
+  CONNECTING,
+  CONNECTED,
+  RECONNECTING,
+  ERROR
 }

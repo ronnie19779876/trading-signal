@@ -1,4 +1,4 @@
-/** 画图只需要这几个字段；行情页的 DailyBar 与信号页的 ChartBar 都满足。 */
+/** Charting needs only these fields; both the market-data DailyBar and the signals page's ChartBar satisfy it. */
 export interface KlineBar {
   tradeDate: string
   open: number
@@ -23,7 +23,7 @@ export interface ChartPriceLine {
   dashed?: boolean
 }
 
-/** 价格区间（如支撑区）：画成上下两条虚线。 */
+/** A price band (e.g. a support zone): drawn as two dotted lines, top and bottom. */
 export interface ChartZone {
   bottom: number
   top: number
@@ -33,8 +33,9 @@ export interface ChartZone {
 
 
 /**
- * 图表配色。lightweight-charts 只认具体颜色值，不认 CSS 变量，所以从 :root 上取出来传进去；
- * 主题切换时组件 watch 到变化会重新取一遍（不重取的话暗色下图还是白底）。
+ * Chart colors. lightweight-charts only accepts concrete color values, not CSS variables, so they are read from
+ * :root and passed in; on a theme switch the components watch the change and read them again (otherwise the chart
+ * keeps a white background in dark mode).
  */
 export interface ChartTheme {
   text: string
@@ -62,7 +63,7 @@ export function chartTheme(): ChartTheme {
   }
 }
 
-/** 两个图表组件共用的基础配置。 */
+/** Base options shared by the chart components. */
 export function chartLayout(t: ChartTheme) {
   return {
     layout: { background: { color: 'transparent' }, textColor: t.text },
@@ -72,10 +73,13 @@ export function chartLayout(t: ChartTheme) {
   }
 }
 
-/** 均线配色：固定三色，避开涨跌红绿与成本线的主题蓝。 */
+/** Moving-average colors: a fixed palette that avoids the up/down green/red and the theme blue used by the cost line. */
 export const MA_COLORS = ['#e6a23c', '#b37feb', '#13c2c2', '#f56c9f']
 
-/** 收盘价简单均线；前 period−1 根没有值（不画，不补）。 */
+/**
+ * Simple moving average of the close, as a running sum. The first period-1 bars have no value (not drawn, not
+ * back-filled).
+ */
 export function movingAverage(bars: KlineBar[], period: number): { time: string; value: number }[] {
   const out: { time: string; value: number }[] = []
   let sum = 0

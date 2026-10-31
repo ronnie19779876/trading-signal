@@ -3,23 +3,29 @@ package org.jdkxx.trader.gateway.support;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * 适配器向 {@link ConnectionSupervisor} 提供的传输层。方法都不得阻塞调用线程太久：
- * 建连里的同步握手请放到自己的线程上，用 Future 回报。状态机在自己的锁里调 open() / close()，
- * 这两个方法<b>不得等待 SDK 的锁</b>，否则 SDK 卡住时状态查询、断开、关停都会跟着卡死。
+ * Transport layer that an adapter provides to {@link ConnectionSupervisor}. No method may block the
+ * calling thread for long: run the synchronous handshake of a connect on your own thread and report
+ * back through the future. The state machine calls open() / close() while holding its own lock, so
+ * these two methods <b>must never wait for an SDK lock</b>; otherwise a stuck SDK would freeze
+ * status queries, disconnect and shutdown along with it (the IBKR {@code EClientSocket} methods are
+ * synchronized and an unanswered handshake holds that lock, the pre-2.0.2 hang).
  */
 public interface Transport {
 
-    /** 建连并等待"就绪"（盈透：nextValidId；富途：onInitConnect errCode==0）。 */
-    CompletableFuture<Void> open();
+  /** Connects and waits for "ready" (IBKR: nextValidId; Futu: onInitConnect with errCode==0). */
+  CompletableFuture<Void> open();
 
-    /** 幂等关闭。 */
-    void close();
+  /** Idempotent close. */
+  void close();
 
-    /** 心跳探测，true 表示对端有应答。 */
-    CompletableFuture<Boolean> probe();
+  /** Heartbeat probe; true means the peer answered. */
+  CompletableFuture<Boolean> probe();
 
-    /** 此刻连接是否仍可用。状态机在把"就绪"落成 CONNECTED 之前核对一次（在锁外调用）。 */
-    default boolean isOpen() {
-        return true;
-    }
+  /**
+   * Whether the connection is still usable right now. The state machine checks this once before
+   * turning "ready" into CONNECTED (called outside its lock, because it may touch SDK locks).
+   */
+  default boolean isOpen() {
+    return true;
+  }
 }

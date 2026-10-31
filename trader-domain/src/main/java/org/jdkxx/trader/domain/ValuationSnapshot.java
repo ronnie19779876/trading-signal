@@ -4,32 +4,38 @@ import java.math.BigDecimal;
 import java.time.Instant;
 
 /**
- * 估值快照：券商在某一时刻给出的市值与估值指标。逐日变化，跟着价格走。
- * 亏损股的市盈率为负或缺失都正常，字段一律可空，不要在领域层兜底成 0。
- * 个股与 ETF 的口径不同：ETF 没有市盈率市净率，另有净值与溢价，见 navPerShare / premium。
+ * Valuation snapshot: market cap and valuation metrics given by the broker at one point in time. It
+ * changes daily and follows the price. A negative or missing P/E for a loss-making stock is normal;
+ * every field is nullable and must not be defaulted to 0 in the domain layer. Stocks and ETFs
+ * differ: ETFs have no P/E or P/B but have NAV and premium, see {@code navPerShare} / {@code
+ * premium}.
  *
- * <p>lastPrice 是快照里的当前价（常规时段价）。不落估值表；账户快照给库里没有当日 K 线的持仓估值时用它兜底。
- * 它收盘后冻结在常规时段收盘直到下一个交易日，asOf 却跟着盘后/夜盘更新（实测美东周日 20:52 取 SPY：
- * asOf 是周日、价格 764.29 等于周五 K 线收盘），所以<b>不能用 asOf 判断 lastPrice 属于哪天</b>。
+ * <p>{@code lastPrice} is the snapshot's current price (regular-session price). It is not stored in
+ * the valuation table; the account snapshot uses it as a fallback to value holdings that have no
+ * bar for the day in the database. After the close it stays frozen at the regular-session close
+ * until the next trading day, while {@code asOf} keeps moving with after-hours / overnight trading
+ * (measured on a Sunday at 20:52 US/Eastern for SPY: {@code asOf} was the Sunday and the price
+ * 764.29 equalled Friday's closing bar), so <b>{@code asOf} cannot tell which day {@code lastPrice}
+ * belongs to</b>.
  */
-public record ValuationSnapshot(Instrument instrument,
-                                Instant asOf,
-                                boolean suspended,
-                                BigDecimal marketCap,
-                                BigDecimal floatMarketCap,
-                                Long issuedShares,
-                                Long outstandingShares,
-                                BigDecimal pe,
-                                BigDecimal peTtm,
-                                BigDecimal pb,
-                                BigDecimal eps,
-                                BigDecimal netAssetPerShare,
-                                BigDecimal netAsset,
-                                BigDecimal netProfit,
-                                BigDecimal dividendTtm,
-                                BigDecimal dividendYieldTtm,
-                                BigDecimal turnoverRate,
-                                BigDecimal navPerShare,
-                                BigDecimal premium,
-                                BigDecimal lastPrice) {
-}
+public record ValuationSnapshot(
+    Instrument instrument,
+    Instant asOf,
+    boolean suspended,
+    BigDecimal marketCap,
+    BigDecimal floatMarketCap,
+    Long issuedShares,
+    Long outstandingShares,
+    BigDecimal pe,
+    BigDecimal peTtm,
+    BigDecimal pb,
+    BigDecimal eps,
+    BigDecimal netAssetPerShare,
+    BigDecimal netAsset,
+    BigDecimal netProfit,
+    BigDecimal dividendTtm,
+    BigDecimal dividendYieldTtm,
+    BigDecimal turnoverRate,
+    BigDecimal navPerShare,
+    BigDecimal premium,
+    BigDecimal lastPrice) {}

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
-# 本机开发实例的启停。工作目录必须是仓库根，外置配置从 ./config 读取（config/application.yml + config/secrets.yml）。
+# Starts and stops the local development instance. The working directory must be the repository root; the
+# external configuration is read from ./config (config/application.yml + config/secrets.yml).
 #
-#   ./scripts/run-local.sh          前台启动（先 ./mvnw -pl trader-app -am -DskipTests package 打出 jar）
-#   ./scripts/run-local.sh stop     停止 —— POST /actuator/shutdown，脚本内没有任何 kill
+#   ./scripts/run-local.sh          start in the foreground (build the jar first: ./mvnw -pl trader-app -am -DskipTests package)
+#   ./scripts/run-local.sh stop     stop -- POST /actuator/shutdown; the script contains no kill at all
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/lib/jdk.sh
@@ -13,7 +14,8 @@ APP_JAR="trader-app/target/trader-app.jar"
 STOP_TIMEOUT=40
 
 app_port() {
-    # 依赖 server.port 是文件里第一个 port:（datasource 的端口写在 URL 里，不会先出现）
+    # Relies on server.port being the first port: in the file (the datasource port is inside the URL, so
+    # it never appears first)
     grep -m1 -E '^[[:space:]]*port:' "$CONFIG_YML" | sed -E 's/[^0-9]//g'
 }
 
@@ -22,8 +24,9 @@ start() {
     [[ -f "$APP_JAR" ]] || { echo "没有 $APP_JAR，先构建：$(mvn_cmd) -pl trader-app -am -DskipTests package" >&2; exit 1; }
     [[ -f config/secrets.yml ]] || echo "提示：没有 config/secrets.yml（可从 secrets.yml.example 复制）；数据库密码将尝试从 ~/.pgpass 读取"
     echo "启动开发实例（:$(app_port)，JDK $JAVA_HOME）..."
-    # -DsocksNonProxyHosts 不能省：本机开着系统级 SOCKS 代理时，pgjdbc 会拿着未解析的回环地址走代理，
-    # 报 UnknownHostException: 127.0.0.1——psql/curl 全正常，只有 Java 连不上本机数据库。
+    # -DsocksNonProxyHosts is mandatory: with a system-wide SOCKS proxy enabled on this Mac, pgjdbc sends the
+    # unresolved loopback address through the proxy and fails with UnknownHostException: 127.0.0.1 --
+    # psql/curl work fine, only Java cannot reach the local database.
     exec "$JAVA_HOME/bin/java" \
         -DsocksNonProxyHosts='localhost|127.*|[::1]' \
         -jar "$APP_JAR" \
@@ -36,7 +39,8 @@ stop() {
     [[ -n "$port" ]] || { echo "从 $CONFIG_YML 解析不出端口" >&2; exit 1; }
     url="http://127.0.0.1:$port/actuator/shutdown"
     echo "停止开发实例（:$port）—— 调用 $url ..."
-    # X-Trader-Client：服务端对缺这个头的写请求返回 403（LocalRequestGuardFilter）
+    # X-Trader-Client: the server answers 403 to write requests without this header (LocalRequestGuardFilter).
+    # "Stopped" below means the HTTP port is closed, which happens before @PreDestroy hooks finish running.
     code="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'X-Trader-Client: script' "$url" || true)"
     case "$code" in
         000) echo "没有实例在监听 :$port"; exit 0 ;;

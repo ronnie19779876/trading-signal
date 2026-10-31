@@ -1,6 +1,6 @@
-# 量化选股板块覆盖表（ARCHITECTURE §25.3 第 2 条）：没有 GICS 板块（纳指独有、只有 ICB 分类）且不是 ADR 的标的在这里给 GICS 板块。
-# 来源：由纳指成分的 ICB 行业人工对应到 GICS 板块（2026-10-12，用户同日确认全部 12 条）。
-# ADR / NY REG SHRS（ARM、ASML、PDD、TSM）不纳入，不需要板块。
+# Quant selection sector overrides (ARCHITECTURE §25.3 rule 2): GICS sectors for names that have no GICS sector (Nasdaq-only, ICB classification only) and are not ADRs.
+# Source: Nasdaq constituents' ICB industries mapped by hand to GICS sectors (2026-10-12; the user confirmed all 12 entries the same day).
+# ADR / NY REG SHRS (ARM, ASML, PDD, TSM) are not included and need no sector.
 symbol,sector,note
 ALAB,Information Technology,ICB Technology/Semiconductors
 ALNY,Health Care,ICB Health Care/Biotechnology

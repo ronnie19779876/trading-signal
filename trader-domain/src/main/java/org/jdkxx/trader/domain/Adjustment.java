@@ -1,6 +1,10 @@
 package org.jdkxx.trader.domain;
 
-/** K 线复权口径。存储一律不复权，读取时按口径计算。 */
+/**
+ * Price adjustment basis for bars. Storage is always unadjusted; adjustment is computed on read.
+ */
 public enum Adjustment {
-    NONE, FORWARD, BACKWARD
+  NONE,
+  FORWARD,
+  BACKWARD
 }

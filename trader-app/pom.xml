@@ -15,7 +15,7 @@
             <groupId>org.jdkxx.trader</groupId>
             <artifactId>trader-core</artifactId>
         </dependency>
-        <!-- 券商适配器在这一层插入：core 只认 gateway-api 的接口 -->
+        <!-- Broker adapters are plugged in at this layer: core only knows the gateway-api interfaces -->
         <dependency>
             <groupId>org.jdkxx.trader</groupId>
             <artifactId>trader-gateway-ibkr</artifactId>
@@ -39,9 +39,11 @@
         </dependency>
 
         <!--
-          三个供应商 SDK 在各自模块里标了 optional，不会传递到这里。下面的 runtime 声明只为把它们打进
-          fat jar；runtime 作用域不进编译 classpath，本模块照样 import 不了它们，边界不受影响。
-          ⚠️ 删掉任何一条构建照样过，但打出来的 jar 缺 SDK，一启动就 NoClassDefFoundError。
+          The three vendor SDKs are marked optional in their own modules, so they are not transitive to here. The
+          runtime declarations below exist only to package them into the fat jar; the runtime scope is not on the
+          compile classpath, so this module still cannot import them and the module boundary is preserved.
+          WARNING: removing any of them still builds, but the resulting jar lacks the SDK and fails at startup with
+          NoClassDefFoundError.
         -->
         <dependency>
             <groupId>com.interactivebrokers</groupId>
@@ -66,7 +68,7 @@
     </dependencies>
 
     <build>
-        <!-- 固定产物名，脚本与 systemd 单元都引用 trader-app.jar -->
+        <!-- Fixed artifact name: scripts and the systemd unit all reference trader-app.jar -->
         <finalName>trader-app</finalName>
         <plugins>
             <plugin>
@@ -75,7 +77,7 @@
                 <executions>
                     <execution>
                         <goals>
-                            <!-- build-info 让 /actuator/info 与 /api/system/info 能报告版本与构建时间 -->
+                            <!-- build-info lets /actuator/info and /api/system/info report the version and build time -->
                             <goal>build-info</goal>
                             <goal>repackage</goal>
                         </goals>

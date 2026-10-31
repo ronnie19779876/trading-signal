@@ -1,7 +1,10 @@
 package org.jdkxx.trader.domain.selection;
 
-/** 估值历史的回看区间。YEAR10 实测从 2016-10 起逐日约 2513 天；MONTH3 用于公告后覆盖近期。 */
+/**
+ * Lookback range of valuation history. YEAR10 measured as daily values from 2016-10 on, about 2513
+ * days; MONTH3 refreshes the recent period after an announcement.
+ */
 public enum ValuationRange {
-    MONTH3,
-    YEAR10
+  MONTH3,
+  YEAR10
 }

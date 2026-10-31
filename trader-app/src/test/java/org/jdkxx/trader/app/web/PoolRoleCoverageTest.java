@@ -1,55 +1,65 @@
 package org.jdkxx.trader.app.web;
 
-import org.jdkxx.trader.domain.PoolRole;
-import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.jdkxx.trader.domain.PoolRole;
+import org.junit.jupiter.api.Test;
 
 /**
- * 池成员接口与前端角色下拉必须覆盖 {@link PoolRole} 的全部取值。
+ * The pool-member endpoint and the frontend role dropdown must cover every value of {@link
+ * PoolRole}.
  *
- * <p>这个测试是补的：加 {@code BENCHMARK} 角色时，{@code GET /api/pool} 里写死枚举了
- * POOL 与 HOLDING 两种，前端下拉也只有两项，结果基准标的在库里存在、被正常采集与订阅，
- * 却不在接口返回里——数据没错，但看不见，排查时容易误判成"基准没加上"。
+ * <p>This test was added after the fact: when the {@code BENCHMARK} role was added, {@code GET
+ * /api/pool} had POOL and HOLDING hard-coded and the frontend dropdown had only two options, so the
+ * benchmark existed in the database and was collected and subscribed normally but was missing from
+ * the API response. The data was right but invisible, which during troubleshooting easily looks
+ * like "the benchmark was never added".
  */
 class PoolRoleCoverageTest {
 
-    /**
-     * 3.4.3 起 {@code /api/pool} 委托给 {@code MarketDataFacade.pool()}：直接取池里的全部成员、不按角色过滤，
-     * 结构上就不会漏角色（原先按 PoolRole.values() 逐个调 universe()，每次对整张日 K 表 GROUP BY，太慢）。
-     * 「每种角色都返回」由 {@code InstrumentViewCoverageTest} 遍历 PoolRole.values() 守住；这里只守接口别绕开它自己逐个角色拼。
-     */
-    @Test
-    void 池接口不按角色写死() throws Exception {
-        String src = Files.readString(Path.of("src/main/java/org/jdkxx/trader/app/web/MarketDataController.java"));
-        int start = src.indexOf("@GetMapping(\"/api/pool\")");
-        assertThat(start).as("找不到 /api/pool 的定义，测试需要跟着改").isGreaterThan(0);
-        String body = src.substring(start, src.indexOf('}', src.indexOf('{', start)) + 1);
+  /**
+   * Since 3.4.3 {@code /api/pool} delegates to {@code MarketDataFacade.pool()}: it takes every pool
+   * member without filtering by role, so structurally no role can be missed (it used to call
+   * universe() once per PoolRole.values(), each a GROUP BY over the whole daily-bar table, which
+   * was too slow). "Every role is returned" is guarded by {@code InstrumentViewCoverageTest}
+   * iterating PoolRole.values(); this test only guards that the endpoint does not bypass it and
+   * assemble roles one by one itself.
+   */
+  @Test
+  void 池接口不按角色写死() throws Exception {
+    String src =
+        Files.readString(
+            Path.of("src/main/java/org/jdkxx/trader/app/web/MarketDataController.java"));
+    int start = src.indexOf("@GetMapping(\"/api/pool\")");
+    assertThat(start).as("找不到 /api/pool 的定义，测试需要跟着改").isGreaterThan(0);
+    String body = src.substring(start, src.indexOf('}', src.indexOf('{', start)) + 1);
 
-        assertThat(body)
-                .as("池接口要委托给 facade.pool()（取全部成员、不按角色过滤），别逐个角色写死——加新角色时必漏")
-                .contains("facade.pool()")
-                .doesNotContain("PoolRole.POOL").doesNotContain("PoolRole.HOLDING").doesNotContain("PoolRole.BENCHMARK");
-    }
+    assertThat(body)
+        .as("池接口要委托给 facade.pool()（取全部成员、不按角色过滤），别逐个角色写死——加新角色时必漏")
+        .contains("facade.pool()")
+        .doesNotContain("PoolRole.POOL")
+        .doesNotContain("PoolRole.HOLDING")
+        .doesNotContain("PoolRole.BENCHMARK");
+  }
 
-    /**
-     * 角色下拉在 3.0.6 改版后搬到了 {@code components/system/MarketDataTab.vue}，
-     * 而这个测试一直指着已被删除的 {@code pages/MarketDataPage.vue}，靠"文件不存在就 return"
-     * 每次都跳过——永久绿灯、一条断言没跑（2026-09-25 全项目审查发现）。
-     * 现在走 {@link FrontendSources}：树在而文件不在直接判失败。
-     */
-    @Test
-    void 前端角色下拉覆盖全部取值() throws Exception {
-        Optional<String> src = FrontendSources.read("components/system/MarketDataTab.vue");
-        if (src.isEmpty()) {
-            return;   // 整棵前端源码树都不在：单独构建后端
-        }
-        for (PoolRole role : PoolRole.values()) {
-            assertThat(src.get()).as("前端角色下拉缺少 %s", role).contains("value=\"" + role.name() + "\"");
-        }
+  /**
+   * After the 3.0.6 redesign the role dropdown moved to {@code
+   * components/system/MarketDataTab.vue}, while this test kept pointing at the deleted {@code
+   * pages/MarketDataPage.vue} and, through "return when the file does not exist", skipped every
+   * time: a permanent green light with not one assertion run (found in the 2026-09-25 full-project
+   * review). It now uses {@link FrontendSources}: tree present but file missing fails right away.
+   */
+  @Test
+  void 前端角色下拉覆盖全部取值() throws Exception {
+    Optional<String> src = FrontendSources.read("components/system/MarketDataTab.vue");
+    if (src.isEmpty()) {
+      return; // the whole frontend source tree is absent: backend built on its own
     }
+    for (PoolRole role : PoolRole.values()) {
+      assertThat(src.get()).as("前端角色下拉缺少 %s", role).contains("value=\"" + role.name() + "\"");
+    }
+  }
 }

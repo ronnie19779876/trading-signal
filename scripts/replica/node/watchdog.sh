@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 #
-# 备库看门狗：在两台服务器上都装（install-node.sh），由 systemd 用户定时器每 2 分钟跑一次，按本机角色决定做什么。
-#   备库：隧道没在跑就拉起；在跑但 WAL 接收不在 streaming、或超过 5 分钟没收到主库消息，就重启隧道。
-#         起因：SSH 隧道有一种坏法是进程还活着、本地端口还在监听、转发全部不通（2026-09 上海链路实测），
-#         ServerAlive 探测救不了，systemd 也不知道它坏了——只有看复制本身才知道。
-#   主库：什么都不做（主库不连别人；隧道开着只提示）。
-# 输出进 journal：journalctl --user -u pg-replica-watchdog
+# Standby watchdog: installed on both servers (install-node.sh), run every 2 minutes by a systemd user
+# timer; what it does depends on the local node's role.
+#   Standby: start the tunnel if it is not running; if it runs but the WAL receiver is not streaming, or no
+#            message has come from the primary for over 5 minutes, restart the tunnel.
+#            Why: one way an SSH tunnel breaks is that the process stays alive and the local port keeps
+#            listening while nothing gets forwarded (measured on the Shanghai link in 2026-09); ServerAlive
+#            probes do not catch it and systemd does not know it is broken -- only replication itself shows it.
+#   Primary: does nothing (a primary connects to no one; an open tunnel is only reported).
+#   Database unreachable (e.g. stopped during a reseed or switchover): does nothing.
+# Output goes to the journal: journalctl --user -u pg-replica-watchdog
 set -uo pipefail
 TUNNEL=pg-replica-tunnel.service
 q() { psql -h localhost -U trader -d db_trader_dev -w -AtX -c "$1" 2>/dev/null; }

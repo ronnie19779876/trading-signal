@@ -9,7 +9,7 @@ import {
   ROLE_LABEL, SIGNAL_STATUS_LABEL, SIGNAL_STATUS_TYPE, STANCE_LABEL, TRACK_LABEL, daysAgo, errMsg, iso, num, pct, signedR, trend,
 } from './format'
 
-/** 信号列表：状态、来源、范围过滤，分页；已看过 / 不做；点一行看详情。 */
+/** Signal list: filter by status, origin and scope, paginated; mark as seen / not taking it; click a row for the details. */
 const props = defineProps<{ universe: InstrumentView[] }>()
 const range = ref<[string, string]>([daysAgo(30), iso(new Date())])
 const statuses = ref<SignalStatus[]>([])

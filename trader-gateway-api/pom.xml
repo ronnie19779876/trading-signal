@@ -15,7 +15,7 @@
             <groupId>org.jdkxx.trader</groupId>
             <artifactId>trader-domain</artifactId>
         </dependency>
-        <!-- 只用日志门面，不引入 Spring：本模块要保持与框架无关 -->
+        <!-- Logging facade only, no Spring: this module must stay framework-agnostic -->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>

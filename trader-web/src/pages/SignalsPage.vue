@@ -14,8 +14,9 @@ import type { AiStatus } from '../api/ai'
 import { auditCheckLabel } from '../lib/audit'
 
 /**
- * 入场信号页：顶部是评估日的概况与审计（有问题才显示），下面四个标签页：当日、信号、纸面账本、回放。
- * 标的列表只取一次，给各标签页显示中文名与行业。
+ * Entry-signals page: the evaluation date's summary and audit on top (shown only when something failed), then four
+ * tabs: today, signals, paper ledger, replay. The instrument list is loaded once and gives every tab Chinese names
+ * and sectors.
  */
 const audit = ref<AuditReport | null>(null)
 const settings = ref<AiSettings | null>(null)
@@ -26,8 +27,9 @@ const tab = ref('today')
 const error = ref<string | null>(null)
 const loading = ref(false)
 
-// 刷新调各 tab 自己的 load()，而不是换 :key 整体重挂载——后者会丢掉筛选条件和滚动位置。
-// lazy 的 tab 没打开过就没挂载，ref 为 null，跳过即可（打开时自己会加载）。
+// Refresh calls each tab's own load() instead of changing :key to remount it -- remounting would lose the filters
+// and scroll position.
+// A lazy tab that was never opened is not mounted and its ref is null; skip it (it loads by itself when opened).
 const todayTab = useTemplateRef<{ load: () => void }>('todayTab')
 const signalsTab = useTemplateRef<{ load: () => void }>('signalsTab')
 const ledgerTab = useTemplateRef<{ load: () => void }>('ledgerTab')
@@ -63,8 +65,11 @@ async function pickDate(d: string | null) {
 const summary = computed(() => (audit.value?.summary ?? {}) as Record<string, number | boolean | undefined>)
 const callsToday = computed(() => (today.value?.day === todayEt() ? today.value.calls : 0))
 
-// ---- 审计：只列没通过的项，名称与原因都转成中文；涉及的标的按原因分组收起 ----
-/** 样本形如 "HUM SKIPPED_BUDGET：今天已调用 20 次，达到每日上限 20"：按"状态 + 原因"分组，状态转中文。 */
+// ---- audit: list only failed checks with Chinese names and reasons; affected symbols are grouped by reason and collapsed ----
+/**
+ * Samples look like "HUM SKIPPED_BUDGET: <reason text>" (full-width or ASCII colon): group by "status + reason" and
+ * translate the status to Chinese. Samples that do not match go into a catch-all group.
+ */
 function groupSamples(samples: string[]) {
   const groups = new Map<string, string[]>()
   for (const raw of samples) {
@@ -82,7 +87,7 @@ const openedChecks = ref<string[]>([])
 
 onMounted(() => {
   void load()
-  getUniverse().then((u) => (universe.value = u)).catch(() => { /* 中文名只是锦上添花 */ })
+  getUniverse().then((u) => (universe.value = u)).catch(() => { /* Chinese names are just a nice-to-have */ })
 })
 </script>
 

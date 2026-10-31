@@ -1,6 +1,7 @@
 package org.jdkxx.trader.domain;
 
-/** 账户性质：实盘或模拟。 */
+/** Account kind: live or paper. */
 public enum AccountKind {
-    LIVE, PAPER
+  LIVE,
+  PAPER
 }

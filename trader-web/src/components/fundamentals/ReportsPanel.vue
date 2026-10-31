@@ -4,11 +4,14 @@ import { fundamentalsApi, type FinancialItem, type FinancialReport, type Stateme
 import { big, errMsg, negative, numMax, trend } from '../../lib/format'
 
 /**
- * 财报：营收与归母净利润柱状图 + 四类报表明细。全是券商原值，同比也是券商给的。
+ * Financial reports: a bar chart of revenue and net profit attributable to shareholders, plus the detail of the four
+ * statement types. All raw broker values; the YoY figures also come from the broker.
  *
- * 季报与年报分开看：年报与四季报期末是同一天，混在一起读不出趋势。
- * 字段随行业模板不同（一般企业、银行、保险各一套编号），所以表格的行由数据决定；
- * 柱状图按名称取"总收入""归属于母公司股东净利润"，三套模板里都有。
+ * Quarterly and annual reports are viewed separately: the annual report and Q4 share the same period end and mixed
+ * together show no trend.
+ * Fields differ by industry template (general companies, banks and insurers each have their own ids), so the table
+ * rows are driven by the data; the bar chart picks total revenue and net profit attributable to shareholders by
+ * name, which exist in all three templates.
  */
 const props = defineProps<{ symbol: string }>()
 
@@ -28,7 +31,7 @@ const income = ref<FinancialReport[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 
-/** 年报每年一期，要取够 8 期得多拿些（接口上限 50）。 */
+/** There is one annual report per year, so getting 8 of them needs a larger fetch (the endpoint caps at 50). */
 const LIMIT = 40
 
 async function load() {
@@ -57,7 +60,7 @@ function pick(list: FinancialReport[]) {
 }
 const shown = computed(() => pick(reports.value))
 
-/** 一行一个字段；整行都没有值的是分组标题（如"盈利能力TTM"）。 */
+/** One row per field; a row with no value anywhere is a group heading (e.g. "profitability TTM"). */
 const grid = computed(() => {
   const names = new Map<number, string>()
   for (const r of shown.value) for (const i of r.items) if (i.name) names.set(i.fieldId, i.name)
@@ -67,7 +70,7 @@ const grid = computed(() => {
   })
 })
 
-/** 主要指标是比率，原样两位小数；其余报表是金额，大数按亿（每股收益这类小数原样）。 */
+/** Key metrics are ratios, shown as-is with two decimals; other statements are amounts, large ones in units of 1e8 (small values such as EPS as-is). */
 function fmt(c: FinancialItem | null): string {
   if (!c || c.value === null) return '—'
   if (statement.value !== 'main_index' && Math.abs(c.value) >= 1e6) return big(c.value)
@@ -78,7 +81,7 @@ function yoy(c: FinancialItem | null): string | null {
   return (c.yoy > 0 ? '+' : '') + c.yoy.toFixed(1) + '%'
 }
 
-// ---- 营收与归母净利润（从旧到新） ----
+// ---- revenue and net profit attributable to shareholders (oldest to newest) ----
 function valueOf(r: FinancialReport, name: string): number | null {
   return r.items.find((i) => i.name === name)?.value ?? null
 }

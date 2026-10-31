@@ -2,8 +2,8 @@ import { http } from './http'
 import type { AuditReport } from './account'
 
 /**
- * 与 docs/API.md「量化选股（第 6 期）」一一对应。评分部分只读（回补、重放不在页面上做）；
- * 模拟交易（§26）的加入与平仓是页面上唯一的写操作。
+ * Mirrors the "quant selection (phase 6)" section of docs/API.md. Scoring is read-only (backfill and replay are not
+ * done from the page); adding and closing simulated trades (§26) are the only write operations on the page.
  */
 
 export type Rating = 'STRONG_BUY' | 'BUY' | 'HOLD' | 'SELL' | 'STRONG_SELL'
@@ -29,7 +29,7 @@ export interface ScoreView {
   compositePct: number | null
   rating: Rating | null
   sbStreak: number
-  /** JSON 文本：{指标: [原值, 板块内百分位]}，见 parseMetrics */
+  /** JSON text: {metric: [raw value, percentile within sector]}, see parseMetrics */
   metrics: string
   fingerprint: string
   computedAt: string
@@ -64,16 +64,16 @@ export const selectionApi = {
   history: async (symbol: string, from?: string, to?: string) =>
     (await http.get<ScoreView[]>(`/api/selection/scores/${encodeURIComponent(symbol)}`, { params: { from, to } })).data,
   audit: async (date?: string) => (await http.get<AuditReport>('/api/selection/audit', { params: date ? { date } : {} })).data,
-  // 输入覆盖报告要扫几张大表（生产约 4 秒、开发实例经隧道更久）
+  // The input-coverage report scans several large tables (about 4 s in production, longer for the dev instance through the tunnel)
   inputs: async () => (await http.get<InputsReport>('/api/selection/inputs', { timeout: 60_000 })).data,
 }
 
-// ---------------------------------------------------------------- 模拟交易（ARCHITECTURE §26）
+// ---------------------------------------------------------------- simulated trading (ARCHITECTURE §26)
 
 export type SimStatus = 'PENDING_ENTRY' | 'OPEN' | 'CLOSED' | 'CANCELLED'
 export type SimExitReason = 'STOP' | 'CHANDELIER' | 'TAKE_PROFIT' | 'MANUAL'
 
-/** 一笔模拟交易；价格都是评分日口径（持有期拆股时价与股数同比换算，金额不变）。比例为小数。 */
+/** One simulated trade; prices are on the score-date basis (a split while held rescales price and shares proportionally, amounts unchanged). Ratios are decimals. */
 export interface SimTrade {
   id: number
   rulesVersion: string
@@ -139,26 +139,26 @@ export interface SimCandidate {
   symbol: string
   rating: Rating | null
   composite: number | null
-  /** AVAILABLE 可加入；ACTIVE 已在池里；FULL 池满 */
+  /** AVAILABLE = can be added; ACTIVE = already in the pool; FULL = the pool is full */
   state: 'AVAILABLE' | 'ACTIVE' | 'FULL'
   tradeId: number | null
 }
 
-/** 「稳定盈利」判据（ARCHITECTURE §26.8）：年化 ≥ 6%、跑赢 SPY 同期、观察期满 12 个月，三条同时满足。比例为小数。 */
+/** The "consistently profitable" criteria (ARCHITECTURE §26.8): annualized >= 6%, beating SPY over the same period, and a full 12-month observation period, all three at once. Ratios are decimals. */
 export interface SimCriteria {
   start: string | null
   asOf: string | null
-  /** 第一笔入场日到期末经过的天数（入场当天为 0） */
+  /** Days elapsed from the first entry date to the end of the period (0 on the entry day) */
   days: number | null
   accountReturn: number | null
-  /** 天数为 0 时无法年化，为 null */
+  /** null when the day count is 0 and annualization is impossible */
   annualized: number | null
   spyReturn: number | null
   annualizedMet: boolean | null
-  /** SPY 同期数据缺失时为 null */
+  /** null when SPY data for the period is missing */
   beatSpy: boolean | null
   observationMet: boolean
-  /** 满 12 个月的那一天 */
+  /** The day the 12 months are complete */
   observationEnds: string | null
   verdict: 'NOT_STARTED' | 'OBSERVING' | 'PASS' | 'FAIL' | 'UNDETERMINED'
 }
@@ -181,7 +181,7 @@ export interface SimOverview {
   cancelled: number
   targetAlerts: number
   candidates: { scoreDate: string | null; active: number; slots: number; top: SimCandidate[] }
-  /** 按逐日权益表最近一个收盘算 */
+  /** Computed from the latest close in the daily equity table */
   criteria: SimCriteria
 }
 
@@ -277,7 +277,7 @@ export interface SimWeeklyReport {
   openPositions: SimWeeklyOpen[]
   generatedThrough: string
   caveats: string[]
-  /** 截至周末；3.4.1 之前生成的周报没有这一项 */
+  /** As of the week end; weekly reports generated before 3.4.1 do not have it */
   criteria?: SimCriteria
 }
 
@@ -290,7 +290,7 @@ export interface SimWeekly {
   spyWeekReturn: number | null
   closedTrades: number
   generatedAt: string
-  /** 列表接口不带正文（null），单周接口带 */
+  /** The list endpoint omits the body (null); the single-week endpoint includes it */
   report: SimWeeklyReport | null
 }
 

@@ -1,118 +1,144 @@
 package org.jdkxx.trader.app.health;
 
-import org.jdkxx.trader.core.marketdata.Jobs;
-import org.jdkxx.trader.storage.marketdata.JobRunRepository;
-import org.jdkxx.trader.storage.marketdata.JobRunRow;
-import org.springframework.boot.actuate.health.Health;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.actuate.health.HealthIndicator;
-import org.springframework.stereotype.Component;
-
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.jdkxx.trader.core.marketdata.Jobs;
+import org.jdkxx.trader.storage.marketdata.JobRunRepository;
+import org.jdkxx.trader.storage.marketdata.JobRunRow;
+import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.actuate.health.HealthIndicator;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
 
 /**
- * 健康指标 {@code jobs}：定时跑批是不是还在正常干活。
+ * Health indicator {@code jobs}: are the scheduled batch jobs still doing their work?
  *
- * <p>此前作业失败只有一行日志，日志还会随部署清理丢掉，等于没人知道。
- * 这里把状态暴露成机器可读，巡检脚本与将来任何外部监控都能用。
+ * <p>Before this, a failed job left only a log line, and logs were lost when old deployments were
+ * cleaned up, so effectively nobody knew. This exposes the state in machine-readable form for the
+ * daily check script and any future external monitoring.
  *
- * <p>DEGRADED（HTTP 仍 200，与 {@code gateways} 一致）的条件：
+ * <p>DEGRADED (still HTTP 200, consistent with {@code gateways}) when:
+ *
  * <ul>
- *   <li>任一作业最近一次是 FAILED 或 SKIPPED；</li>
- *   <li>每日增量逾期未跑——距上次成功超过 {@link #OVERDUE} 且期间有过交易日收盘；</li>
- *   <li>补偿检查停摆——跑过却超过 {@link #OVERDUE} 没成功（它每个工作日都写一行，含非交易日；刚上线从未跑过不算）；</li>
- *   <li>账户快照停摆——跑过却超过 {@link #ACCOUNT_OVERDUE} 没成功（只在交易日跑，长周末周五到周二正好 96 小时，所以放宽）。</li>
+ *   <li>the latest run of any watched job is FAILED or SKIPPED;
+ *   <li>the daily increment is overdue: no success for more than {@link #OVERDUE} with a
+ *       trading-day close in between;
+ *   <li>the catch-up check has stalled: it has run before but has not succeeded for more than
+ *       {@link #OVERDUE} (it writes a row every weekday, including non-trading days; never having
+ *       run right after go-live does not count);
+ *   <li>the account snapshot has stalled: it has run before but has not succeeded for more than
+ *       {@link #ACCOUNT_OVERDUE} (it only runs on trading days, and a long weekend from Friday to
+ *       Tuesday is exactly 96 hours, hence the wider threshold). The same threshold applies to the
+ *       signal evaluation.
  * </ul>
- * 只在开了定时跑批的实例上装配：开发实例不跑批，报"逾期"没有意义。
+ *
+ * Only wired on instances with scheduling enabled: a dev instance runs no batch jobs, so "overdue"
+ * is meaningless there.
  */
 @Component("jobs")
 @ConditionalOnProperty(name = "trader.marketdata.schedule-enabled", havingValue = "true")
 public class JobsHealthIndicator implements HealthIndicator {
 
-    /** 每日增量超过这么久没成功就算逾期。跨过周末与假日仍安全（周五跑完到周一收盘不足 96 小时）。 */
-    static final Duration OVERDUE = Duration.ofHours(96);
-    /** 账户快照与信号评估的逾期阈值（只在交易日跑，长周末周五到周二正好 96 小时）。 */
-    static final Duration ACCOUNT_OVERDUE = Duration.ofHours(120);
+  /**
+   * The daily increment counts as overdue after this long without a success. Safe across weekends
+   * and holidays (Friday's run to Monday's close is less than 96 hours).
+   */
+  static final Duration OVERDUE = Duration.ofHours(96);
 
-    /** 参与"最近一次是否失败"判断的作业。 */
-    private static final List<String> WATCHED = List.of(
-            Jobs.DAILY_INCREMENT, Jobs.VALUATION_SNAPSHOT, Jobs.UNIVERSE_SYNC, Jobs.FINANCIALS_REFRESH, Jobs.CATCHUP_CHECK,
-            Jobs.ACCOUNT_SNAPSHOT, Jobs.SIGNAL_EVALUATION);
+  /**
+   * Overdue threshold for the account snapshot and signal evaluation (they only run on trading
+   * days; Friday to Tuesday over a long weekend is exactly 96 hours).
+   */
+  static final Duration ACCOUNT_OVERDUE = Duration.ofHours(120);
 
-    private final JobRunRepository jobs;
-    /**
-     * 只保留<b>一个</b>构造器：两个公开构造器会让 Spring 找不到该用哪个，
-     * 转而去找无参构造器并在启动时炸掉——而这个 bean 只在开了跑批的实例装配，本地根本发现不了。
-     * 时钟改成测试可替换的字段。
-     */
-    private Clock clock = Clock.systemUTC();
+  /** Jobs whose latest run is checked for failure. */
+  private static final List<String> WATCHED =
+      List.of(
+          Jobs.DAILY_INCREMENT,
+          Jobs.VALUATION_SNAPSHOT,
+          Jobs.UNIVERSE_SYNC,
+          Jobs.FINANCIALS_REFRESH,
+          Jobs.CATCHUP_CHECK,
+          Jobs.ACCOUNT_SNAPSHOT,
+          Jobs.SIGNAL_EVALUATION);
 
-    public JobsHealthIndicator(JobRunRepository jobs) {
-        this.jobs = jobs;
-    }
+  private final JobRunRepository jobs;
 
-    /** 测试用：固定时钟。 */
-    JobsHealthIndicator clock(Clock clock) {
-        this.clock = clock;
-        return this;
-    }
+  /**
+   * Keep <b>one</b> constructor only: with two public constructors Spring cannot decide which to
+   * use, falls back to looking for a no-arg constructor and fails at startup. This bean is only
+   * wired on instances with scheduling enabled, so the failure never shows up locally. The clock is
+   * therefore a field that tests can replace.
+   */
+  private Clock clock = Clock.systemUTC();
 
-    @Override
-    public Health health() {
-        Health.Builder b = Health.up();
-        boolean degraded = false;
-        try {
-            Map<String, JobRunRow> latest = new LinkedHashMap<>();
-            for (JobRunRow r : jobs.latestPerJob()) {
-                latest.put(r.job(), r);
-            }
-            for (String job : WATCHED) {
-                JobRunRow r = latest.get(job);
-                if (r == null) {
-                    b.withDetail(job, "从未跑过");
-                    continue;
-                }
-                b.withDetail(job, r.status() + " @ " + r.startedAt() + summary(r));
-                if ("FAILED".equals(r.status()) || "SKIPPED".equals(r.status())) {
-                    degraded = true;
-                }
-            }
-            Instant since = clock.instant().minus(OVERDUE);
-            if (!jobs.succeededSince(Jobs.DAILY_INCREMENT, since)) {
-                b.withDetail("overdue", "每日增量超过 " + OVERDUE.toHours() + " 小时没有成功跑过");
-                degraded = true;
-            }
-            if (latest.containsKey(Jobs.CATCHUP_CHECK) && !jobs.succeededSince(Jobs.CATCHUP_CHECK, since)) {
-                b.withDetail("catchupOverdue", "补偿检查超过 " + OVERDUE.toHours() + " 小时没有成功跑过");
-                degraded = true;
-            }
-            if (latest.containsKey(Jobs.ACCOUNT_SNAPSHOT)
-                    && !jobs.succeededSince(Jobs.ACCOUNT_SNAPSHOT, clock.instant().minus(ACCOUNT_OVERDUE))) {
-                b.withDetail("accountSnapshotOverdue", "账户快照超过 " + ACCOUNT_OVERDUE.toHours() + " 小时没有成功跑过");
-                degraded = true;
-            }
-            if (latest.containsKey(Jobs.SIGNAL_EVALUATION)
-                    && !jobs.succeededSince(Jobs.SIGNAL_EVALUATION, clock.instant().minus(ACCOUNT_OVERDUE))) {
-                b.withDetail("signalEvaluationOverdue", "信号评估超过 " + ACCOUNT_OVERDUE.toHours() + " 小时没有成功跑过");
-                degraded = true;
-            }
-        } catch (RuntimeException e) {
-            // 查不出来本身就是问题，但别让健康端点 500
-            return b.status(GatewaysHealthIndicator.DEGRADED).withDetail("error", e.toString()).build();
+  public JobsHealthIndicator(JobRunRepository jobs) {
+    this.jobs = jobs;
+  }
+
+  /** For tests: fixed clock. */
+  JobsHealthIndicator clock(Clock clock) {
+    this.clock = clock;
+    return this;
+  }
+
+  @Override
+  public Health health() {
+    Health.Builder b = Health.up();
+    boolean degraded = false;
+    try {
+      Map<String, JobRunRow> latest = new LinkedHashMap<>();
+      for (JobRunRow r : jobs.latestPerJob()) {
+        latest.put(r.job(), r);
+      }
+      for (String job : WATCHED) {
+        JobRunRow r = latest.get(job);
+        if (r == null) {
+          b.withDetail(job, "从未跑过");
+          continue;
         }
-        return degraded ? b.status(GatewaysHealthIndicator.DEGRADED).build() : b.build();
-    }
-
-    private static String summary(JobRunRow r) {
-        if (r.summary() == null || r.summary().isBlank()) {
-            return "";
+        b.withDetail(job, r.status() + " @ " + r.startedAt() + summary(r));
+        if ("FAILED".equals(r.status()) || "SKIPPED".equals(r.status())) {
+          degraded = true;
         }
-        String s = r.summary().split("；")[0];
-        return "：" + (s.length() > 80 ? s.substring(0, 80) + "…" : s);
+      }
+      Instant since = clock.instant().minus(OVERDUE);
+      if (!jobs.succeededSince(Jobs.DAILY_INCREMENT, since)) {
+        b.withDetail("overdue", "每日增量超过 " + OVERDUE.toHours() + " 小时没有成功跑过");
+        degraded = true;
+      }
+      if (latest.containsKey(Jobs.CATCHUP_CHECK)
+          && !jobs.succeededSince(Jobs.CATCHUP_CHECK, since)) {
+        b.withDetail("catchupOverdue", "补偿检查超过 " + OVERDUE.toHours() + " 小时没有成功跑过");
+        degraded = true;
+      }
+      if (latest.containsKey(Jobs.ACCOUNT_SNAPSHOT)
+          && !jobs.succeededSince(Jobs.ACCOUNT_SNAPSHOT, clock.instant().minus(ACCOUNT_OVERDUE))) {
+        b.withDetail("accountSnapshotOverdue", "账户快照超过 " + ACCOUNT_OVERDUE.toHours() + " 小时没有成功跑过");
+        degraded = true;
+      }
+      if (latest.containsKey(Jobs.SIGNAL_EVALUATION)
+          && !jobs.succeededSince(Jobs.SIGNAL_EVALUATION, clock.instant().minus(ACCOUNT_OVERDUE))) {
+        b.withDetail(
+            "signalEvaluationOverdue", "信号评估超过 " + ACCOUNT_OVERDUE.toHours() + " 小时没有成功跑过");
+        degraded = true;
+      }
+    } catch (RuntimeException e) {
+      // Failing to query is a problem in itself, but must not turn the health endpoint into a 500.
+      return b.status(GatewaysHealthIndicator.DEGRADED).withDetail("error", e.toString()).build();
     }
+    return degraded ? b.status(GatewaysHealthIndicator.DEGRADED).build() : b.build();
+  }
+
+  private static String summary(JobRunRow r) {
+    if (r.summary() == null || r.summary().isBlank()) {
+      return "";
+    }
+    String s = r.summary().split("；")[0];
+    return "：" + (s.length() > 80 ? s.substring(0, 80) + "…" : s);
+  }
 }

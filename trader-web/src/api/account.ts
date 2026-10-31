@@ -9,8 +9,9 @@ export interface ReconCheck {
 }
 
 /**
- * 账户快照（一个账户一个交易日一份）。账户号只给脱敏形式 accountMask；
- * accountKey 是带密钥的 HMAC，只用来区分账户，不能反推账户号。
+ * Account snapshot (one per account per trading day). The account number is only ever exposed masked
+ * (accountMask); accountKey is a keyed HMAC used only to tell accounts apart and cannot be reversed into the
+ * account number.
  */
 export interface AccountSnapshot {
   id: number
@@ -22,7 +23,7 @@ export interface AccountSnapshot {
   currency: string | null
   netLiquidation: number | null
   totalCash: number | null
-  /** 盈透口径的股票市值（对账的另一边） */
+  /** IBKR's stock market value (the other side of the reconciliation) */
   stockMarketValue: number | null
   grossPositionValue: number | null
   availableFunds: number | null
@@ -31,9 +32,9 @@ export interface AccountSnapshot {
   unrealizedPnl: number | null
   realizedPnl: number | null
   accruedDividend: number | null
-  /** 应计利息（盈透 $LEDGER-AccruedCash）；3.1.3 起采集，更早的快照为 null */
+  /** Accrued interest (IBKR $LEDGER-AccruedCash); collected since 3.1.3, null in older snapshots */
   accruedInterest: number | null
-  /** 本系统口径：Σ 数量 × 收盘价（只算股票） */
+  /** This system's own figure: sum of quantity x close (stocks only) */
   positionValue: number | null
   positions: number
   reconStatus: ReconStatus
@@ -42,8 +43,9 @@ export interface AccountSnapshot {
 }
 
 /**
- * 快照里的一条持仓。symbol 是券商写法（类别股带空格，如 BRK B）；instrumentId 为 null 表示库里没有这个标的。
- * priceSource：BAR 当日 K 线收盘；SNAPSHOT 富途快照价兜底；NONE 缺价。
+ * One position in a snapshot. symbol is the broker's spelling (share classes contain a space, e.g. BRK B);
+ * instrumentId null means the instrument is not in the database.
+ * priceSource: BAR = close of that day's daily bar; SNAPSHOT = Futu snapshot price as a fallback; NONE = no price.
  */
 export interface PositionSnapshot {
   brokerRef: string
@@ -59,15 +61,16 @@ export interface PositionSnapshot {
   marketValue: number | null
   costBasis: number | null
   unrealizedPnl: number | null
-  /** 现金管理工具：计入市值，不进池、不参与持仓集合核对 */
+  /** Cash-management instrument: counted in market value, never added to the pool, excluded from the holdings-set check */
   cashEquivalent: boolean
 }
 
 /**
- * 与上一份快照相比。netLiquidationChange 含出入金。
- * positionPnl 只累加两份快照里<b>数量相同</b>的持仓——拆股/合股与买卖在快照里长得一样，
- * 数量变过的无法归因（拆股当天数量与价格同时按比例变），一律不计，条数记在 excludedPositions。
- * positionsChanged=true 表示持仓集合或数量变过（买卖，或拆股/合股）。
+ * Compared with the previous snapshot. netLiquidationChange includes deposits and withdrawals.
+ * positionPnl only sums positions whose <b>quantity is the same</b> in both snapshots -- a split/reverse split looks
+ * exactly like a trade in a snapshot, and a changed quantity cannot be attributed (on a split day quantity and
+ * price both change proportionally), so such positions are skipped and counted in excludedPositions.
+ * positionsChanged=true means the set of positions or a quantity changed (a trade, or a split/reverse split).
  */
 export interface DailyChange {
   previousDate: string
@@ -90,7 +93,7 @@ export interface HoldingSyncResult {
   plan: {
     changes: { action: SyncAction; symbol: string; instrumentId: number | null }[]
     untouched: string[]
-    /** 不执行的原因（如盈透返回空持仓而池里还有 HOLDING） */
+    /** Why the plan will not be executed (e.g. IBKR returned no positions while the pool still has HOLDING entries) */
     blocked: string | null
   }
   errors: string[]
@@ -114,7 +117,7 @@ export interface AuditReport {
   checks: AuditCheck[]
 }
 
-/** 实时账户（3.0.2，GET /api/account/live）：盈透常驻订阅，只读内存；全是盈透原值，不做折算；各部分自带更新时间。 */
+/** Live account (3.0.2, GET /api/account/live): a standing IBKR subscription, read from memory only; all values are raw IBKR values with no conversion; each part carries its own update time. */
 export type LiveStatus = 'LIVE' | 'WARMING' | 'DISCONNECTED' | 'UNAVAILABLE'
 
 export interface LiveMoney {
@@ -126,13 +129,13 @@ export interface LiveMoney {
   grossPositionValue: number | null
   stockMarketValue: number | null
   accruedDividend: number | null
-  /** 应计利息（盈透 $LEDGER-AccruedCash）。恒等式的第四项：现金 + 股票市值 + 应计股息 + 应计利息 = 净值 */
+  /** Accrued interest (IBKR $LEDGER-AccruedCash). The fourth term of the identity: cash + stock market value + accrued dividend + accrued interest = NAV */
   accruedInterest: number | null
-  /** 盈透账户汇总约 3 分钟才推一次 */
+  /** IBKR pushes the account summary only about every 3 minutes */
   updatedAt: string
 }
 
-/** 盈透账户盈亏原值（reqPnL）；还没收到有效推送时整个为 null */
+/** Raw IBKR account P&L (reqPnL); the whole object is null until a valid push has arrived */
 export interface LivePnl {
   daily: number | null
   unrealized: number | null
@@ -147,23 +150,23 @@ export interface LivePosition {
   currency: string | null
   quantity: number
   averageCost: number | null
-  /** 成本（App 的 Cost Basis）= 成本价 × 数量 */
+  /** Cost basis (the app's Cost Basis) = average cost x quantity */
   costBasis: number | null
-  /** 盈透行情最新价（与 App「最新价」同源）；行情还没到时为 null */
+  /** Latest price from IBKR market data (same source as the app's last price); null until market data arrives */
   last: number | null
-  /** 盈透行情前收（与 App「PRIOR CLOSE」同值） */
+  /** Prior close from IBKR market data (same value as the app's PRIOR CLOSE) */
   priorClose: number | null
-  /** 涨跌 = 最新价 − 前收；涨跌 % 两位小数（与 App 同口径） */
+  /** Change = last - prior close; change % with two decimals (same definition as the app) */
   change: number | null
   changePct: number | null
   lastAt: string | null
-  /** true = 盈透降级成了延迟行情 */
+  /** true = IBKR fell back to delayed market data */
   lastDelayed: boolean
-  /** 以下三项来自盈透逐只盈亏 */
+  /** The next three fields come from IBKR's per-position P&L */
   marketValue: number | null
   dailyPnl: number | null
   unrealizedPnl: number | null
-  /** 占组合（App 的 % of Portfolio）= 市值 ÷ 净值 × 100 */
+  /** Share of portfolio (the app's % of Portfolio) = market value / NAV x 100 */
   portfolioPct: number | null
   cashEquivalent: boolean
   updatedAt: string | null
@@ -182,14 +185,15 @@ export interface LiveView {
   lastError: string | null
 }
 
-// ---------------------------------------------------------------- 持仓风险面板（3.5.0，ARCHITECTURE §29）
-// 只检查用户定的规则、给出数字，不给买卖建议。比例一律是百分数的数值（-9.63 表示 -9.63%）。
+// ---------------------------------------------------------------- holdings risk panel (3.5.0, ARCHITECTURE §29)
+// Only checks the rules the user defined and reports numbers; it gives no buy/sell advice. All ratios are
+// percentage numbers (-9.63 means -9.63%).
 
 export type TrendState = 'UP_STRONG' | 'UP_WEAK' | 'ABOVE_FLAT' | 'BELOW' | 'BROKEN' | 'UNAVAILABLE'
 export type ReviewTrigger = 'BREAK_CONFIRMED' | 'DEATH_CROSS' | 'CHANDELIER_BREACH' | 'EARNINGS_OVER_BUDGET'
 
 export interface HoldingTrend {
-  /** 判定日 = 这只标的最新一根日 K */
+  /** Evaluation date = the latest daily bar of this instrument */
   date: string
   close: number
   smaShort: number | null
@@ -197,7 +201,7 @@ export interface HoldingTrend {
   smaLongPrior: number | null
   state: TrendState
   stateLabel: string
-  /** = 入场信号的趋势门（收盘 > 200 日均线且均线上升） */
+  /** = the entry signal's trend gate (close > 200-day SMA and the SMA rising) */
   trendGatePass: boolean
   pctVsSmaShort: number | null
   pctVsSmaLong: number | null
@@ -207,7 +211,7 @@ export interface HoldingTrend {
   chandelier: number | null
   chandelierBreach: boolean
   pctFrom52wHigh: number | null
-  /** 相对盈透均价（只有持仓有） */
+  /** Relative to the IBKR average cost (holdings only) */
   pnlVsCostPct: number | null
 }
 
@@ -215,9 +219,9 @@ export interface UpcomingEarnings {
   period: string | null
   date: string
   timing: 'PRE_MARKET' | 'DURING_MARKET' | 'AFTER_MARKET' | 'UNKNOWN'
-  /** 最新日 K 那天之后第几个交易日（0 = 当天盘后或时段未知） */
+  /** How many trading days after the latest daily bar (0 = after the close that day, or timing unknown) */
   tradingDaysAhead: number
-  /** 券商还没排期，按上次公告 + 91 天估计 */
+  /** The broker has not scheduled it yet; estimated as the last announcement + 91 days */
   estimated: boolean
   inWindow: boolean
 }
@@ -227,7 +231,7 @@ export interface EarningsSample {
   pubDate: string
   timing: string
   reactionDate: string
-  /** 开盘相对基准收盘；时段未知时取波动更大那天的口径 */
+  /** Open relative to the reference close; when the timing is unknown, whichever day moved more is used */
   gapPct: number | null
   movePct: number
 }
@@ -250,7 +254,7 @@ export interface EarningsScenario {
   historicalLoss: number | null
   stressLoss: number | null
   stressLossPctOfNav: number | null
-  /** 没设亏损预算时为 null */
+  /** null when no loss budget is configured */
   overBudget: boolean | null
 }
 
@@ -294,21 +298,21 @@ export interface AddCheck {
 }
 
 export const accountApi = {
-  /** 第一次读会发起订阅（WARMING），5 分钟没人读自动退订。 */
+  /** The first read starts the subscription (WARMING); it unsubscribes automatically after 5 minutes without readers. */
   live: async () => (await http.get<LiveView>('/api/account/live')).data,
   latest: async () => (await http.get<SnapshotView>('/api/account/snapshots/latest')).data,
   snapshots: async (from?: string, to?: string) =>
     (await http.get<AccountSnapshot[]>('/api/account/snapshots', {
       params: { ...(from ? { from } : {}), ...(to ? { to } : {}) },
     })).data,
-  /** 只能在快照窗口内拍（交易日美东 16:15 至次日 04:00），窗口外 409。 */
+  /** Only allowed inside the snapshot window (trading days 16:15 US/Eastern until 04:00 the next day); 409 outside it. */
   snapshot: async () => (await http.post<{ jobId: number }>('/api/account/snapshot')).data,
-  /** apply=false 只看计划；apply=true 才改池。库里没有的持仓要向富途解析，放宽超时。 */
+  /** apply=false only shows the plan; apply=true actually changes the pool. Positions missing from the database must be resolved via Futu, hence the longer timeout. */
   syncHoldings: async (apply: boolean) =>
     (await http.post<HoldingSyncResult>('/api/account/holdings/sync', null, { params: { apply }, timeout: 60_000 })).data,
   audit: async (date?: string) =>
     (await http.get<AuditReport>('/api/account/audit', { params: date ? { date } : {} })).data,
-  /** 持仓风险面板：要算每只 6 年日 K，放宽超时。 */
+  /** Holdings risk panel: computes 6 years of daily bars per instrument, hence the longer timeout. Note that a GET timing out is retried by http.ts, so a timed-out computation can be requested up to three times. */
   holdingsReview: async (days?: number) =>
     (await http.get<HoldingReview>('/api/account/holdings-review', { params: days ? { days } : {}, timeout: 60_000 })).data,
   addCheck: async (symbol: string, shares: number) =>

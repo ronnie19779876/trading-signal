@@ -18,15 +18,20 @@ import { getBars, getPool, type DailyBar, type InstrumentView } from '../api/mar
 import { getQuotes, type Quote } from '../api/quotes'
 
 /**
- * 仪表盘：一屏看清"我现在怎么样"。布局参考 futu-trader：上面账户资金，中间净值走势，下面左候选、右持仓。
+ * Dashboard: "how am I doing right now" on one screen. Layout modelled on futu-trader: account funds on top, NAV
+ * history in the middle, candidates on the left and holdings on the right below.
  *
- * 账户与持仓优先用盈透实时（3.0.2，/api/account/live，按需订阅），全是盈透原值；拿不到时退回收盘快照。
- * 候选标的的现价与涨跌用富途实时报价（生产订阅了池与持仓），没有时用最近一根日 K。
+ * Account and holdings prefer IBKR live (3.0.2, /api/account/live, subscribed on demand), all raw IBKR values;
+ * without it they fall back to the closing snapshot. Candidate prices and changes use Futu live quotes (production
+ * subscribes the pool and holdings), falling back to the latest daily bar.
  *
- * 刷新分三档：实时账户盘中 1 秒、其余 5 秒（见 useLiveAccount）；日级数据（快照、评估、日 K）5 分钟一轮；
- * 报价在开市时段 5 秒一轮、休市 60 秒。
- * 页面切到后台即暂停。日级数据各块独立、失败自动重试（3.4.3，见 useRecoveringLoad）。
- * 3.5.0 起底部加「持仓风险」（趋势、财报预警、复核条件、加仓检查，§29）。
+ * Three refresh tiers: the live account every 1 s during the session and 5 s otherwise (see useLiveAccount);
+ * daily-granularity data (snapshots, evaluations, daily bars) one round every 5 minutes; quotes every 5 s while the
+ * market is open and 60 s when closed.
+ * Everything pauses while the page is in the background. Daily blocks are independent and retried automatically on
+ * failure (3.4.3, see useRecoveringLoad).
+ * Since 3.5.0 the bottom has the holdings risk panel (trend, earnings warnings, review triggers, add-position
+ * check, §29).
  */
 const NAV_DAYS = 180
 
@@ -47,18 +52,20 @@ const pickedSymbol = ref<string | null>(null)
 
 const { session } = useMarketClock()
 
-/** 盈透的类别股带空格（BRK B），富途与库里是点（BRK.B）。 */
+/** IBKR share classes contain a space (BRK B); Futu and the database use a dot (BRK.B). Only the first space is replaced. */
 const norm = (s: string) => s.replace(' ', '.')
 
 /**
- * 日级数据分两段：先并发取快照、净值序列、池、两份审计；再按审计日取评估、按池取日 K。
- * 每块成功才覆盖自己的数据，失败的保留上一次的（原先一个超时整批作废，净值与池一起显示成空，2026-10-13）。
+ * Daily-granularity data in two stages: first, concurrently, the snapshot, NAV series, pool and the audits; then
+ * the evaluations for the audit date and the daily bars for the pool.
+ * Each block only overwrites its own data on success; a failed block keeps its previous data (previously a single
+ * timeout discarded the whole batch and NAV and pool both showed as empty, 2026-10-13).
  */
 const daily = useRecoveringLoad((): Stages => [
   {
     最新快照: async () => {
       view.value = await accountApi.latest().catch((e) => {
-        if ((e as { response?: { status?: number } }).response?.status === 404) return null // 还没拍过快照
+        if ((e as { response?: { status?: number } }).response?.status === 404) return null // no snapshot taken yet
         throw e
       })
     },
@@ -74,12 +81,13 @@ const daily = useRecoveringLoad((): Stages => [
   },
 ], 5 * 60_000)
 const loaded = daily.loaded
-/** 某块从来没取到过、且这一轮失败了：面板显示「加载中」而不是「没有数据」 */
+/** A block that has never loaded, or failed this round: the panel shows "loading" instead of "no data" */
 const pending = (name: string) => !daily.loaded.value || daily.failedNames.value.has(name)
 
 /**
- * 审计日有评估就用审计日（哪怕全是"数据过期"，那也是要看到的事实）。
- * 审计日一行都没有（当晚跑批前、或测试库没跑）时，退回最近一个真正判定过的日子，并在标题上写明评估日。
+ * If the audit date has evaluations, use the audit date (even if they are all "stale data" -- that is a fact worth
+ * seeing). If it has no rows at all (before that evening's batch, or on a test database that never ran), fall back
+ * to the latest day that was really evaluated and state the evaluation date in the title.
  */
 async function loadEvaluations(auditDate: string) {
   let rows = await signalsApi.evaluations({ date: auditDate, scope: 'pool' })
@@ -94,9 +102,10 @@ async function loadEvaluations(auditDate: string) {
   evalDate.value = rows.length ? date : null
 }
 
-/** 近一年日 K（前复权，拆股不断崖）：候选的迷你走势与持仓的当日涨跌都用它。 */
+/** About one year of daily bars (forward-adjusted, so splits do not create cliffs): used by the candidates' sparklines and the holdings' daily change. */
 async function loadBars() {
-  // 只取池里有的：持仓里的现金工具（SGOV）不进池、库里没有日 K，请求它只会 404
+  // only instruments in the pool: cash instruments among the holdings (SGOV) are not in the pool and have no daily
+  // bars, so requesting them would only 404
   const inPool = new Set(pool.value.map((p) => p.symbol))
   const symbols = [...new Set([
     ...pool.value.filter((p) => p.role === 'POOL' || p.role === 'HOLDING').map((p) => p.symbol),
@@ -116,7 +125,7 @@ async function loadQuotes() {
     const list = await getQuotes()
     quotes.value = new Map(list.map((q) => [q.instrument.symbol, q]))
   } catch {
-    // 报价是锦上添花：取不到就按收盘口径显示
+    // quotes are a nice-to-have: if they cannot be loaded, show closing figures
   }
 }
 
@@ -142,7 +151,7 @@ const candidates = computed<CandidateRow[]>(() => {
     })
 })
 
-/** 有盈透实时持仓（LIVE，或断线但留着最后的数据）就用它，否则用收盘快照。都是券商原值，不做折算。 */
+/** Use IBKR live positions when available (LIVE, or disconnected but still holding the last data), otherwise the closing snapshot. Both are raw broker values with no conversion. */
 const liveHoldings = computed(() => {
   const l = live.value
   return !!l && (l.status === 'LIVE' || l.status === 'DISCONNECTED') && l.positionsUpdatedAt !== null
@@ -192,7 +201,7 @@ const holdings = computed<HoldingRow[]>(() => {
   })
 })
 
-/** 两份审计里没通过的项：只在有问题时出现，关键项排前。 */
+/** Failed checks from the two audits: shown only when there is a problem, critical items first. */
 const problems = computed(() =>
   [
     ...(signalAudit.value?.checks ?? []).filter((c) => !c.ok).map((c) => ({ ...c, from: '信号' })),
@@ -200,14 +209,15 @@ const problems = computed(() =>
   ].sort((a, b) => Number(b.critical) - Number(a.critical)),
 )
 
-// ---- 刷新节奏：页面切到后台即暂停 ----
+// ---- refresh cadence: pause while the page is in the background ----
 let quoteTimer = 0
 /**
- * 报价轮询是「自递归 setTimeout」，必须有个「还在运行吗」的守卫。
- * 没有守卫时：请求在途中调用 stop()，stop 只清掉当前那个 timer，
- * 而回调在请求返回后照样调 scheduleQuotes() 把链条重新排起来——
- * 此后这条链再也没人清得掉，页面切到后台仍在打请求，离开页面也一样
- * （2026-09-25 全项目审查发现）。
+ * Quote polling is a self-rescheduling setTimeout, so it must have an "are we still running" guard.
+ * Without it: stop() called while a request is in flight only clears the current timer, but after the request
+ * returns the callback calls scheduleQuotes() anyway and re-arms the chain -- from then on nobody can clear it, and
+ * it keeps firing requests in the background and even after leaving the page (found in the 2026-09-25
+ * full-project review).
+ * scheduleQuotes() also clears the single timer handle first, so a quick stop()/start() cannot leave two chains.
  */
 let running = false
 function scheduleQuotes() {

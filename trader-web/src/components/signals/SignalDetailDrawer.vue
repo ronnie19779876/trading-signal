@@ -11,15 +11,15 @@ import {
   todayEt, trend,
 } from './format'
 
-/** 一条信号的全部信息：价位与图、四门判据、指纹核对、AI 第二意见、两个出场变体的纸面账本。 */
+/** Everything about one signal: levels and chart, the four-gate criteria, fingerprint check, AI second opinion, and the paper ledger of both exit variants. */
 const props = defineProps<{ signalId: number | null }>()
 const visible = defineModel<boolean>({ default: false })
 const emit = defineEmits<{ changed: [] }>()
 
 const detail = ref<SignalDetail | null>(null)
-/** 展示的模型意见：只放有结论（OK）的那次。 */
+/** The model opinion shown: only a run that produced a conclusion (OK). */
 const ai = ref<AiAnalysis | null>(null)
-/** 挂在信号上、但没有结论的那次（预算跳过、失败、拒答、截断）：说明评估作业当晚为什么没有意见。 */
+/** The run linked to the signal that produced no conclusion (budget skip, failure, refusal, truncation): explains why that evening's evaluation job has no opinion. */
 const absent = ref<AiAnalysis | null>(null)
 const aiSettings = ref<AiSettings | null>(null)
 const callsToday = ref(0)
@@ -46,8 +46,10 @@ async function load() {
     if (linked?.status === 'OK') {
       ai.value = linked
     } else {
-      // 挂着的那次没有结论（或根本没挂）：手工分析不挂在信号上，找同一只同一判定日最近一次成功的。
-      // 3.0.0 只要挂着分析就不再找、也不给"手工分析"按钮——预算跳过的信号因此没法在界面上补一次意见。
+      // The linked run has no conclusion (or nothing is linked): manual analyses are not linked to the signal, so
+      // look for the latest successful one for the same symbol and evaluation date.
+      // In 3.0.0 any linked analysis stopped the search and hid the "manual analysis" button -- a signal skipped for
+      // budget could therefore never get an opinion from the UI.
       absent.value = linked
       const list = await aiApi.list({ symbol: sig.symbol, status: 'OK', from: sig.tradeDate, to: iso(new Date()), limit: 50 })
       ai.value = list.find((a) => a.tradeDate === sig.tradeDate) ?? null
@@ -85,7 +87,7 @@ async function changeStatus(to: 'ACKNOWLEDGED' | 'DISMISSED') {
   }
 }
 
-/** 手工分析与评估作业共用每日上限（按美东自然日），额度用完时按钮置灰。 */
+/** Manual analysis and the evaluation job share the daily limit (per US/Eastern calendar day); the button is disabled once it is used up. */
 async function loadUsage() {
   const today = todayEt()
   const u = await aiApi.usage(today, today)

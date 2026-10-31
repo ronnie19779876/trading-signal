@@ -20,8 +20,9 @@
             <artifactId>spring-boot-starter</artifactId>
         </dependency>
         <!--
-          TWS API 与其 protobuf 运行时。optional：编译期只有本模块能 import com.ib.client.*，
-          下游模块拿不到；trader-app 另有 runtime 声明只为打进 fat jar。
+          TWS API and its protobuf runtime. optional: at compile time only this module can import com.ib.client.*;
+          downstream modules do not see it. trader-app has a separate runtime declaration solely so the jars end up
+          in the fat jar (remove it and the build still passes, but startup fails with NoClassDefFoundError).
         -->
         <dependency>
             <groupId>com.interactivebrokers</groupId>

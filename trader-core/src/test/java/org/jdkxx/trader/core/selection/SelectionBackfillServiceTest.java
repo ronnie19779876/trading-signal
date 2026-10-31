@@ -1,5 +1,28 @@
 package org.jdkxx.trader.core.selection;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import org.jdkxx.trader.core.marketdata.jobs.JobContext;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.domain.DailyBar;
@@ -27,348 +50,486 @@ import org.jdkxx.trader.storage.selection.SelectionValuationRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.ZoneOffset;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
 class SelectionBackfillServiceTest {
 
-    private static final SelectionProperties PROPS = new SelectionProperties(true, "0 30 18 * * MON-FRI", "0 30 22 * * MON-FRI",
-            "0 0 9 * * SAT", "0 0 10 * * SAT", LocalDate.of(2016, 1, 1), 4, 50,
-            ValuationRange.YEAR10, 3, 0.001, 0.95);
+  private static final SelectionProperties PROPS =
+      new SelectionProperties(
+          true,
+          "0 30 18 * * MON-FRI",
+          "0 30 22 * * MON-FRI",
+          "0 0 9 * * SAT",
+          "0 0 10 * * SAT",
+          LocalDate.of(2016, 1, 1),
+          4,
+          50,
+          ValuationRange.YEAR10,
+          3,
+          0.001,
+          0.95);
 
-    private final SelectionTargets targets = mock(SelectionTargets.class);
-    private final SelectionBackfillStateRepository states = mock(SelectionBackfillStateRepository.class);
-    private final PriceHistoryGateway prices = mock(PriceHistoryGateway.class);
-    private final ReferenceDataGateway contracts = mock(ReferenceDataGateway.class);
-    private final SelectionDataGateway fundamentals = mock(SelectionDataGateway.class);
-    private final InstrumentRepository instruments = mock(InstrumentRepository.class);
-    private final DailyBarRepository dailyBars = mock(DailyBarRepository.class);
-    private final RehabFactorRepository rehabs = mock(RehabFactorRepository.class);
-    private final FinancialRepository financials = mock(FinancialRepository.class);
-    private final SelectionPriceBarRepository priceBars = mock(SelectionPriceBarRepository.class);
-    private final SelectionPriceSeamRepository seams = mock(SelectionPriceSeamRepository.class);
-    private final SelectionValuationRepository valuations = mock(SelectionValuationRepository.class);
-    private final SelectionEarningsRepository earnings = mock(SelectionEarningsRepository.class);
-    private final org.jdkxx.trader.storage.selection.SelectionSecurityRepository securities =
-            mock(org.jdkxx.trader.storage.selection.SelectionSecurityRepository.class);
+  private final SelectionTargets targets = mock(SelectionTargets.class);
+  private final SelectionBackfillStateRepository states =
+      mock(SelectionBackfillStateRepository.class);
+  private final PriceHistoryGateway prices = mock(PriceHistoryGateway.class);
+  private final ReferenceDataGateway contracts = mock(ReferenceDataGateway.class);
+  private final SelectionDataGateway fundamentals = mock(SelectionDataGateway.class);
+  private final InstrumentRepository instruments = mock(InstrumentRepository.class);
+  private final DailyBarRepository dailyBars = mock(DailyBarRepository.class);
+  private final RehabFactorRepository rehabs = mock(RehabFactorRepository.class);
+  private final FinancialRepository financials = mock(FinancialRepository.class);
+  private final SelectionPriceBarRepository priceBars = mock(SelectionPriceBarRepository.class);
+  private final SelectionPriceSeamRepository seams = mock(SelectionPriceSeamRepository.class);
+  private final SelectionValuationRepository valuations = mock(SelectionValuationRepository.class);
+  private final SelectionEarningsRepository earnings = mock(SelectionEarningsRepository.class);
+  private final org.jdkxx.trader.storage.selection.SelectionSecurityRepository securities =
+      mock(org.jdkxx.trader.storage.selection.SelectionSecurityRepository.class);
 
-    private final List<String> partials = new ArrayList<>();
-    private final JobContext ctx = new JobContext() {
+  private final List<String> partials = new ArrayList<>();
+  private final JobContext ctx =
+      new JobContext() {
         @Override
         public long id() {
-            return 1;
+          return 1;
         }
 
         @Override
-        public void progress(String text) {
-        }
+        public void progress(String text) {}
 
         @Override
         public void partial(String reason) {
-            partials.add(reason);
+          partials.add(reason);
         }
 
         @Override
         public boolean cancelled() {
-            return false;
+          return false;
         }
-    };
+      };
 
-    private final SelectionBackfillService service = new SelectionBackfillService(PROPS, targets, states, prices, contracts,
-            fundamentals, instruments, dailyBars, rehabs, financials, priceBars, seams, valuations, earnings, securities,
-            Clock.fixed(Instant.parse("2026-10-10T16:00:00Z"), ZoneOffset.UTC), ZoneId.of("America/New_York"));
+  private final SelectionBackfillService service =
+      new SelectionBackfillService(
+          PROPS,
+          targets,
+          states,
+          prices,
+          contracts,
+          fundamentals,
+          instruments,
+          dailyBars,
+          rehabs,
+          financials,
+          priceBars,
+          seams,
+          valuations,
+          earnings,
+          securities,
+          Clock.fixed(Instant.parse("2026-10-10T16:00:00Z"), ZoneOffset.UTC),
+          ZoneId.of("America/New_York"));
 
-    /** 默认盈透最早一根很早（不影响取数窗口）；要测最早日的用例自己覆盖。 */
-    @BeforeEach
-    void earliestIsOld() {
-        when(prices.earliestDailyBar(anyLong())).thenReturn(CompletableFuture.completedFuture(LocalDate.of(2000, 1, 3)));
+  /**
+   * By default IBKR's earliest bar is very early (does not affect the fetch window); cases testing
+   * the earliest date override it.
+   */
+  @BeforeEach
+  void earliestIsOld() {
+    when(prices.earliestDailyBar(anyLong()))
+        .thenReturn(CompletableFuture.completedFuture(LocalDate.of(2000, 1, 3)));
+  }
+
+  private static InstrumentRow row(long id, String symbol) {
+    return new InstrumentRow(
+        id,
+        Market.US,
+        symbol,
+        symbol,
+        null,
+        SecurityType.STOCK,
+        1,
+        null,
+        false,
+        "NYSE",
+        null,
+        "RESOLVED");
+  }
+
+  private static DailyBar futu(String symbol, LocalDate d, double close) {
+    BigDecimal c = BigDecimal.valueOf(close);
+    return new DailyBar(
+        Instrument.us(symbol), d, c, c, c, c, null, 1, null, null, null, null, false);
+  }
+
+  private static InstrumentInfo info(String conId, String currency) {
+    return new InstrumentInfo(
+        Instrument.us("X"),
+        Broker.IBKR,
+        conId,
+        "X CORP",
+        "NYSE",
+        currency,
+        null,
+        null,
+        null,
+        null,
+        "COMMON");
+  }
+
+  /**
+   * Regression: an instrument never fetched has a null state, and Set.of(...).contains(null) throws
+   * NPE - the whole batch crashed on the first instrument.
+   */
+  @Test
+  void 已完成的跳过_没取过的照常取() throws Exception {
+    when(targets.only(any())).thenReturn(List.of(row(1, "AAA"), row(2, "BBB"), row(3, "CCC")));
+    when(states.statuses("EARNINGS")).thenReturn(Map.of(1L, "OK", 2L, "FAILED"));
+    when(fundamentals.earningsHistory(any()))
+        .thenReturn(CompletableFuture.completedFuture(List.of()));
+
+    String summary = service.run(BackfillPart.EARNINGS, List.of(), false, ctx);
+
+    verify(states, never()).save(eq(1L), anyString(), anyString(), any());
+    verify(states).save(2L, "EARNINGS", "EMPTY", "券商没有公告日");
+    verify(states).save(3L, "EARNINGS", "EMPTY", "券商没有公告日");
+    assertThat(summary).contains("已完成跳过 1");
+  }
+
+  @Test
+  void force时已完成的也重取() throws Exception {
+    when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
+    when(fundamentals.earningsHistory(any()))
+        .thenReturn(CompletableFuture.completedFuture(List.of()));
+
+    service.run(BackfillPart.EARNINGS, List.of(), true, ctx);
+
+    verify(states, never()).statuses(anyString());
+    verify(states).save(1L, "EARNINGS", "EMPTY", "券商没有公告日");
+  }
+
+  @Test
+  void 富途日K已够深的不取盈透() throws Exception {
+    when(targets.only(any())).thenReturn(List.of(row(1, "AAPL")));
+    when(dailyBars.coverage(1L))
+        .thenReturn(
+            Optional.of(
+                new DailyBarRepository.InstrumentCoverage(
+                    1, 5000, LocalDate.of(2006, 1, 3), LocalDate.of(2026, 10, 9))));
+
+    service.run(BackfillPart.PRICES, List.of(), false, ctx);
+
+    verify(states).save(eq(1L), eq("PRICES"), eq("SKIPPED"), anyString());
+    verify(prices, never()).splitAdjustedDailyBars(anyLong(), any(), any());
+  }
+
+  @Test
+  void 合约多个候选不猜_记失败_后面的照常() throws Exception {
+    when(targets.only(any())).thenReturn(List.of(row(1, "AAA"), row(2, "BBB")));
+    when(dailyBars.coverage(anyLong()))
+        .thenReturn(
+            Optional.of(
+                new DailyBarRepository.InstrumentCoverage(
+                    1, 1000, LocalDate.of(2022, 9, 8), LocalDate.of(2026, 10, 9))));
+    when(instruments.ibkrConId(anyLong())).thenReturn(Optional.empty());
+    when(contracts.lookup(Instrument.us("AAA")))
+        .thenReturn(CompletableFuture.completedFuture(List.of(info("1", "USD"), info("2", "USD"))));
+    when(contracts.lookup(Instrument.us("BBB")))
+        .thenReturn(CompletableFuture.completedFuture(List.of()));
+
+    service.run(BackfillPart.PRICES, List.of(), false, ctx);
+
+    verify(states)
+        .save(eq(1L), eq("PRICES"), eq("FAILED"), org.mockito.ArgumentMatchers.contains("2 个候选"));
+    verify(states)
+        .save(eq(2L), eq("PRICES"), eq("FAILED"), org.mockito.ArgumentMatchers.contains("查无此标的"));
+    verify(instruments, never()).bindIbkrConId(anyLong(), anyLong());
+    assertThat(partials).anyMatch(p -> p.contains("2 只失败"));
+  }
+
+  @Test
+  void 价格回补绑定合约_取到富途起点后四个月_落库并核对接缝() throws Exception {
+    LocalDate futuFrom = LocalDate.of(2022, 9, 8);
+    when(targets.only(any())).thenReturn(List.of(row(7, "KO")));
+    when(dailyBars.coverage(7L))
+        .thenReturn(
+            Optional.of(
+                new DailyBarRepository.InstrumentCoverage(
+                    7, 1000, futuFrom, LocalDate.of(2026, 10, 9))));
+    when(instruments.ibkrConId(7L)).thenReturn(Optional.empty());
+    when(contracts.lookup(Instrument.us("KO")))
+        .thenReturn(CompletableFuture.completedFuture(List.of(info("8894", "USD"))));
+    when(instruments.bindIbkrConId(7L, 8894L)).thenReturn(true);
+    List<SplitAdjustedBar> ib = new ArrayList<>();
+    List<DailyBar> fu = new ArrayList<>();
+    for (int i = 0; i < 6; i++) {
+      LocalDate d = futuFrom.plusDays(i);
+      BigDecimal c = BigDecimal.valueOf(50 + i);
+      ib.add(new SplitAdjustedBar(d, c, c, c, c, 0));
+      fu.add(futu("KO", d, 50 + i));
     }
+    ib.addFirst(
+        new SplitAdjustedBar(
+            LocalDate.of(2016, 1, 4),
+            BigDecimal.TEN,
+            BigDecimal.TEN,
+            BigDecimal.TEN,
+            BigDecimal.TEN,
+            0));
+    when(prices.splitAdjustedDailyBars(8894L, LocalDate.of(2016, 1, 1), LocalDate.of(2023, 1, 8)))
+        .thenReturn(CompletableFuture.completedFuture(ib));
+    when(dailyBars.find(any(), eq(7L), eq(futuFrom), eq(LocalDate.of(2023, 1, 8)))).thenReturn(fu);
+    when(rehabs.find(any(), eq(7L))).thenReturn(List.of());
 
-    private static InstrumentRow row(long id, String symbol) {
-        return new InstrumentRow(id, Market.US, symbol, symbol, null, SecurityType.STOCK, 1, null, false, "NYSE", null, "RESOLVED");
-    }
+    service.run(BackfillPart.PRICES, List.of(), false, ctx);
 
-    private static DailyBar futu(String symbol, LocalDate d, double close) {
-        BigDecimal c = BigDecimal.valueOf(close);
-        return new DailyBar(Instrument.us(symbol), d, c, c, c, c, null, 1, null, null, null, null, false);
-    }
+    verify(priceBars).replaceAll(7L, ib, LocalDate.of(2026, 10, 10));
+    verify(seams)
+        .save(
+            eq(7L),
+            eq(8894L),
+            eq(LocalDate.of(2016, 1, 4)),
+            eq(futuFrom.plusDays(5)),
+            eq(futuFrom),
+            eq(6),
+            eq(5),
+            eq(5),
+            any(),
+            eq(true),
+            anyString());
+    verify(states)
+        .save(eq(7L), eq("PRICES"), eq("OK"), org.mockito.ArgumentMatchers.contains("接缝通过"));
+  }
 
-    private static InstrumentInfo info(String conId, String currency) {
-        return new InstrumentInfo(Instrument.us("X"), Broker.IBKR, conId, "X CORP", "NYSE", currency, null, null, null, null, "COMMON");
-    }
+  private void youngListing(long id, String symbol, LocalDate futuFrom) {
+    when(dailyBars.coverage(id))
+        .thenReturn(
+            Optional.of(
+                new DailyBarRepository.InstrumentCoverage(
+                    id, 80, futuFrom, LocalDate.of(2026, 10, 9))));
+    when(instruments.ibkrConId(id)).thenReturn(Optional.of(100L + id));
+  }
 
-    /** 回归：没取过的标的状态为 null，Set.of(...).contains(null) 会抛 NPE——整批作业在第一只就崩。 */
-    @Test
-    void 已完成的跳过_没取过的照常取() throws Exception {
-        when(targets.only(any())).thenReturn(List.of(row(1, "AAA"), row(2, "BBB"), row(3, "CCC")));
-        when(states.statuses("EARNINGS")).thenReturn(Map.of(1L, "OK", 2L, "FAILED"));
-        when(fundamentals.earningsHistory(any())).thenReturn(CompletableFuture.completedFuture(List.of()));
+  /**
+   * 162 "no data" means the broker explicitly has nothing: record EMPTY (not retried on resume) and
+   * clear old data. Measured on ODFL, CRH, SW.
+   */
+  @Test
+  void 盈透回162没有数据记EMPTY不记失败() throws Exception {
+    when(targets.only(any())).thenReturn(List.of(row(1, "ODFL")));
+    youngListing(1, "ODFL", LocalDate.of(2022, 9, 8));
+    when(prices.splitAdjustedDailyBars(eq(101L), any(), any()))
+        .thenReturn(
+            CompletableFuture.failedFuture(
+                new org.jdkxx.trader.gateway.RequestRejectedException(
+                    Broker.IBKR,
+                    162,
+                    "Historical Market Data Service error message:HMDS query returned no data")));
 
-        String summary = service.run(BackfillPart.EARNINGS, List.of(), false, ctx);
+    service.run(BackfillPart.PRICES, List.of(), false, ctx);
 
-        verify(states, never()).save(eq(1L), anyString(), anyString(), any());
-        verify(states).save(2L, "EARNINGS", "EMPTY", "券商没有公告日");
-        verify(states).save(3L, "EARNINGS", "EMPTY", "券商没有公告日");
-        assertThat(summary).contains("已完成跳过 1");
-    }
+    verify(states)
+        .save(eq(1L), eq("PRICES"), eq("EMPTY"), org.mockito.ArgumentMatchers.contains("162"));
+    verify(priceBars).replaceAll(eq(1L), eq(List.of()), any());
+    verify(seams).delete(1L);
+    assertThat(partials).isEmpty();
+  }
 
-    @Test
-    void force时已完成的也重取() throws Exception {
-        when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
-        when(fundamentals.earningsHistory(any())).thenReturn(CompletableFuture.completedFuture(List.of()));
+  @Test
+  void 盈透其他拒绝照旧记失败() throws Exception {
+    when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
+    youngListing(1, "AAA", LocalDate.of(2022, 9, 8));
+    when(prices.splitAdjustedDailyBars(eq(101L), any(), any()))
+        .thenReturn(
+            CompletableFuture.failedFuture(
+                new org.jdkxx.trader.gateway.RequestRejectedException(
+                    Broker.IBKR, 321, "Error validating request")));
 
-        service.run(BackfillPart.EARNINGS, List.of(), true, ctx);
+    service.run(BackfillPart.PRICES, List.of(), false, ctx);
 
-        verify(states, never()).statuses(anyString());
-        verify(states).save(1L, "EARNINGS", "EMPTY", "券商没有公告日");
-    }
+    verify(states)
+        .save(eq(1L), eq("PRICES"), eq("FAILED"), org.mockito.ArgumentMatchers.contains("321"));
+  }
 
-    @Test
-    void 富途日K已够深的不取盈透() throws Exception {
-        when(targets.only(any())).thenReturn(List.of(row(1, "AAPL")));
-        when(dailyBars.coverage(1L)).thenReturn(Optional.of(new DailyBarRepository.InstrumentCoverage(1, 5000,
-                LocalDate.of(2006, 1, 3), LocalDate.of(2026, 10, 9))));
+  /**
+   * Recent listing: IBKR's earliest bar is not before the Futu start, so the IBKR segment is
+   * useless (measured FER, HONA, SPCX, PLTR).
+   */
+  @Test
+  void 盈透不比富途早就跳过_不存不核对() throws Exception {
+    LocalDate futuFrom = LocalDate.of(2026, 6, 15);
+    when(targets.only(any())).thenReturn(List.of(row(1, "HONA")));
+    youngListing(1, "HONA", futuFrom);
+    BigDecimal c = BigDecimal.TEN;
+    when(prices.splitAdjustedDailyBars(eq(101L), any(), any()))
+        .thenReturn(
+            CompletableFuture.completedFuture(
+                List.of(
+                    new SplitAdjustedBar(futuFrom, c, c, c, c, 0),
+                    new SplitAdjustedBar(futuFrom.plusDays(1), c, c, c, c, 0))));
 
-        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+    service.run(BackfillPart.PRICES, List.of(), false, ctx);
 
-        verify(states).save(eq(1L), eq("PRICES"), eq("SKIPPED"), anyString());
-        verify(prices, never()).splitAdjustedDailyBars(anyLong(), any(), any());
-    }
+    verify(states)
+        .save(eq(1L), eq("PRICES"), eq("SKIPPED"), org.mockito.ArgumentMatchers.contains("富途已覆盖"));
+    verify(priceBars).replaceAll(eq(1L), eq(List.of()), any());
+    verify(seams).delete(1L);
+    verify(seams, never())
+        .save(
+            anyLong(),
+            anyLong(),
+            any(),
+            any(),
+            any(),
+            anyInt(),
+            anyInt(),
+            anyInt(),
+            any(),
+            anyBoolean(),
+            anyString());
+  }
 
-    @Test
-    void 合约多个候选不猜_记失败_后面的照常() throws Exception {
-        when(targets.only(any())).thenReturn(List.of(row(1, "AAA"), row(2, "BBB")));
-        when(dailyBars.coverage(anyLong())).thenReturn(Optional.of(new DailyBarRepository.InstrumentCoverage(1, 1000,
-                LocalDate.of(2022, 9, 8), LocalDate.of(2026, 10, 9))));
-        when(instruments.ibkrConId(anyLong())).thenReturn(Optional.empty());
-        when(contracts.lookup(Instrument.us("AAA"))).thenReturn(CompletableFuture.completedFuture(
-                List.of(info("1", "USD"), info("2", "USD"))));
-        when(contracts.lookup(Instrument.us("BBB"))).thenReturn(CompletableFuture.completedFuture(List.of()));
+  /**
+   * Regression (3.4.3 production, SKYD): IBKR earliest 2025-08-07, Futu from 2022-10-17; a
+   * historical request ending 2023-02-17 never got an answer from IBKR, so every weekly fill timed
+   * out and was recorded as failed. Ask for the earliest date first: if it is not before the Futu
+   * start, skip without sending a historical request.
+   */
+  @Test
+  void 盈透最早日不早于富途起点就跳过_不发历史请求() throws Exception {
+    when(targets.only(any())).thenReturn(List.of(row(1, "SKYD")));
+    youngListing(1, "SKYD", LocalDate.of(2022, 10, 17));
+    when(prices.earliestDailyBar(101L))
+        .thenReturn(CompletableFuture.completedFuture(LocalDate.of(2025, 8, 7)));
 
-        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+    service.run(BackfillPart.PRICES, List.of(), false, ctx);
 
-        verify(states).save(eq(1L), eq("PRICES"), eq("FAILED"), org.mockito.ArgumentMatchers.contains("2 个候选"));
-        verify(states).save(eq(2L), eq("PRICES"), eq("FAILED"), org.mockito.ArgumentMatchers.contains("查无此标的"));
-        verify(instruments, never()).bindIbkrConId(anyLong(), anyLong());
-        assertThat(partials).anyMatch(p -> p.contains("2 只失败"));
-    }
+    verify(states)
+        .save(
+            eq(1L),
+            eq("PRICES"),
+            eq("SKIPPED"),
+            org.mockito.ArgumentMatchers.contains("盈透最早 2025-08-07"));
+    verify(prices, never()).splitAdjustedDailyBars(anyLong(), any(), any());
+    verify(priceBars).replaceAll(eq(1L), eq(List.of()), any());
+    verify(seams).delete(1L);
+    assertThat(partials).isEmpty();
+  }
 
-    @Test
-    void 价格回补绑定合约_取到富途起点后四个月_落库并核对接缝() throws Exception {
-        LocalDate futuFrom = LocalDate.of(2022, 9, 8);
-        when(targets.only(any())).thenReturn(List.of(row(7, "KO")));
-        when(dailyBars.coverage(7L)).thenReturn(Optional.of(new DailyBarRepository.InstrumentCoverage(7, 1000, futuFrom,
-                LocalDate.of(2026, 10, 9))));
-        when(instruments.ibkrConId(7L)).thenReturn(Optional.empty());
-        when(contracts.lookup(Instrument.us("KO"))).thenReturn(CompletableFuture.completedFuture(List.of(info("8894", "USD"))));
-        when(instruments.bindIbkrConId(7L, 8894L)).thenReturn(true);
-        List<SplitAdjustedBar> ib = new ArrayList<>();
-        List<DailyBar> fu = new ArrayList<>();
-        for (int i = 0; i < 6; i++) {
-            LocalDate d = futuFrom.plusDays(i);
-            BigDecimal c = BigDecimal.valueOf(50 + i);
-            ib.add(new SplitAdjustedBar(d, c, c, c, c, 0));
-            fu.add(futu("KO", d, 50 + i));
-        }
-        ib.addFirst(new SplitAdjustedBar(LocalDate.of(2016, 1, 4), BigDecimal.TEN, BigDecimal.TEN, BigDecimal.TEN, BigDecimal.TEN, 0));
-        when(prices.splitAdjustedDailyBars(8894L, LocalDate.of(2016, 1, 1), LocalDate.of(2023, 1, 8)))
-                .thenReturn(CompletableFuture.completedFuture(ib));
-        when(dailyBars.find(any(), eq(7L), eq(futuFrom), eq(LocalDate.of(2023, 1, 8)))).thenReturn(fu);
-        when(rehabs.find(any(), eq(7L))).thenReturn(List.of());
+  @Test
+  void 盈透最早日晚于补起点_从最早日起取() throws Exception {
+    when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
+    youngListing(1, "AAA", LocalDate.of(2022, 9, 8));
+    when(prices.earliestDailyBar(101L))
+        .thenReturn(CompletableFuture.completedFuture(LocalDate.of(2018, 3, 1)));
+    when(prices.splitAdjustedDailyBars(eq(101L), any(), any()))
+        .thenReturn(CompletableFuture.completedFuture(List.of()));
 
-        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+    service.run(BackfillPart.PRICES, List.of(), false, ctx);
 
-        verify(priceBars).replaceAll(7L, ib, LocalDate.of(2026, 10, 10));
-        verify(seams).save(eq(7L), eq(8894L), eq(LocalDate.of(2016, 1, 4)), eq(futuFrom.plusDays(5)), eq(futuFrom),
-                eq(6), eq(5), eq(5), any(), eq(true), anyString());
-        verify(states).save(eq(7L), eq("PRICES"), eq("OK"), org.mockito.ArgumentMatchers.contains("接缝通过"));
-    }
+    verify(prices).splitAdjustedDailyBars(101L, LocalDate.of(2018, 3, 1), LocalDate.of(2023, 1, 8));
+    verify(states)
+        .save(
+            eq(1L),
+            eq("PRICES"),
+            eq("EMPTY"),
+            org.mockito.ArgumentMatchers.contains("2018-03-01~2023-01-08"));
+  }
 
-    private void youngListing(long id, String symbol, LocalDate futuFrom) {
-        when(dailyBars.coverage(id)).thenReturn(Optional.of(new DailyBarRepository.InstrumentCoverage(id, 80, futuFrom,
-                LocalDate.of(2026, 10, 9))));
-        when(instruments.ibkrConId(id)).thenReturn(Optional.of(100L + id));
-    }
+  @Test
+  void 最早数据时间回162记EMPTY_不发历史请求() throws Exception {
+    when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
+    youngListing(1, "AAA", LocalDate.of(2022, 9, 8));
+    when(prices.earliestDailyBar(101L))
+        .thenReturn(
+            CompletableFuture.failedFuture(
+                new org.jdkxx.trader.gateway.RequestRejectedException(
+                    Broker.IBKR, 162, "HMDS query returned no data")));
 
-    /** 162「没有数据」是券商明确说没有：记 EMPTY（续跑不再重试），并清掉旧数据。实测 ODFL、CRH、SW。 */
-    @Test
-    void 盈透回162没有数据记EMPTY不记失败() throws Exception {
-        when(targets.only(any())).thenReturn(List.of(row(1, "ODFL")));
-        youngListing(1, "ODFL", LocalDate.of(2022, 9, 8));
-        when(prices.splitAdjustedDailyBars(eq(101L), any(), any())).thenReturn(CompletableFuture.failedFuture(
-                new org.jdkxx.trader.gateway.RequestRejectedException(Broker.IBKR, 162,
-                        "Historical Market Data Service error message:HMDS query returned no data")));
+    service.run(BackfillPart.PRICES, List.of(), false, ctx);
 
-        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+    verify(states)
+        .save(
+            eq(1L), eq("PRICES"), eq("EMPTY"), org.mockito.ArgumentMatchers.contains("最早数据时间 162"));
+    verify(prices, never()).splitAdjustedDailyBars(anyLong(), any(), any());
+    assertThat(partials).isEmpty();
+  }
 
-        verify(states).save(eq(1L), eq("PRICES"), eq("EMPTY"), org.mockito.ArgumentMatchers.contains("162"));
-        verify(priceBars).replaceAll(eq(1L), eq(List.of()), any());
-        verify(seams).delete(1L);
-        assertThat(partials).isEmpty();
-    }
+  @Test
+  void 最早数据时间超时记失败_下次重试() throws Exception {
+    when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
+    youngListing(1, "AAA", LocalDate.of(2022, 9, 8));
+    when(prices.earliestDailyBar(101L))
+        .thenReturn(
+            CompletableFuture.failedFuture(
+                new org.jdkxx.trader.gateway.RequestTimeoutException(
+                    Broker.IBKR, "最早数据时间 conId=101")));
 
-    @Test
-    void 盈透其他拒绝照旧记失败() throws Exception {
-        when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
-        youngListing(1, "AAA", LocalDate.of(2022, 9, 8));
-        when(prices.splitAdjustedDailyBars(eq(101L), any(), any())).thenReturn(CompletableFuture.failedFuture(
-                new org.jdkxx.trader.gateway.RequestRejectedException(Broker.IBKR, 321, "Error validating request")));
+    service.run(BackfillPart.PRICES, List.of(), false, ctx);
 
-        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+    verify(states)
+        .save(eq(1L), eq("PRICES"), eq("FAILED"), org.mockito.ArgumentMatchers.contains("超时"));
+    verify(prices, never()).splitAdjustedDailyBars(anyLong(), any(), any());
+    assertThat(partials).anyMatch(p -> p.contains("1 只失败"));
+  }
 
-        verify(states).save(eq(1L), eq("PRICES"), eq("FAILED"), org.mockito.ArgumentMatchers.contains("321"));
-    }
+  /**
+   * Regression (3.2.0 production, SKYD, TWLO, VYLR): when Futu daily bars have not arrived yet,
+   * record PENDING - not done (retried next time) and not failed (no partial-failure flag). 3.2.0
+   * recorded EMPTY, which counted as done and was skipped forever.
+   */
+  @Test
+  void 富途日K还没到记PENDING_下次重试且不算失败() throws Exception {
+    when(targets.only(any())).thenReturn(List.of(row(1, "TWLO")));
+    when(dailyBars.coverage(1L)).thenReturn(Optional.empty());
+    when(states.statuses("PRICES")).thenReturn(Map.of(1L, "PENDING"));
 
-    /** 新上市的票：盈透最早一根不早于富途起点，盈透段没有用处（实测 FER、HONA、SPCX、PLTR）。 */
-    @Test
-    void 盈透不比富途早就跳过_不存不核对() throws Exception {
-        LocalDate futuFrom = LocalDate.of(2026, 6, 15);
-        when(targets.only(any())).thenReturn(List.of(row(1, "HONA")));
-        youngListing(1, "HONA", futuFrom);
-        BigDecimal c = BigDecimal.TEN;
-        when(prices.splitAdjustedDailyBars(eq(101L), any(), any())).thenReturn(CompletableFuture.completedFuture(
-                List.of(new SplitAdjustedBar(futuFrom, c, c, c, c, 0), new SplitAdjustedBar(futuFrom.plusDays(1), c, c, c, c, 0))));
+    String summary = service.run(BackfillPart.PRICES, List.of(), false, ctx);
 
-        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+    verify(states)
+        .save(eq(1L), eq("PRICES"), eq("PENDING"), org.mockito.ArgumentMatchers.contains("下次回补重试"));
+    assertThat(summary).contains("已完成跳过 0");
+    assertThat(partials).isEmpty();
+  }
 
-        verify(states).save(eq(1L), eq("PRICES"), eq("SKIPPED"), org.mockito.ArgumentMatchers.contains("富途已覆盖"));
-        verify(priceBars).replaceAll(eq(1L), eq(List.of()), any());
-        verify(seams).delete(1L);
-        verify(seams, never()).save(anyLong(), anyLong(), any(), any(), any(), anyInt(), anyInt(), anyInt(), any(), anyBoolean(), anyString());
-    }
+  @Test
+  void 网关未连接整批停下_不把后面的都记成失败() throws Exception {
+    when(targets.only(any())).thenReturn(List.of(row(1, "AAA"), row(2, "BBB")));
+    when(fundamentals.earningsHistory(any()))
+        .thenReturn(
+            CompletableFuture.failedFuture(new NotConnectedException(Broker.FUTU, "行情通道未连接")));
 
-    /**
-     * 回归（3.4.3 生产 SKYD）：盈透最早 2025-08-07、富途自 2022-10-17，截止 2023-02-17 的历史请求盈透一直不回复，
-     * 每周补缺都超时记失败。先问最早日：不早于富途起点就跳过，不发历史请求。
-     */
-    @Test
-    void 盈透最早日不早于富途起点就跳过_不发历史请求() throws Exception {
-        when(targets.only(any())).thenReturn(List.of(row(1, "SKYD")));
-        youngListing(1, "SKYD", LocalDate.of(2022, 10, 17));
-        when(prices.earliestDailyBar(101L)).thenReturn(CompletableFuture.completedFuture(LocalDate.of(2025, 8, 7)));
+    service.run(BackfillPart.EARNINGS, List.of(), false, ctx);
 
-        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+    verify(states, never()).save(anyLong(), anyString(), anyString(), any());
+    assertThat(partials).anyMatch(p -> p.contains("网关未连接") && p.contains("AAA"));
+  }
 
-        verify(states).save(eq(1L), eq("PRICES"), eq("SKIPPED"), org.mockito.ArgumentMatchers.contains("盈透最早 2025-08-07"));
-        verify(prices, never()).splitAdjustedDailyBars(anyLong(), any(), any());
-        verify(priceBars).replaceAll(eq(1L), eq(List.of()), any());
-        verify(seams).delete(1L);
-        assertThat(partials).isEmpty();
-    }
+  @Test
+  void 三种估值都回空记EMPTY() throws Exception {
+    when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
+    when(fundamentals.valuationHistory(
+            any(), any(ValuationMetric.class), eq(ValuationRange.YEAR10)))
+        .thenReturn(CompletableFuture.completedFuture(List.of()));
 
-    @Test
-    void 盈透最早日晚于补起点_从最早日起取() throws Exception {
-        when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
-        youngListing(1, "AAA", LocalDate.of(2022, 9, 8));
-        when(prices.earliestDailyBar(101L)).thenReturn(CompletableFuture.completedFuture(LocalDate.of(2018, 3, 1)));
-        when(prices.splitAdjustedDailyBars(eq(101L), any(), any())).thenReturn(CompletableFuture.completedFuture(List.of()));
+    service.run(BackfillPart.VALUATION, List.of(), false, ctx);
 
-        service.run(BackfillPart.PRICES, List.of(), false, ctx);
+    verify(states).save(eq(1L), eq("VALUATION"), eq("EMPTY"), anyString());
+  }
 
-        verify(prices).splitAdjustedDailyBars(101L, LocalDate.of(2018, 3, 1), LocalDate.of(2023, 1, 8));
-        verify(states).save(eq(1L), eq("PRICES"), eq("EMPTY"), org.mockito.ArgumentMatchers.contains("2018-03-01~2023-01-08"));
-    }
+  @Test
+  void 季报三类都取且写进共用财报表() throws Exception {
+    when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
+    when(fundamentals.quarterlyFinancials(any(), any(), anyInt()))
+        .thenReturn(CompletableFuture.completedFuture(List.of()));
 
-    @Test
-    void 最早数据时间回162记EMPTY_不发历史请求() throws Exception {
-        when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
-        youngListing(1, "AAA", LocalDate.of(2022, 9, 8));
-        when(prices.earliestDailyBar(101L)).thenReturn(CompletableFuture.failedFuture(
-                new org.jdkxx.trader.gateway.RequestRejectedException(Broker.IBKR, 162, "HMDS query returned no data")));
+    service.run(BackfillPart.FINANCIALS, List.of(), false, ctx);
 
-        service.run(BackfillPart.PRICES, List.of(), false, ctx);
-
-        verify(states).save(eq(1L), eq("PRICES"), eq("EMPTY"), org.mockito.ArgumentMatchers.contains("最早数据时间 162"));
-        verify(prices, never()).splitAdjustedDailyBars(anyLong(), any(), any());
-        assertThat(partials).isEmpty();
-    }
-
-    @Test
-    void 最早数据时间超时记失败_下次重试() throws Exception {
-        when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
-        youngListing(1, "AAA", LocalDate.of(2022, 9, 8));
-        when(prices.earliestDailyBar(101L)).thenReturn(CompletableFuture.failedFuture(
-                new org.jdkxx.trader.gateway.RequestTimeoutException(Broker.IBKR, "最早数据时间 conId=101")));
-
-        service.run(BackfillPart.PRICES, List.of(), false, ctx);
-
-        verify(states).save(eq(1L), eq("PRICES"), eq("FAILED"), org.mockito.ArgumentMatchers.contains("超时"));
-        verify(prices, never()).splitAdjustedDailyBars(anyLong(), any(), any());
-        assertThat(partials).anyMatch(p -> p.contains("1 只失败"));
-    }
-
-    /**
-     * 回归（3.2.0 生产 SKYD、TWLO、VYLR）：富途日 K 还没到的记 PENDING——不算完成（下次重试）、也不算失败（不标部分失败）。
-     * 3.2.0 记成 EMPTY，被当成已完成永久跳过。
-     */
-    @Test
-    void 富途日K还没到记PENDING_下次重试且不算失败() throws Exception {
-        when(targets.only(any())).thenReturn(List.of(row(1, "TWLO")));
-        when(dailyBars.coverage(1L)).thenReturn(Optional.empty());
-        when(states.statuses("PRICES")).thenReturn(Map.of(1L, "PENDING"));
-
-        String summary = service.run(BackfillPart.PRICES, List.of(), false, ctx);
-
-        verify(states).save(eq(1L), eq("PRICES"), eq("PENDING"), org.mockito.ArgumentMatchers.contains("下次回补重试"));
-        assertThat(summary).contains("已完成跳过 0");
-        assertThat(partials).isEmpty();
-    }
-
-    @Test
-    void 网关未连接整批停下_不把后面的都记成失败() throws Exception {
-        when(targets.only(any())).thenReturn(List.of(row(1, "AAA"), row(2, "BBB")));
-        when(fundamentals.earningsHistory(any()))
-                .thenReturn(CompletableFuture.failedFuture(new NotConnectedException(Broker.FUTU, "行情通道未连接")));
-
-        service.run(BackfillPart.EARNINGS, List.of(), false, ctx);
-
-        verify(states, never()).save(anyLong(), anyString(), anyString(), any());
-        assertThat(partials).anyMatch(p -> p.contains("网关未连接") && p.contains("AAA"));
-    }
-
-    @Test
-    void 三种估值都回空记EMPTY() throws Exception {
-        when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
-        when(fundamentals.valuationHistory(any(), any(ValuationMetric.class), eq(ValuationRange.YEAR10)))
-                .thenReturn(CompletableFuture.completedFuture(List.of()));
-
-        service.run(BackfillPart.VALUATION, List.of(), false, ctx);
-
-        verify(states).save(eq(1L), eq("VALUATION"), eq("EMPTY"), anyString());
-    }
-
-    @Test
-    void 季报三类都取且写进共用财报表() throws Exception {
-        when(targets.only(any())).thenReturn(List.of(row(1, "AAA")));
-        when(fundamentals.quarterlyFinancials(any(), any(), anyInt())).thenReturn(CompletableFuture.completedFuture(List.of()));
-
-        service.run(BackfillPart.FINANCIALS, List.of(), false, ctx);
-
-        verify(fundamentals).quarterlyFinancials(Instrument.us("AAA"), org.jdkxx.trader.domain.FinancialStatement.INCOME, 50);
-        verify(fundamentals).quarterlyFinancials(Instrument.us("AAA"), org.jdkxx.trader.domain.FinancialStatement.BALANCE_SHEET, 50);
-        verify(fundamentals).quarterlyFinancials(Instrument.us("AAA"), org.jdkxx.trader.domain.FinancialStatement.CASH_FLOW, 50);
-        verify(states).save(eq(1L), eq("FINANCIALS"), eq("EMPTY"), anyString());
-    }
+    verify(fundamentals)
+        .quarterlyFinancials(
+            Instrument.us("AAA"), org.jdkxx.trader.domain.FinancialStatement.INCOME, 50);
+    verify(fundamentals)
+        .quarterlyFinancials(
+            Instrument.us("AAA"), org.jdkxx.trader.domain.FinancialStatement.BALANCE_SHEET, 50);
+    verify(fundamentals)
+        .quarterlyFinancials(
+            Instrument.us("AAA"), org.jdkxx.trader.domain.FinancialStatement.CASH_FLOW, 50);
+    verify(states).save(eq(1L), eq("FINANCIALS"), eq("EMPTY"), anyString());
+  }
 }

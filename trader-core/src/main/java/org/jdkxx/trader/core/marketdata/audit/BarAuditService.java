@@ -1,5 +1,18 @@
 package org.jdkxx.trader.core.marketdata.audit;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.jdkxx.trader.core.marketdata.Jobs;
 import org.jdkxx.trader.core.marketdata.MarketDataProperties;
 import org.jdkxx.trader.core.marketdata.SnapshotWindow;
@@ -19,263 +32,511 @@ import org.jdkxx.trader.storage.marketdata.JobRunRepository;
 import org.jdkxx.trader.storage.marketdata.JobRunRow;
 import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
 
-import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.stream.Collectors;
-
 /**
- * 日线数据审计：收盘后回答"这一天全量数据齐不齐、对不对"。只读，在应用内算，不要求外部连库。
- * 每一项 check 给 ok / 说明 / 计数与样本；总 ok = 关键项全部通过。
+ * Daily bar audit: after the close, answers "is this day's full data set complete and correct".
+ * Read-only, computed inside the application, so nobody needs a direct database connection. Each
+ * check reports ok / explanation / count and samples; the overall ok = every critical check passed.
+ *
+ * <p>Rule for denominators: when auditing a past date d, every target set must be the one valid
+ * <b>on d</b> ({@link UniverseScope#targetBreakdown(LocalDate)}), not today's list; otherwise a
+ * weekend constituent sync makes Friday's audit report the newly added instruments as missing.
  */
 public class BarAuditService {
 
-    /** 缺口检查只看最近这么多天：这段运维能靠重跑增量补上，更早的深扫走 /api/bars/gaps。 */
-    static final int GAP_WINDOW_DAYS = 90;
+  /**
+   * The gap check only looks at this many recent days: operations can fill these by re-running the
+   * increment; older ones are deep-scanned via /api/bars/gaps.
+   */
+  static final int GAP_WINDOW_DAYS = 90;
 
-    /** 成分股数量相对指数名义规模允许的缩水幅度：超过就判不通过。多类别股会让实际代码数略多于名义值。 */
-    static final int UNIVERSE_SHRINK_TOLERANCE_PERCENT = 5;
+  /**
+   * How far the constituent count may shrink relative to the index's nominal size before the check
+   * fails. Multi-class shares make the real symbol count slightly larger than the nominal size.
+   */
+  static final int UNIVERSE_SHRINK_TOLERANCE_PERCENT = 5;
 
-    public record Check(String name, boolean ok, boolean critical, String detail, long count, List<String> samples) {
+  public record Check(
+      String name, boolean ok, boolean critical, String detail, long count, List<String> samples) {}
+
+  public record Report(
+      LocalDate date,
+      boolean ok,
+      Instant generatedAt,
+      Map<String, Object> summary,
+      List<Check> checks) {}
+
+  private final MarketDataProperties props;
+  private final UniverseScope scope;
+  private final DailyBarRepository bars;
+  private final TradingDayRepository tradingDays;
+  private final BarSyncStateRepository states;
+  private final JobRunRepository jobs;
+  private final MarketDataGateway gateway;
+  private final Clock clock;
+
+  public BarAuditService(
+      MarketDataProperties props,
+      UniverseScope scope,
+      DailyBarRepository bars,
+      TradingDayRepository tradingDays,
+      BarSyncStateRepository states,
+      JobRunRepository jobs,
+      MarketDataGateway gateway,
+      Clock clock) {
+    this.props = props;
+    this.scope = scope;
+    this.bars = bars;
+    this.tradingDays = tradingDays;
+    this.states = states;
+    this.jobs = jobs;
+    this.gateway = gateway;
+    this.clock = clock;
+  }
+
+  /**
+   * The most recent trading day that should already have a closing bar: from the trading calendar
+   * (today only counts after 16:15 ET); without a calendar, falls back to the latest date in the
+   * database.
+   */
+  public LocalDate expectedDate() {
+    ZoneId zone = ZoneId.of(props.zone());
+    ZonedDateTime now = ZonedDateTime.now(clock.withZone(zone));
+    LocalDate today = now.toLocalDate();
+    List<LocalDate> cal = tradingDays.between(Market.US, today.minusDays(45), today);
+    LocalDate expected = DailyIncrementService.expectedLatestTradingDay(cal, now);
+    return expected != null ? expected : bars.maxTradeDate().orElse(today);
+  }
+
+  public Report audit(LocalDate date) {
+    LocalDate d = date == null ? expectedDate() : date;
+    List<Check> checks = new ArrayList<>();
+    Map<String, Object> summary = new LinkedHashMap<>();
+
+    // 0. A market holiday has no closing data, so the other checks are meaningless. A date outside
+    //    the calendar's coverage is audited as usual ("not in the calendar" alone cannot prove the
+    //    market was closed)
+    if (tradingDays.covers(Market.US, d) && !tradingDays.isTradingDay(Market.US, d)) {
+      summary.put("tradingDay", false);
+      checks.add(new Check("calendar", true, true, d + " 美股休市，当天没有收盘数据", 0, List.of()));
+      return new Report(d, true, clock.instant(), summary, checks);
     }
+    summary.put("tradingDay", true);
 
-    public record Report(LocalDate date, boolean ok, Instant generatedAt, Map<String, Object> summary, List<Check> checks) {
+    // 1. Universe ∪ pool ∪ holdings all have a bar on the day.
+    // The detail prints the denominator's arithmetic **whether green or not** (changed in 3.1.4). A
+    // silently shrinking denominator has bitten this project three times: constituents wrongly
+    // removed (pure set difference), instruments marked UNRESOLVED (batch-level recovery writes
+    // that itself), a trading halt on the day. Each time numerator and denominator dropped by one
+    // together and this check stayed green.
+    // Rather than adding yet another companion check each time, the arithmetic is kept in plain
+    // sight.
+    // The denominator is the list valid on d (3.4.0): after a weekend sync changed the
+    // constituents, auditing last Friday before Monday's close must not count the new members as
+    // missing (production false alarm on 2026-10-12 for SKYD, TWLO, VYLR).
+    // The rehab freshness and sync-error checks below share this set and likewise only look at d's
+    // targets.
+    UniverseScope.TargetBreakdown b = scope.targetBreakdown(d);
+    Map<Long, InstrumentRow> targets = new LinkedHashMap<>();
+    b.expected().forEach(r -> targets.put(r.id(), r));
+    Set<Long> have = bars.instrumentIdsWithBarOn(d);
+    List<String> missing =
+        targets.values().stream()
+            .filter(r -> !have.contains(r.id()))
+            .map(InstrumentRow::symbol)
+            .sorted()
+            .toList();
+    summary.put("nominalTargets", b.nominal());
+    summary.put("constituentTargets", b.constituents());
+    summary.put("poolExtraTargets", b.poolExtras());
+    summary.put("downgradedTargets", b.unusable().size());
+    summary.put("targets", targets.size());
+    summary.put("withBarOnDate", targets.size() - missing.size());
+    String arithmetic =
+        "应采 "
+            + targets.size()
+            + " = 名义 "
+            + b.nominal()
+            + "（成分股 "
+            + b.constituents()
+            + " + 池与持仓另加 "
+            + b.poolExtras()
+            + "）"
+            + " − 降级 "
+            + b.unusable().size()
+            + " − 查不到标的行 "
+            + b.missingRows();
+    checks.add(
+        new Check(
+            "completeness",
+            missing.isEmpty(),
+            true,
+            arithmetic
+                + "；"
+                + d
+                + " 实采 "
+                + (targets.size() - missing.size())
+                + (missing.isEmpty()
+                    ? "，没有缺的"
+                    : "，缺 " + missing.size() + " 只：" + String.join("、", head(missing, 10))),
+            missing.size(),
+            head(missing, 30)));
+
+    // 1b. Has the constituent set itself shrunk (added 2026-09-25) completeness above uses this set
+    // as its denominator: when constituents are wrongly removed the denominator shrinks with them,
+    // the check stays green, and that night's increment simply stops collecting those instruments,
+    // so the absolute count has to be watched on its own. The guard is in
+    // UniverseSyncService.apply. This one deliberately uses the current constituent counts (it
+    // watches the state of the list now, not what was collected on d)
+    Map<IndexCode, Integer> counts = scope.constituentCounts();
+    List<String> shrunk = new ArrayList<>();
+    for (Map.Entry<IndexCode, Integer> e : counts.entrySet()) {
+      int floor = e.getKey().nominalSize() * (100 - UNIVERSE_SHRINK_TOLERANCE_PERCENT) / 100;
+      if (e.getValue() < floor) {
+        shrunk.add(
+            e.getKey()
+                + " 只有 "
+                + e.getValue()
+                + " 只（名义 "
+                + e.getKey().nominalSize()
+                + "，下限 "
+                + floor
+                + "）");
+      }
     }
+    summary.put("constituents", counts);
+    checks.add(
+        new Check(
+            "universeSize",
+            shrunk.isEmpty(),
+            true,
+            shrunk.isEmpty()
+                ? counts.entrySet().stream()
+                    .map(e -> e.getKey() + " " + e.getValue() + " 只")
+                    .collect(Collectors.joining("、"))
+                : "成分股集合缩水：" + String.join("；", shrunk) + "。查 UNIVERSE_SYNC 作业与来源页面结构",
+            shrunk.size(),
+            shrunk));
 
-    private final MarketDataProperties props;
-    private final UniverseScope scope;
-    private final DailyBarRepository bars;
-    private final TradingDayRepository tradingDays;
-    private final BarSyncStateRepository states;
-    private final JobRunRepository jobs;
-    private final MarketDataGateway gateway;
-    private final Clock clock;
+    // 1c. A downgraded instrument also shrinks completeness's denominator (added 2026-10-07)
+    // Batch-level recovery (UnknownSymbolGuard) actively marks a symbol UNRESOLVED when Futu does
+    // not know it, so it drops out of usable(): completeness loses one from numerator and
+    // denominator together, the check stays green and nobody sees anything. So watch the absolute
+    // count: how many of the nominal targets can really still be collected. This is guard three.
+    List<InstrumentRow> unusable = b.unusable();
+    int nominal = b.nominal();
+    int collectable = nominal - unusable.size();
+    int resolveFloor = nominal * (100 - UNIVERSE_SHRINK_TOLERANCE_PERCENT) / 100;
+    List<String> downgraded =
+        unusable.stream()
+            .map(r -> r.symbol() + "(" + r.resolveStatus() + (r.delisted() ? ",已退市" : "") + ")")
+            .sorted()
+            .toList();
+    summary.put("collectableTargets", collectable);
+    checks.add(
+        new Check(
+            "resolveDowngrade",
+            collectable >= resolveFloor,
+            true,
+            unusable.isEmpty()
+                ? "目标 " + nominal + " 只全部可采集"
+                : nominal
+                    + " 只目标里 "
+                    + unusable.size()
+                    + " 只采不了（"
+                    + String.join("、", head(downgraded, 10))
+                    + "），还能采 "
+                    + collectable
+                    + " 只，下限 "
+                    + resolveFloor
+                    + "。代码改名是正常的，但要确认是真改名而不是富途侧出了事",
+            unusable.size(),
+            head(downgraded, 30)));
 
-    public BarAuditService(MarketDataProperties props, UniverseScope scope, DailyBarRepository bars, TradingDayRepository tradingDays,
-                           BarSyncStateRepository states, JobRunRepository jobs, MarketDataGateway gateway, Clock clock) {
-        this.props = props;
-        this.scope = scope;
-        this.bars = bars;
-        this.tradingDays = tradingDays;
-        this.states = states;
-        this.jobs = jobs;
-        this.gateway = gateway;
-        this.clock = clock;
-    }
+    // 2. Field sanity of the day's bars
+    DailyBarRepository.DaySanity sanity = bars.sanityOn(d);
+    long bad = sanity.ohlcInconsistent() + sanity.nonPositiveClose() + sanity.nullTurnover();
+    checks.add(
+        new Check(
+            "sanity",
+            bad == 0,
+            true,
+            d
+                + " 共 "
+                + sanity.bars()
+                + " 根：OHLC 不一致 "
+                + sanity.ohlcInconsistent()
+                + "，非正收盘 "
+                + sanity.nonPositiveClose()
+                + "，成交额为空 "
+                + sanity.nullTurnover()
+                + "，空 K "
+                + sanity.blank()
+                + "，零成交量 "
+                + sanity.zeroVolume(),
+            bad,
+            List.of()));
+    summary.put("barsOnDate", sanity.bars());
+    summary.put("blank", sanity.blank());
+    summary.put("zeroVolume", sanity.zeroVolume());
 
-    /** 应当已经有收盘 K 的最近交易日：交易日历（16:15 ET 之后才算当天），没有日历时退回库里的最大日期。 */
-    public LocalDate expectedDate() {
-        ZoneId zone = ZoneId.of(props.zone());
-        ZonedDateTime now = ZonedDateTime.now(clock.withZone(zone));
-        LocalDate today = now.toLocalDate();
-        List<LocalDate> cal = tradingDays.between(Market.US, today.minusDays(45), today);
-        LocalDate expected = DailyIncrementService.expectedLatestTradingDay(cal, now);
-        return expected != null ? expected : bars.maxTradeDate().orElse(today);
-    }
+    // 3. Previous-close continuity over the last 30 calendar days (a mismatch = a missed day or bad
+    //    data). This query covers every instrument in the table, not only d's targets; non-targets
+    //    show up as "#id". It cannot find a gap whose last_close is self-consistent (check 8
+    //    compares with the calendar for that)
+    List<DailyBarRepository.ContinuityIssue> issues = bars.continuityIssues(d.minusDays(30), d, 50);
+    Map<Long, InstrumentRow> byId = targets;
+    List<String> samples =
+        issues.stream()
+            .map(
+                i ->
+                    (byId.containsKey(i.instrumentId())
+                            ? byId.get(i.instrumentId()).symbol()
+                            : "#" + i.instrumentId())
+                        + " "
+                        + i.tradeDate()
+                        + " last_close="
+                        + i.lastClose()
+                        + " prev_close="
+                        + i.prevClose())
+            .toList();
+    checks.add(
+        new Check(
+            "continuity",
+            issues.isEmpty(),
+            true,
+            issues.isEmpty() ? "最近 30 天前收与上一根收盘全部一致" : issues.size() + " 处前收与上一根收盘不一致（可能漏日）",
+            issues.size(),
+            head(samples, 20)));
 
-    public Report audit(LocalDate date) {
-        LocalDate d = date == null ? expectedDate() : date;
-        List<Check> checks = new ArrayList<>();
-        Map<String, Object> summary = new LinkedHashMap<>();
+    // 4. Price-adjustment factor freshness (refreshed within 8 days). Measured against now, not d:
+    //    it is about the state of the factors, which are only ever current
+    Instant stale = clock.instant().minus(Duration.ofDays(8));
+    Map<Long, BarSyncState> st =
+        states.findAll().stream().collect(Collectors.toMap(BarSyncState::instrumentId, s -> s));
+    List<String> staleRehab =
+        targets.values().stream()
+            .filter(
+                r ->
+                    !st.containsKey(r.id())
+                        || st.get(r.id()).rehabFetchedAt() == null
+                        || st.get(r.id()).rehabFetchedAt().isBefore(stale))
+            .map(InstrumentRow::symbol)
+            .sorted()
+            .toList();
+    checks.add(
+        new Check(
+            "rehab",
+            staleRehab.isEmpty(),
+            false,
+            staleRehab.isEmpty() ? "复权因子 8 天内全部刷新过" : staleRehab.size() + " 只复权因子超过 8 天未刷新",
+            staleRehab.size(),
+            head(staleRehab, 20)));
 
-        // 0. 休市日没有收盘数据，其余检查无从谈起；日历覆盖不到的日期照常审计（不能凭"不在日历里"判休市）
-        if (tradingDays.covers(Market.US, d) && !tradingDays.isTradingDay(Market.US, d)) {
-            summary.put("tradingDay", false);
-            checks.add(new Check("calendar", true, true, d + " 美股休市，当天没有收盘数据", 0, List.of()));
-            return new Report(d, true, clock.instant(), summary, checks);
-        }
-        summary.put("tradingDay", true);
+    // 5. Errors recorded in the sync state
+    List<String> errors =
+        targets.values().stream()
+            .filter(r -> st.containsKey(r.id()) && st.get(r.id()).lastError() != null)
+            .map(r -> r.symbol() + "：" + st.get(r.id()).lastError())
+            .sorted()
+            .toList();
+    checks.add(
+        new Check(
+            "syncErrors",
+            errors.isEmpty(),
+            false,
+            errors.isEmpty() ? "没有标的带着最近错误" : errors.size() + " 只标的最近一次同步有错误",
+            errors.size(),
+            head(errors, 20)));
 
-        // 1. 全量 ∪ 池 ∪ 持仓 当天都有 K 线
-        //    detail 把分母的算式**不管绿不绿都打出来**（3.1.4 改）。分母悄悄变小是这个项目踩过三次的坑：
-        //    成分股被误删（纯集合差）、标的被标 UNRESOLVED（批次级恢复会主动写）、当天停牌——
-        //    三次都是分子分母一起少一、这条检查照样全绿。与其每次再加一条伴随检查，不如把算式摆在明面上。
-        //    分母按 d 当天的名单（3.4.0）：周末同步改了成分股后，周一收盘前审上周五，新进的不该算缺（2026-10-12 生产误报 SKYD、TWLO、VYLR）。
-        //    下面的复权因子新鲜度、同步错误共用这个集合，同样只看 d 当天的目标。
-        UniverseScope.TargetBreakdown b = scope.targetBreakdown(d);
-        Map<Long, InstrumentRow> targets = new LinkedHashMap<>();
-        b.expected().forEach(r -> targets.put(r.id(), r));
-        Set<Long> have = bars.instrumentIdsWithBarOn(d);
-        List<String> missing = targets.values().stream().filter(r -> !have.contains(r.id())).map(InstrumentRow::symbol).sorted().toList();
-        summary.put("nominalTargets", b.nominal());
-        summary.put("constituentTargets", b.constituents());
-        summary.put("poolExtraTargets", b.poolExtras());
-        summary.put("downgradedTargets", b.unusable().size());
-        summary.put("targets", targets.size());
-        summary.put("withBarOnDate", targets.size() - missing.size());
-        String arithmetic = "应采 " + targets.size() + " = 名义 " + b.nominal()
-                + "（成分股 " + b.constituents() + " + 池与持仓另加 " + b.poolExtras() + "）"
-                + " − 降级 " + b.unusable().size() + " − 查不到标的行 " + b.missingRows();
-        checks.add(new Check("completeness", missing.isEmpty(), true,
-                arithmetic + "；" + d + " 实采 " + (targets.size() - missing.size())
-                        + (missing.isEmpty() ? "，没有缺的" : "，缺 " + missing.size() + " 只：" + String.join("、", head(missing, 10))),
-                missing.size(), head(missing, 30)));
+    // 6. The most recent increment job
+    Optional<JobRunRow> last = jobs.latestOf(Jobs.DAILY_INCREMENT);
+    boolean jobOk = last.map(j -> "OK".equals(j.status())).orElse(false);
+    checks.add(
+        new Check(
+            "incrementJob",
+            jobOk,
+            false,
+            last.map(
+                    j ->
+                        "最近一次增量 #"
+                            + j.id()
+                            + " "
+                            + j.status()
+                            + "（"
+                            + j.startedAt()
+                            + "）："
+                            + j.summary())
+                .orElse("还没有跑过增量作业"),
+            last.isPresent() ? 1 : 0,
+            List.of()));
 
-        // 1b. 成分股集合本身有没有缩水（2026-09-25 加）
-        //     上面的 completeness 用的分母就是这个集合：成分股被误删时分母跟着变小、检查照样全绿，
-        //     当晚增量直接不再采集这些标的——必须单独盯住绝对数量。守护见 UniverseSyncService.apply。
-        Map<IndexCode, Integer> counts = scope.constituentCounts();
-        List<String> shrunk = new ArrayList<>();
-        for (Map.Entry<IndexCode, Integer> e : counts.entrySet()) {
-            int floor = e.getKey().nominalSize() * (100 - UNIVERSE_SHRINK_TOLERANCE_PERCENT) / 100;
-            if (e.getValue() < floor) {
-                shrunk.add(e.getKey() + " 只有 " + e.getValue() + " 只（名义 " + e.getKey().nominalSize() + "，下限 " + floor + "）");
-            }
-        }
-        summary.put("constituents", counts);
-        checks.add(new Check("universeSize", shrunk.isEmpty(), true,
-                shrunk.isEmpty()
-                        ? counts.entrySet().stream().map(e -> e.getKey() + " " + e.getValue() + " 只").collect(Collectors.joining("、"))
-                        : "成分股集合缩水：" + String.join("；", shrunk) + "。查 UNIVERSE_SYNC 作业与来源页面结构",
-                shrunk.size(), shrunk));
+    // 7. Trading calendar coverage: it should reach back to the earliest bar of the targets,
+    //    otherwise the derived segment never ran or missed part
+    TradingDayRepository.Coverage cal = tradingDays.coverage(Market.US);
+    LocalDate earliestDeep =
+        bars.coverageByInstrument().stream()
+            .filter(x -> targets.containsKey(x.instrumentId()))
+            .map(DailyBarRepository.InstrumentCoverage::earliest)
+            .filter(java.util.Objects::nonNull)
+            .min(LocalDate::compareTo)
+            .orElse(null);
+    boolean calOk =
+        cal.earliest() != null && (earliestDeep == null || !cal.earliest().isAfter(earliestDeep));
+    summary.put("calendarDays", cal.days());
+    checks.add(
+        new Check(
+            "calendarCoverage",
+            calOk,
+            false,
+            cal.earliest() == null
+                ? "交易日历为空，跑一次日历回补"
+                : "交易日历 "
+                    + cal.earliest()
+                    + " 至 "
+                    + cal.latest()
+                    + " 共 "
+                    + cal.days()
+                    + " 天（券商 "
+                    + cal.fromBroker()
+                    + "，反推 "
+                    + cal.derived()
+                    + "）"
+                    + (calOk ? "" : "；最早 K 线在 " + earliestDeep + "，日历没覆盖到，跑一次日历回补"),
+            cal.days(),
+            List.of()));
 
-        // 1c. 标的被降级也会让 completeness 的分母变小（2026-10-07 加）
-        //     批次级恢复（UnknownSymbolGuard）在富途不认识某个代码时会主动把它标成 UNRESOLVED，
-        //     于是它掉出 usable()：completeness 的分子分母一起少一，检查照样全绿、人什么也看不到。
-        //     所以按绝对数量盯住：名义成分股数里还有多少是真能采的。这是守护三。
-        List<InstrumentRow> unusable = b.unusable();
-        int nominal = b.nominal();
-        int collectable = nominal - unusable.size();
-        int resolveFloor = nominal * (100 - UNIVERSE_SHRINK_TOLERANCE_PERCENT) / 100;
-        List<String> downgraded = unusable.stream()
-                .map(r -> r.symbol() + "(" + r.resolveStatus() + (r.delisted() ? ",已退市" : "") + ")")
-                .sorted().toList();
-        summary.put("collectableTargets", collectable);
-        checks.add(new Check("resolveDowngrade", collectable >= resolveFloor, true,
-                unusable.isEmpty()
-                        ? "目标 " + nominal + " 只全部可采集"
-                        : nominal + " 只目标里 " + unusable.size() + " 只采不了（" + String.join("、", head(downgraded, 10))
-                                + "），还能采 " + collectable + " 只，下限 " + resolveFloor
-                                + "。代码改名是正常的，但要确认是真改名而不是富途侧出了事",
-                unusable.size(), head(downgraded, 30)));
+    // 8. Gaps in the recent window, compared with the calendar.
+    // Only the last GAP_WINDOW_DAYS days: operations can fill these (re-run the increment); older
+    // ones are mostly holes on the broker side that cannot be filled, and reporting red every day
+    // would make the whole daily check meaningless, so they are deep-scanned on demand via GET
+    // /api/bars/gaps.
+    // An advisory check rather than a critical one, again because the usual cause is missing broker
+    // data rather than a run we missed.
+    // The filter is pushed down into SQL: LIMIT 20 first and then filtering by targets in memory
+    // amounts to "truncate, then filter"; when the first 20 rows happened to be instruments we do
+    // not care about, the result was empty and the daily check reported "no gaps" (fixed in 3.1.2).
+    // The result is still capped at 20 instruments, so the counts below are a lower bound when the
+    // cap is hit
+    List<DailyBarRepository.InstrumentGap> gaps =
+        bars.gaps(d.minusDays(GAP_WINDOW_DAYS), d, 20, targets.keySet());
+    List<String> gapSamples =
+        gaps.stream()
+            .map(
+                g ->
+                    symbolOf(targets, g.instrumentId())
+                        + " 缺 "
+                        + g.missing()
+                        + " 天（"
+                        + g.firstMissing()
+                        + " ~ "
+                        + g.lastMissing()
+                        + "）")
+            .toList();
+    long missingDays = gaps.stream().mapToLong(DailyBarRepository.InstrumentGap::missing).sum();
+    summary.put("recentGapDays", missingDays);
+    checks.add(
+        new Check(
+            "historyGaps",
+            gaps.isEmpty(),
+            false,
+            gaps.isEmpty()
+                ? "最近 " + GAP_WINDOW_DAYS + " 天对照交易日历没有缺口"
+                : gaps.size()
+                    + " 只在最近 "
+                    + GAP_WINDOW_DAYS
+                    + " 天有缺口，共 "
+                    + missingDays
+                    + " 天；能补的重跑增量，补不回来的多是券商缺数（深扫用 /api/bars/gaps）",
+            missingDays,
+            head(gapSamples, 20)));
 
-        // 2. 当天 K 线的字段合理性
-        DailyBarRepository.DaySanity sanity = bars.sanityOn(d);
-        long bad = sanity.ohlcInconsistent() + sanity.nonPositiveClose() + sanity.nullTurnover();
-        checks.add(new Check("sanity", bad == 0, true,
-                d + " 共 " + sanity.bars() + " 根：OHLC 不一致 " + sanity.ohlcInconsistent() + "，非正收盘 " + sanity.nonPositiveClose()
-                        + "，成交额为空 " + sanity.nullTurnover() + "，空 K " + sanity.blank() + "，零成交量 " + sanity.zeroVolume(),
-                bad, List.of()));
-        summary.put("barsOnDate", sanity.bars());
-        summary.put("blank", sanity.blank());
-        summary.put("zeroVolume", sanity.zeroVolume());
+    // 9. Phantom bars: rows inside the calendar's covered range but not on the calendar (the broker
+    //    has served dirty data on US market holidays).
+    // The count is the uncapped total; phantomBars(20) only provides samples. Using the length of a
+    // capped list as the count reported 20 even for thousands (fixed in 3.1.2)
+    int phantomTotal = bars.phantomBarCount();
+    List<String> phantomSamples =
+        bars.phantomBars(20).stream()
+            .map(
+                p ->
+                    symbolOf(targets, p.instrumentId())
+                        + " "
+                        + p.tradeDate()
+                        + "（收 "
+                        + p.close()
+                        + "，成交额 "
+                        + p.turnover()
+                        + "）")
+            .toList();
+    summary.put("phantomBars", phantomTotal);
+    checks.add(
+        new Check(
+            "phantomBars",
+            phantomTotal == 0,
+            false,
+            phantomTotal == 0
+                ? "没有落在交易日历之外的 K 线"
+                : phantomTotal
+                    + " 根 K 线落在交易日历之外（券商脏数据），"
+                    + "用 POST /api/bars/cleanup/phantom 先试跑再订正（一次最多订正 "
+                    + DailyBarRepository.PHANTOM_BATCH
+                    + " 条，删完再跑一轮）",
+            phantomTotal,
+            head(phantomSamples, 20)));
 
-        // 3. 最近 30 个自然日的前收连续性（不等 = 漏日或数据错）
-        List<DailyBarRepository.ContinuityIssue> issues = bars.continuityIssues(d.minusDays(30), d, 50);
-        Map<Long, InstrumentRow> byId = targets;
-        List<String> samples = issues.stream().map(i -> (byId.containsKey(i.instrumentId()) ? byId.get(i.instrumentId()).symbol() : "#" + i.instrumentId())
-                + " " + i.tradeDate() + " last_close=" + i.lastClose() + " prev_close=" + i.prevClose()).toList();
-        checks.add(new Check("continuity", issues.isEmpty(), true,
-                issues.isEmpty() ? "最近 30 天前收与上一根收盘全部一致" : issues.size() + " 处前收与上一根收盘不一致（可能漏日）",
-                issues.size(), head(samples, 20)));
+    // 10. Unsettled bars: a same-day bar written before the close settled (16:15 ET) carries an
+    //     intraday price.
+    // Since 2.0.2 writes are filtered by the cutoff, so none should appear; older ones are
+    // re-fetched and overwritten by the next increment automatically, hence advisory only. The
+    // query is capped at 1000 rows, so the reported count saturates at 1000
+    ZoneId zone = ZoneId.of(props.zone());
+    List<DailyBarRepository.UnsettledBar> unsettled =
+        bars.unsettledBars(zone, SnapshotWindow.OPENS, 1000);
+    List<String> unsettledSamples =
+        unsettled.stream()
+            .map(
+                u ->
+                    symbolOf(targets, u.instrumentId())
+                        + " "
+                        + u.tradeDate()
+                        + "（写入于美东 "
+                        + u.fetchedAt().atZone(zone).toLocalDateTime().withNano(0)
+                        + "）")
+            .toList();
+    summary.put("unsettledBars", unsettled.size());
+    checks.add(
+        new Check(
+            "unsettledBars",
+            unsettled.isEmpty(),
+            false,
+            unsettled.isEmpty()
+                ? "没有收盘落定前写入的 K 线"
+                : unsettled.size() + " 根 K 线在当天收盘落定（美东 16:15）前写入，可能是盘中价；下一次增量会自动重拉覆盖",
+            unsettled.size(),
+            head(unsettledSamples, 20)));
 
-        // 4. 复权因子新鲜度（8 天内刷新过）
-        Instant stale = clock.instant().minus(Duration.ofDays(8));
-        Map<Long, BarSyncState> st = states.findAll().stream().collect(Collectors.toMap(BarSyncState::instrumentId, s -> s));
-        List<String> staleRehab = targets.values().stream()
-                .filter(r -> !st.containsKey(r.id()) || st.get(r.id()).rehabFetchedAt() == null || st.get(r.id()).rehabFetchedAt().isBefore(stale))
-                .map(InstrumentRow::symbol).sorted().toList();
-        checks.add(new Check("rehab", staleRehab.isEmpty(), false,
-                staleRehab.isEmpty() ? "复权因子 8 天内全部刷新过" : staleRehab.size() + " 只复权因子超过 8 天未刷新",
-                staleRehab.size(), head(staleRehab, 20)));
+    // 11. Futu gateway
+    boolean futuUp =
+        gateway instanceof BrokerGateway g && g.status().state() == GatewayState.CONNECTED;
+    checks.add(
+        new Check(
+            "gateway",
+            futuUp,
+            false,
+            futuUp ? "富途网关已连接" : "富途网关未连接（" + Broker.FUTU + "）",
+            0,
+            List.of()));
 
-        // 5. 同步状态里的错误
-        List<String> errors = targets.values().stream()
-                .filter(r -> st.containsKey(r.id()) && st.get(r.id()).lastError() != null)
-                .map(r -> r.symbol() + "：" + st.get(r.id()).lastError()).sorted().toList();
-        checks.add(new Check("syncErrors", errors.isEmpty(), false,
-                errors.isEmpty() ? "没有标的带着最近错误" : errors.size() + " 只标的最近一次同步有错误", errors.size(), head(errors, 20)));
+    boolean ok = checks.stream().filter(Check::critical).allMatch(Check::ok);
+    return new Report(d, ok, clock.instant(), summary, checks);
+  }
 
-        // 6. 最近一次增量作业
-        Optional<JobRunRow> last = jobs.latestOf(Jobs.DAILY_INCREMENT);
-        boolean jobOk = last.map(j -> "OK".equals(j.status())).orElse(false);
-        checks.add(new Check("incrementJob", jobOk, false,
-                last.map(j -> "最近一次增量 #" + j.id() + " " + j.status() + "（" + j.startedAt() + "）：" + j.summary()).orElse("还没有跑过增量作业"),
-                last.isPresent() ? 1 : 0, List.of()));
+  private static String symbolOf(Map<Long, InstrumentRow> targets, long id) {
+    InstrumentRow r = targets.get(id);
+    return r == null ? "#" + id : r.symbol();
+  }
 
-        // 7. 交易日历覆盖：应回到深度标的最早的 K 线，否则反推段没跑或跑漏了
-        TradingDayRepository.Coverage cal = tradingDays.coverage(Market.US);
-        LocalDate earliestDeep = bars.coverageByInstrument().stream()
-                .filter(x -> targets.containsKey(x.instrumentId()))
-                .map(DailyBarRepository.InstrumentCoverage::earliest)
-                .filter(java.util.Objects::nonNull).min(LocalDate::compareTo).orElse(null);
-        boolean calOk = cal.earliest() != null && (earliestDeep == null || !cal.earliest().isAfter(earliestDeep));
-        summary.put("calendarDays", cal.days());
-        checks.add(new Check("calendarCoverage", calOk, false,
-                cal.earliest() == null ? "交易日历为空，跑一次日历回补"
-                        : "交易日历 " + cal.earliest() + " 至 " + cal.latest() + " 共 " + cal.days()
-                                + " 天（券商 " + cal.fromBroker() + "，反推 " + cal.derived() + "）"
-                                + (calOk ? "" : "；最早 K 线在 " + earliestDeep + "，日历没覆盖到，跑一次日历回补"),
-                cal.days(), List.of()));
-
-        // 8. 最近窗口对照日历的缺口。
-        // 只看最近 GAP_WINDOW_DAYS 天：这段是运维能补的（增量重跑）；更早的多是券商侧的洞，
-        // 补不回来，天天报红会让整个巡检失去意义，改由 GET /api/bars/gaps 按需深扫。
-        // 判为提示项而非关键项，同样因为常见成因是券商缺数而不是我们漏跑。
-        // 过滤下推到 SQL：先 LIMIT 20 再在内存里按 targets 过滤，等于「先截断再筛选」——
-        // 前 20 条恰好都不是我们关心的标的时结果是空的，巡检会报「没有缺口」（3.1.2 修）
-        List<DailyBarRepository.InstrumentGap> gaps = bars.gaps(d.minusDays(GAP_WINDOW_DAYS), d, 20, targets.keySet());
-        List<String> gapSamples = gaps.stream()
-                .map(g -> symbolOf(targets, g.instrumentId()) + " 缺 " + g.missing() + " 天（"
-                        + g.firstMissing() + " ~ " + g.lastMissing() + "）").toList();
-        long missingDays = gaps.stream().mapToLong(DailyBarRepository.InstrumentGap::missing).sum();
-        summary.put("recentGapDays", missingDays);
-        checks.add(new Check("historyGaps", gaps.isEmpty(), false,
-                gaps.isEmpty() ? "最近 " + GAP_WINDOW_DAYS + " 天对照交易日历没有缺口"
-                        : gaps.size() + " 只在最近 " + GAP_WINDOW_DAYS + " 天有缺口，共 " + missingDays
-                                + " 天；能补的重跑增量，补不回来的多是券商缺数（深扫用 /api/bars/gaps）",
-                missingDays, head(gapSamples, 20)));
-
-        // 9. 幽灵 K 线：落在日历覆盖区间内却不在日历里的行（券商在美股假日给过脏数据）
-        // 条数取总数，phantomBars(20) 只当样本：拿带上限的清单长度当条数，几千条也只报 20（3.1.2 修）
-        int phantomTotal = bars.phantomBarCount();
-        List<String> phantomSamples = bars.phantomBars(20).stream()
-                .map(p -> symbolOf(targets, p.instrumentId()) + " " + p.tradeDate()
-                        + "（收 " + p.close() + "，成交额 " + p.turnover() + "）").toList();
-        summary.put("phantomBars", phantomTotal);
-        checks.add(new Check("phantomBars", phantomTotal == 0, false,
-                phantomTotal == 0 ? "没有落在交易日历之外的 K 线"
-                        : phantomTotal + " 根 K 线落在交易日历之外（券商脏数据），"
-                                + "用 POST /api/bars/cleanup/phantom 先试跑再订正（一次最多订正 "
-                                + DailyBarRepository.PHANTOM_BATCH + " 条，删完再跑一轮）",
-                phantomTotal, head(phantomSamples, 20)));
-
-        // 10. 未落定的 K 线：收盘落定（16:15 ET）前写进来的当天那根，是盘中价。
-        // 2.0.2 起写库前按截止日过滤，不会再产生；之前留下的由下一次增量自动重拉覆盖，所以只提示。
-        ZoneId zone = ZoneId.of(props.zone());
-        List<DailyBarRepository.UnsettledBar> unsettled = bars.unsettledBars(zone, SnapshotWindow.OPENS, 1000);
-        List<String> unsettledSamples = unsettled.stream()
-                .map(u -> symbolOf(targets, u.instrumentId()) + " " + u.tradeDate()
-                        + "（写入于美东 " + u.fetchedAt().atZone(zone).toLocalDateTime().withNano(0) + "）").toList();
-        summary.put("unsettledBars", unsettled.size());
-        checks.add(new Check("unsettledBars", unsettled.isEmpty(), false,
-                unsettled.isEmpty() ? "没有收盘落定前写入的 K 线"
-                        : unsettled.size() + " 根 K 线在当天收盘落定（美东 16:15）前写入，可能是盘中价；下一次增量会自动重拉覆盖",
-                unsettled.size(), head(unsettledSamples, 20)));
-
-        // 11. 富途网关
-        boolean futuUp = gateway instanceof BrokerGateway g && g.status().state() == GatewayState.CONNECTED;
-        checks.add(new Check("gateway", futuUp, false, futuUp ? "富途网关已连接" : "富途网关未连接（" + Broker.FUTU + "）", 0, List.of()));
-
-        boolean ok = checks.stream().filter(Check::critical).allMatch(Check::ok);
-        return new Report(d, ok, clock.instant(), summary, checks);
-    }
-
-    private static String symbolOf(Map<Long, InstrumentRow> targets, long id) {
-        InstrumentRow r = targets.get(id);
-        return r == null ? "#" + id : r.symbol();
-    }
-
-    private static List<String> head(List<String> list, int n) {
-        return list.size() <= n ? list : list.subList(0, n);
-    }
+  private static List<String> head(List<String> list, int n) {
+    return list.size() <= n ? list : list.subList(0, n);
+  }
 }

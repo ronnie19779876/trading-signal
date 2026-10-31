@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
-"""持仓风险面板的复核条件历史验证（3.5.0，ARCHITECTURE §29）。
+"""Historical validation of the holdings risk panel's review conditions (3.5.0, ARCHITECTURE §29).
 
-只调只读 GET 接口（默认开发实例 :8083），不写任何数据；只用标准库：
+Calls read-only GET endpoints only (dev instance :8083 by default), writes no data, uses only the standard library:
 
     python3 scripts/research/holdings_review_report.py [--base http://127.0.0.1:8083] [--from 2007-01-01] [--to 2026-09-30] [SYM ...]
 
-不给代码时取池、持仓与基准（20 年深度）。
+Without symbols it takes the pool, holdings and benchmarks (20-year depth).
 
-问题：复核条件「刚刚成立」那天之后，价格是不是比随便哪天更差？如果是，条件有风险提示价值；如果不是，它只是纪律提醒。
-方法沿用入场信号回放统计（§18.6，scripts/research/sentinel_report.py）：
-- 对照 = 同一只标的、同一年里任意一天的前瞻收益（均值）；比较的是「触发日前瞻收益 − 对照」；
-- 同一市场同一年的样本高度相关，显著性按「年份」整块重抽（保留年内相关），不按样本独立计算；
-- 只取条件刚刚成立的那天（edge），同一段下跌不重复计数；
-- 已知偏差：池与持仓是今天挑的（事后赢家，幸存者偏差）——它让「之后表现」整体偏好，对照也在同一批标的上算，差值受影响较小但不为零。
+Question: after the day a review condition "has just become true", is the price worse than on an arbitrary day?
+If so, the condition carries risk-warning value; if not, it is only a discipline reminder.
+Method follows the entry-signal replay statistics (§18.6, scripts/research/sentinel_report.py):
+- control = the mean forward return over every day of the same symbol in the same year; what is compared is
+  "forward return after the trigger day − control";
+- samples from the same market in the same year are highly correlated, so significance is resampled in whole
+  "year" blocks (keeping within-year correlation), never computed as if samples were independent;
+- only the day the condition has just become true (the edge) is taken, so one drawdown is not counted repeatedly;
+- known bias: the pool and holdings were picked today (winners in hindsight, survivorship bias) -- that makes
+  "what came after" look better overall; the control is computed on the same symbols, so the difference is
+  affected less, but not zero.
 """
 import argparse, json, random, statistics, urllib.request
 from collections import defaultdict
@@ -37,7 +42,8 @@ def get(path):
 
 
 def year_block_ci(values_by_year, stat=statistics.fmean, n=a.boot, seed=20261030):
-    """整年重抽：每轮从有样本的年份里有放回抽同样多个年份，合并其全部样本后求统计量。返回 (下限, 上限, 双侧 p)。"""
+    """Whole-year bootstrap: each round draws, with replacement, as many years as there are years with samples,
+    pools all their samples and computes the statistic. Returns (lower, upper, two-sided p)."""
     rnd = random.Random(seed)
     years = [y for y, v in values_by_year.items() if v]
     if len(years) < 2:
@@ -65,13 +71,13 @@ if not symbols:
     symbols = sorted({p['symbol'] for p in get('/api/pool')})
 
 events = {t: {h: defaultdict(list) for h in HORIZONS} for t in TRIGGERS}     # trigger → h → year → [diff]
-raw = {t: {h: [] for h in HORIZONS} for t in TRIGGERS}                         # trigger → h → [前瞻收益]
-counts = defaultdict(lambda: defaultdict(int))                                 # trigger → symbol → 次数
+raw = {t: {h: [] for h in HORIZONS} for t in TRIGGERS}                         # trigger → h → [forward return]
+counts = defaultdict(lambda: defaultdict(int))                                 # trigger → symbol → count
 covered = {}
 for sym in symbols:
     try:
         days = get(f'/api/account/holdings-review/history/{sym}?from={a.frm}&to={a.to}')
-    except Exception as e:  # noqa: BLE001 — 研究脚本：取不到就跳过并说明
+    except Exception as e:  # noqa: BLE001 — research script: skip what cannot be fetched and say so
         print(f'- {sym}：取不到（{e}），跳过')
         continue
     if not days:
@@ -81,7 +87,7 @@ for sym in symbols:
     year = [d['date'][:4] for d in days]
     n = len(days)
     for h in HORIZONS:
-        # 对照：同标的同年份所有能算前瞻收益的日子的均值
+        # Control: mean forward return over every day of the same symbol and year that has a full horizon
         by_year = defaultdict(list)
         for i in range(n - h):
             by_year[year[i]].append(close[i + h] / close[i] - 1)

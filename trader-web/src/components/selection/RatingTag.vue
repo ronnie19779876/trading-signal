@@ -2,7 +2,7 @@
 import type { Rating } from '../../api/selection'
 import { RATING_EFFECT, RATING_LABEL, RATING_TAG } from '../../lib/selection'
 
-/** 评级标签：强烈档实心、次一档描边；没有评级显示破折号。 */
+/** Rating tag: strong tiers solid, second tiers outlined; no rating shows a dash. */
 defineProps<{ rating: Rating | null }>()
 </script>
 

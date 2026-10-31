@@ -1,92 +1,101 @@
 package org.jdkxx.trader.gateway.ibkr;
 
-import org.jdkxx.trader.gateway.RequestRejectedException;
-
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
+import org.jdkxx.trader.gateway.RequestRejectedException;
 
 /**
- * 常驻订阅的 reqId → 处理器（3.0.2 起，实时账户用）。{@link IbkrRequestRegistry} 只管"请求 → 收齐 → 结束"，
- * 这里管"订上之后一直推"。reqId 与注册表共用同一个计数器，两边不会撞号。
+ * reqId to handler for standing subscriptions (since 3.0.2, used by the live account). {@link
+ * IbkrRequestRegistry} only covers "request, collect, end"; this class covers "once subscribed,
+ * keeps pushing". reqIds come from the same counter as the registry, so the two never collide.
  *
- * <p>回调在泵线程上到达，这里只转交：处理器一律在 dispatch 线程（单线程）上按到达顺序执行。
+ * <p>Callbacks arrive on the pump thread and are only handed off here: every handler runs on the
+ * (single-threaded) dispatch thread, in arrival order. That single thread is what lets the
+ * subscribers ({@link IbkrLiveAccount}, {@link IbkrAccountSummaryFeed}, {@link IbkrPortfolioFeed})
+ * keep their state without locks.
  */
 final class IbkrSubscriptions {
 
-    interface Handler {
-        void item(Object item);
+  interface Handler {
+    void item(Object item);
 
-        default void end() {
-        }
+    default void end() {}
 
-        default void error(RequestRejectedException e) {
-        }
+    default void error(RequestRejectedException e) {}
+  }
+
+  /**
+   * The account-updates feed (reqAccountUpdates) has no reqId: IBKR allows one client to subscribe
+   * to only one account at a time, and the callbacks carry no id either. A negative number that can
+   * never collide with a real reqId is used as its channel id ({@link
+   * IbkrRequestRegistry#isRequestId} is false for negatives).
+   */
+  static final int PORTFOLIO = -2;
+
+  private final ConcurrentHashMap<Integer, Handler> handlers = new ConcurrentHashMap<>();
+  private final Executor dispatch;
+
+  IbkrSubscriptions(Executor dispatch) {
+    this.dispatch = dispatch;
+  }
+
+  void open(int id, Handler handler) {
+    handlers.put(id, handler);
+  }
+
+  void close(int id) {
+    handlers.remove(id);
+  }
+
+  boolean has(int id) {
+    return handlers.containsKey(id);
+  }
+
+  int size() {
+    return handlers.size();
+  }
+
+  void item(int id, Object item) {
+    Handler h = handlers.get(id);
+    if (h != null) {
+      run(() -> h.item(item));
     }
+  }
 
-    /**
-     * 账户更新推送（reqAccountUpdates）没有 reqId：盈透规定一个客户端同时只能订一个账户，回调也不带 id。
-     * 用一个不会与真实 reqId 相撞的负数当通道号（{@link IbkrRequestRegistry#isRequestId} 对负数为假）。
-     */
-    static final int PORTFOLIO = -2;
-
-    private final ConcurrentHashMap<Integer, Handler> handlers = new ConcurrentHashMap<>();
-    private final Executor dispatch;
-
-    IbkrSubscriptions(Executor dispatch) {
-        this.dispatch = dispatch;
+  void end(int id) {
+    Handler h = handlers.get(id);
+    if (h != null) {
+      run(h::end);
     }
+  }
 
-    void open(int id, Handler handler) {
-        handlers.put(id, handler);
+  /**
+   * @return whether this id is a standing subscription (if so the error has been handed off and the
+   *     caller need not treat it as a system message)
+   */
+  boolean error(int id, RequestRejectedException e) {
+    Handler h = handlers.get(id);
+    if (h == null) {
+      return false;
     }
+    run(() -> h.error(e));
+    return true;
+  }
 
-    void close(int id) {
-        handlers.remove(id);
-    }
+  /**
+   * Session ended: its subscriptions die with it and every handler is discarded (after
+   * reconnecting, subscribers re-subscribe with new reqIds).
+   */
+  void clear() {
+    handlers.clear();
+  }
 
-    boolean has(int id) {
-        return handlers.containsKey(id);
+  private void run(Runnable r) {
+    try {
+      dispatch.execute(r);
+    } catch (RejectedExecutionException e) {
+      // shutting down
     }
-
-    int size() {
-        return handlers.size();
-    }
-
-    void item(int id, Object item) {
-        Handler h = handlers.get(id);
-        if (h != null) {
-            run(() -> h.item(item));
-        }
-    }
-
-    void end(int id) {
-        Handler h = handlers.get(id);
-        if (h != null) {
-            run(h::end);
-        }
-    }
-
-    /** @return 这个 id 是否是常驻订阅（是则错误已转交，调用方不必再当系统消息处理） */
-    boolean error(int id, RequestRejectedException e) {
-        Handler h = handlers.get(id);
-        if (h == null) {
-            return false;
-        }
-        run(() -> h.error(e));
-        return true;
-    }
-
-    /** 会话结束：订阅随之失效，处理器全部作废（重连后由订阅方用新 reqId 重订）。 */
-    void clear() {
-        handlers.clear();
-    }
-
-    private void run(Runnable r) {
-        try {
-            dispatch.execute(r);
-        } catch (RejectedExecutionException e) {
-            // 关停中
-        }
-    }
+  }
 }

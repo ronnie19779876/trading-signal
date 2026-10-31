@@ -1,5 +1,6 @@
 package org.jdkxx.trader.core.marketdata;
 
+import jakarta.annotation.PreDestroy;
 import org.jdkxx.trader.core.marketdata.fundamentals.FundamentalsFacade;
 import org.jdkxx.trader.core.marketdata.jobs.CatchUpService;
 import org.jdkxx.trader.core.marketdata.jobs.ScheduledSubmitter;
@@ -8,106 +9,143 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 
-import jakarta.annotation.PreDestroy;
-
 /**
- * 定时跑批（只在 trader.marketdata.schedule-enabled=true 的实例装配；同一台服务器只允许一个实例开启）。
- * 增量：每个交易日收盘后；估值快照：增量之后 10 分钟；成分股同步：每周六早上；财报：每周六早上七点。
+ * Scheduled batch jobs (wired only on an instance with trader.marketdata.schedule-enabled=true;
+ * only one instance per server may enable it). Increment: after the close on every trading day;
+ * valuation snapshot: 10 minutes after the increment; constituent sync: Saturday morning; financial
+ * statements: Saturday 07:00. Every cron is evaluated in the configured zone (US/Eastern), so DST
+ * changes are handled by Spring, not by shifting the cron.
  *
- * <p><b>碰撞重试</b>：作业执行器是单线程，已有作业在跑时提交会抛异常。
- * 原先只打一行 WARN 就算了——增量与估值只隔 10 分钟，增量实测要 6.5 分钟，
- * 一旦超过 10 分钟，估值就被静默丢弃；而估值是时点数据，当天不补就永远没有。
- * 现在改为延后重试，重试到底仍失败会写一行 SKIPPED 留痕，机制见 {@link ScheduledSubmitter}。
+ * <p><b>Collision retry</b>: the job executor is single-threaded and submitting while another job
+ * runs throws. This used to log one WARN and give up. The increment and the valuation are only 10
+ * minutes apart and the increment measured 6.5 minutes; once it ran past 10 minutes the valuation
+ * was silently dropped, and since valuation is point-in-time data, a day not caught up is lost
+ * forever. Submission now retries later, and when the retries are exhausted it writes a SKIPPED row
+ * as a trace; see {@link ScheduledSubmitter}.
+ *
+ * <p>The cron methods run on Spring's scheduler thread and only submit; the work itself runs on the
+ * job thread ({@code JobService}) and retries on the submitter's own thread, so a slow job never
+ * blocks other crons.
  */
 public class MarketDataScheduler {
 
-    private static final Logger log = LoggerFactory.getLogger(MarketDataScheduler.class);
+  private static final Logger log = LoggerFactory.getLogger(MarketDataScheduler.class);
 
-    private final MarketDataFacade facade;
-    private final FundamentalsFacade fundamentals;
-    private final JobRunRepository jobRuns;
-    private final CatchUpService catchUpService;
-    private final ScheduledSubmitter submitter;
+  private final MarketDataFacade facade;
+  private final FundamentalsFacade fundamentals;
+  private final JobRunRepository jobRuns;
+  private final CatchUpService catchUpService;
+  private final ScheduledSubmitter submitter;
 
-    public MarketDataScheduler(MarketDataFacade facade, FundamentalsFacade fundamentals, JobRunRepository jobRuns,
-                               CatchUpService catchUpService) {
-        this.facade = facade;
-        this.fundamentals = fundamentals;
-        this.jobRuns = jobRuns;
-        this.catchUpService = catchUpService;
-        this.submitter = new ScheduledSubmitter(jobRuns, "marketdata-retry");
+  public MarketDataScheduler(
+      MarketDataFacade facade,
+      FundamentalsFacade fundamentals,
+      JobRunRepository jobRuns,
+      CatchUpService catchUpService) {
+    this.facade = facade;
+    this.fundamentals = fundamentals;
+    this.jobRuns = jobRuns;
+    this.catchUpService = catchUpService;
+    this.submitter = new ScheduledSubmitter(jobRuns, "marketdata-retry");
+  }
+
+  @Scheduled(cron = "${trader.marketdata.increment-cron}", zone = "${trader.marketdata.zone}")
+  public void increment() {
+    submitter.submit("每日增量", Jobs.DAILY_INCREMENT, "SCHEDULE", () -> facade.increment("SCHEDULE"));
+  }
+
+  @Scheduled(cron = "${trader.marketdata.universe.sync-cron}", zone = "${trader.marketdata.zone}")
+  public void weekly() {
+    submitter.submit(
+        "成分股同步", Jobs.UNIVERSE_SYNC, "SCHEDULE", () -> facade.syncUniverse("SCHEDULE"));
+  }
+
+  /**
+   * Runs after the daily increment: market cap and P/E move with the price, so only values taken
+   * after the close represent that day.
+   */
+  @Scheduled(cron = "${trader.marketdata.valuation-cron}", zone = "${trader.marketdata.zone}")
+  public void valuation() {
+    submitter.submit(
+        "估值快照",
+        Jobs.VALUATION_SNAPSHOT,
+        "SCHEDULE",
+        () -> fundamentals.refreshValuation("SCHEDULE"));
+  }
+
+  @Scheduled(cron = "${trader.marketdata.financials-cron}", zone = "${trader.marketdata.zone}")
+  public void financials() {
+    submitter.submit(
+        "财报刷新",
+        Jobs.FINANCIALS_REFRESH,
+        "SCHEDULE",
+        () -> fundamentals.refreshFinancials("SCHEDULE", false));
+  }
+
+  /**
+   * Same-day catch-up check: confirm today's data is complete and re-run whatever is missing.
+   * Scheduled fairly late after the close but before the next pre-market: the broker freezes the
+   * current price after the close, and once pre-market starts the same-day figures can no longer be
+   * obtained.
+   *
+   * <p>Every run writes one {@link Jobs#CATCHUP_CHECK} row (also on non-trading days and when
+   * nothing is missing). In 1.1.x a complete day only produced a log line, so if the check itself
+   * stopped running there was no trace in the database and the health metric could not see it, even
+   * though it is the last line of defense for valuation data.
+   */
+  @Scheduled(cron = "${trader.marketdata.catchup-cron}", zone = "${trader.marketdata.zone}")
+  public void catchUp() {
+    CatchUpService.Gap gap;
+    try {
+      gap = catchUpService.check();
+    } catch (RuntimeException e) {
+      log.error("补偿检查失败：{}", e.toString());
+      note("FAILED", "检查失败：" + e);
+      return;
     }
-
-    @Scheduled(cron = "${trader.marketdata.increment-cron}", zone = "${trader.marketdata.zone}")
-    public void increment() {
-        submitter.submit("每日增量", Jobs.DAILY_INCREMENT, "SCHEDULE", () -> facade.increment("SCHEDULE"));
+    if (!gap.tradingDay()) {
+      log.info("{}", gap.describe());
+      note("OK", gap.describe());
+      return;
     }
-
-    @Scheduled(cron = "${trader.marketdata.universe.sync-cron}", zone = "${trader.marketdata.zone}")
-    public void weekly() {
-        submitter.submit("成分股同步", Jobs.UNIVERSE_SYNC, "SCHEDULE", () -> facade.syncUniverse("SCHEDULE"));
+    if (!gap.barsMissing() && !gap.valuationMissing()) {
+      log.info("{}；都齐了", gap.describe());
+      note("OK", gap.describe() + "；都齐了");
+      return;
     }
-
-    /** 排在每日增量之后：市值与市盈率随价格走，收盘后取到的才是当日值。 */
-    @Scheduled(cron = "${trader.marketdata.valuation-cron}", zone = "${trader.marketdata.zone}")
-    public void valuation() {
-        submitter.submit("估值快照", Jobs.VALUATION_SNAPSHOT, "SCHEDULE", () -> fundamentals.refreshValuation("SCHEDULE"));
+    log.warn("{}；开始补跑", gap.describe());
+    note(
+        "OK",
+        gap.describe()
+            + "；已提交补跑："
+            + (gap.barsMissing() ? "每日增量 " : "")
+            + (gap.valuationMissing() ? "估值快照" : ""));
+    if (gap.barsMissing()) {
+      submitter.submit(
+          "补跑每日增量", Jobs.DAILY_INCREMENT, "CATCHUP", () -> facade.increment("CATCHUP"));
     }
-
-    @Scheduled(cron = "${trader.marketdata.financials-cron}", zone = "${trader.marketdata.zone}")
-    public void financials() {
-        submitter.submit("财报刷新", Jobs.FINANCIALS_REFRESH, "SCHEDULE", () -> fundamentals.refreshFinancials("SCHEDULE", false));
+    if (gap.valuationMissing()) {
+      submitter.submit(
+          "补跑估值快照",
+          Jobs.VALUATION_SNAPSHOT,
+          "CATCHUP",
+          () -> fundamentals.refreshValuation("CATCHUP"));
     }
+  }
 
-    /**
-     * 当天补偿检查：确认当日数据齐了，缺什么补什么。
-     * 排在收盘后较晚的时点，但要早于次日盘前——券商收盘后冻结当前价，过了盘前就取不到当日口径了。
-     *
-     * <p>每次运行都写一行 {@link Jobs#CATCHUP_CHECK}（非交易日、都齐了也写）。1.1.x 数据齐全时只打日志，
-     * 它自己停摆了库里毫无痕迹、健康指标也看不见——而它恰恰是估值数据的最后一道防线。
-     */
-    @Scheduled(cron = "${trader.marketdata.catchup-cron}", zone = "${trader.marketdata.zone}")
-    public void catchUp() {
-        CatchUpService.Gap gap;
-        try {
-            gap = catchUpService.check();
-        } catch (RuntimeException e) {
-            log.error("补偿检查失败：{}", e.toString());
-            note("FAILED", "检查失败：" + e);
-            return;
-        }
-        if (!gap.tradingDay()) {
-            log.info("{}", gap.describe());
-            note("OK", gap.describe());
-            return;
-        }
-        if (!gap.barsMissing() && !gap.valuationMissing()) {
-            log.info("{}；都齐了", gap.describe());
-            note("OK", gap.describe() + "；都齐了");
-            return;
-        }
-        log.warn("{}；开始补跑", gap.describe());
-        note("OK", gap.describe() + "；已提交补跑："
-                + (gap.barsMissing() ? "每日增量 " : "") + (gap.valuationMissing() ? "估值快照" : ""));
-        if (gap.barsMissing()) {
-            submitter.submit("补跑每日增量", Jobs.DAILY_INCREMENT, "CATCHUP", () -> facade.increment("CATCHUP"));
-        }
-        if (gap.valuationMissing()) {
-            submitter.submit("补跑估值快照", Jobs.VALUATION_SNAPSHOT, "CATCHUP", () -> fundamentals.refreshValuation("CATCHUP"));
-        }
+  /**
+   * Run record of the catch-up check; failing to write it must not block the re-runs that follow.
+   */
+  private void note(String status, String summary) {
+    try {
+      jobRuns.record(Jobs.CATCHUP_CHECK, "SCHEDULE", status, summary);
+    } catch (RuntimeException e) {
+      log.warn("写补偿检查记录失败：{}", e.toString());
     }
+  }
 
-    /** 补偿检查的运行记录；写失败不能挡住后面的补跑。 */
-    private void note(String status, String summary) {
-        try {
-            jobRuns.record(Jobs.CATCHUP_CHECK, "SCHEDULE", status, summary);
-        } catch (RuntimeException e) {
-            log.warn("写补偿检查记录失败：{}", e.toString());
-        }
-    }
-
-    @PreDestroy
-    void shutdown() {
-        submitter.close();
-    }
+  @PreDestroy
+  void shutdown() {
+    submitter.close();
+  }
 }

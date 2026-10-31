@@ -1,9 +1,9 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 /**
- * 前端路由都是单段、不含点的路径：后端 SpaForwardController 只转发这种，
- * 否则直接打开或刷新深链接会 404（SpaForwardControllerTest 逐条核对本文件）。
- * 末尾的兜底路由是参数路由，不参与那条约束。
+ * Every frontend route is a single-segment path without a dot: the backend SpaForwardController only forwards
+ * those, otherwise opening or refreshing a deep link directly is a 404 (SpaForwardControllerTest checks every route
+ * in this file). The catch-all route at the end is a parameter route and is exempt from that constraint.
  */
 declare module 'vue-router' {
   interface RouteMeta {
@@ -14,7 +14,7 @@ declare module 'vue-router' {
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    // 菜单顺序（2026-09-19 用户定）：仪表盘、持仓、账户、基本面、入场信号、交易、系统
+    // Menu order (set by the user on 2026-09-19): dashboard, positions, account, fundamentals, entry signals, trades, system
     { path: '/', name: 'dashboard', component: () => import('../pages/DashboardPage.vue'), meta: { title: '仪表盘' } },
     { path: '/positions', name: 'positions', component: () => import('../pages/PositionsPage.vue'), meta: { title: '持仓' } },
     { path: '/account', name: 'account', component: () => import('../pages/AccountPage.vue'), meta: { title: '账户' } },
@@ -23,10 +23,13 @@ const router = createRouter({
     { path: '/selection', name: 'selection', component: () => import('../pages/SelectionPage.vue'), meta: { title: '量化选股' } },
     { path: '/trades', name: 'trades', component: () => import('../pages/PlaceholderPage.vue'), meta: { title: '交易' } },
     { path: '/system', name: 'system', component: () => import('../pages/SystemInfoPage.vue'), meta: { title: '系统' } },
-    // 行情数据底座不在菜单里了，归属待逐页调整时再定；暂时从系统页进入
-    // 行情数据底座 3.0.6 并进系统页的「行情数据」标签；旧地址与书签跳过去
+    // The market-data base page is no longer in the menu; where it belongs was to be decided during the page-by-page
+    // rework; for now it is reached from the system page.
+    // In 3.0.6 the market-data base page was merged into the system page's "market data" tab; the old address and
+    // bookmarks redirect there.
     { path: '/marketdata', redirect: { path: '/system', query: { tab: 'marketdata' } } },
-    // 没有这条时，打开不存在的路径是白屏加一句控制台告警（后端会把单段路径转发给 index.html）。
+    // Without this route, opening a path that does not exist gives a blank page plus a console warning (the backend
+    // forwards single-segment paths to index.html).
     { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('../pages/NotFoundPage.vue'), meta: { title: '找不到页面' } },
   ],
 })

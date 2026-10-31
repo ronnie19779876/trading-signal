@@ -1,12 +1,12 @@
 import type { Exclusion, Metric, Rating, ScoreView } from '../api/selection'
 
-/** 量化选股的中文标签与格式化（ARCHITECTURE §25.4）。 */
+/** Chinese labels and formatting for quant selection (ARCHITECTURE §25.4). */
 
 export const RATING_LABEL: Record<Rating, string> = {
   STRONG_BUY: '强烈买入', BUY: '买入', HOLD: '持有', SELL: '卖出', STRONG_SELL: '强烈卖出',
 }
 export const RATINGS: Rating[] = ['STRONG_BUY', 'BUY', 'HOLD', 'SELL', 'STRONG_SELL']
-/** 评级颜色：沿用本项目涨绿跌红（--tr-up 绿 / --tr-down 红），次一档用半透明，中间档灰 */
+/** Rating colors: reuse the project's green-up / red-down (--tr-up green / --tr-down red); the second tier is semi-transparent, the middle tier gray */
 export const RATING_COLOR: Record<Rating, string> = {
   STRONG_BUY: 'var(--tr-up)', BUY: 'var(--tr-up-fill)', HOLD: 'var(--el-border-color)',
   SELL: 'var(--tr-down-fill)', STRONG_SELL: 'var(--tr-down)',
@@ -14,7 +14,7 @@ export const RATING_COLOR: Record<Rating, string> = {
 export const RATING_TAG: Record<Rating, 'success' | 'info' | 'danger' | 'warning' | 'primary'> = {
   STRONG_BUY: 'success', BUY: 'success', HOLD: 'info', SELL: 'danger', STRONG_SELL: 'danger',
 }
-/** 标签实心 / 描边：强烈档实心、次一档描边 */
+/** Tag fill vs outline: the strong tiers are solid, the second tiers outlined */
 export const RATING_EFFECT: Record<Rating, 'dark' | 'plain' | 'light'> = {
   STRONG_BUY: 'dark', BUY: 'plain', HOLD: 'plain', SELL: 'plain', STRONG_SELL: 'dark',
 }
@@ -36,7 +36,7 @@ export const FACTORS = [
   { key: 'momentumScore', label: '动能' },
 ] as const
 
-/** 指标：名称、所属因子、说明。原值都是比例，按百分数显示。 */
+/** Metrics: name, owning factor, explanation. Raw values are all ratios and are shown as percentages. */
 export const METRICS: { key: Metric; label: string; factor: string; hint: string }[] = [
   { key: 'EARNINGS_YIELD', label: '盈利收益率', factor: '估值', hint: '1 / 市盈率(TTM)，亏损为负' },
   { key: 'BOOK_YIELD', label: '账面收益率', factor: '估值', hint: '1 / 市净率' },
@@ -51,7 +51,7 @@ export const METRICS: { key: Metric; label: string; factor: string; hint: string
   { key: 'MOMENTUM_12M', label: '12 个月涨幅', factor: '动能', hint: '252 个交易日' },
 ]
 
-/** metrics 列是 JSON 文本 {指标: [原值, 板块内百分位]}；解析失败返回空。 */
+/** The metrics column is JSON text {metric: [raw value, percentile within sector]}; a parse failure yields an empty object. */
 export function parseMetrics(row: Pick<ScoreView, 'metrics'>): Partial<Record<Metric, [number | null, number | null]>> {
   try {
     return JSON.parse(row.metrics) as Partial<Record<Metric, [number | null, number | null]>>
@@ -60,5 +60,5 @@ export function parseMetrics(row: Pick<ScoreView, 'metrics'>): Partial<Record<Me
   }
 }
 
-/** 0~100 的分数，保留整数 */
+/** A 0~100 score, rounded to an integer */
 export const score = (v: number | null | undefined): string => (v === null || v === undefined ? '—' : v.toFixed(0))

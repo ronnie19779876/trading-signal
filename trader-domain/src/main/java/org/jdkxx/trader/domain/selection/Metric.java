@@ -1,37 +1,40 @@
 package org.jdkxx.trader.domain.selection;
 
-/** 模型 F1 的指标（§25.4），全部「越大越好」。 */
+/** Metrics of model F1 (§25.4); all of them are "higher is better". */
 public enum Metric {
-    /** 1 / PE(TTM)；亏损为负，自然排最后 */
-    EARNINGS_YIELD(Factor.VALUE),
-    /** 1 / PB */
-    BOOK_YIELD(Factor.VALUE),
-    /** 1 / PS */
-    SALES_YIELD(Factor.VALUE),
-    /** 营收 TTM 同比 */
-    REVENUE_GROWTH(Factor.GROWTH),
-    /** 稀释 EPS TTM 同比 */
-    EPS_GROWTH(Factor.GROWTH),
-    /** 毛利率 TTM（只有标准模板有） */
-    GROSS_MARGIN(Factor.PROFITABILITY),
-    /** 归母净利 TTM ÷ 期初期末归母权益均值 */
-    ROE(Factor.PROFITABILITY),
-    /** 自由现金流 TTM ÷ 营收 TTM（银行、保险模板不计） */
-    FCF_MARGIN(Factor.PROFITABILITY),
-    /** 63 个交易日涨幅 */
-    MOMENTUM_3M(Factor.MOMENTUM),
-    /** 126 个交易日涨幅 */
-    MOMENTUM_6M(Factor.MOMENTUM),
-    /** 252 个交易日涨幅 */
-    MOMENTUM_12M(Factor.MOMENTUM);
+  /** 1 / PE(TTM); negative for loss-makers, which naturally ranks them last */
+  EARNINGS_YIELD(Factor.VALUE),
+  /** 1 / PB */
+  BOOK_YIELD(Factor.VALUE),
+  /** 1 / PS */
+  SALES_YIELD(Factor.VALUE),
+  /** Revenue TTM, year over year */
+  REVENUE_GROWTH(Factor.GROWTH),
+  /** Diluted EPS TTM, year over year */
+  EPS_GROWTH(Factor.GROWTH),
+  /** Gross margin TTM (only the standard template has it) */
+  GROSS_MARGIN(Factor.PROFITABILITY),
+  /**
+   * Net income attributable to shareholders TTM ÷ average of opening and closing shareholders'
+   * equity
+   */
+  ROE(Factor.PROFITABILITY),
+  /** Free cash flow TTM ÷ revenue TTM (not computed for the bank and insurance templates) */
+  FCF_MARGIN(Factor.PROFITABILITY),
+  /** Return over 63 trading days */
+  MOMENTUM_3M(Factor.MOMENTUM),
+  /** Return over 126 trading days */
+  MOMENTUM_6M(Factor.MOMENTUM),
+  /** Return over 252 trading days */
+  MOMENTUM_12M(Factor.MOMENTUM);
 
-    private final Factor factor;
+  private final Factor factor;
 
-    Metric(Factor factor) {
-        this.factor = factor;
-    }
+  Metric(Factor factor) {
+    this.factor = factor;
+  }
 
-    public Factor factor() {
-        return factor;
-    }
+  public Factor factor() {
+    return factor;
+  }
 }

@@ -3,27 +3,38 @@ package org.jdkxx.trader.gateway;
 import org.jdkxx.trader.domain.Broker;
 
 /**
- * 实时账户端口（3.0.2 起，只读）：常驻订阅资金汇总、账户盈亏、持仓、逐只盈亏与持仓标的的行情最新价，推送给监听器。
- * 全部是券商原值，不做任何折算（用户要求与盈透 App 一致）。
+ * Live account port (since 3.0.2, read-only): standing subscriptions to the funds summary, account
+ * P&amp;L, positions, per-position P&amp;L and the latest market price of each held instrument,
+ * pushed to a listener. Every value is the broker's raw value with no conversion of any kind (the
+ * user wants it to match the IBKR app).
  *
- * <p>与 {@link AccountGateway} 的一次性查询分开：那边"请求 → 收齐 → 取消"给每日快照用，这边按需开、闲置关。
- * 盈透的账户汇总订阅每个客户端最多 2 个（2026-09-19 实测 322），这里占 1 个，快照的一次性请求占另 1 个。
+ * <p>Kept separate from {@link AccountGateway}, which serves the daily snapshot, while this one is
+ * opened on demand and closed when idle. IBKR caps account-summary subscriptions at 2 per client
+ * (error 322, measured 2026-09-19), and the cap counts subscriptions <em>ever made</em> in the
+ * connection: cancelling does not free a slot, only a reconnect does (measured 2026-09-23). So
+ * since 3.0.9 the IBKR adapter keeps a single standing account-summary subscription per connection
+ * cycle, shared by this port and the daily snapshot; going idle only detaches the listener and
+ * never cancels the subscription.
  *
- * <p>断线后订阅随会话失效；只要没有 {@link #stopLive()}，重连后由适配器自动重订。
- * accountId 是券商原始账户号：实现与调用方都不得把它写进日志、异常消息或接口返回。
+ * <p>Subscriptions die with the session on disconnect; unless {@link #stopLive()} was called, the
+ * adapter re-subscribes automatically after reconnecting. {@code accountId} is the broker's raw
+ * account number: neither implementations nor callers may put it into logs, exception messages or
+ * API responses.
  */
 public interface LiveAccountGateway {
 
-    Broker broker();
+  Broker broker();
 
-    /**
-     * 开始订阅。已在订阅同一账户时直接返回；换账户时先退订旧的。未连接时记下意图，连上后再订。
-     */
-    void startLive(String accountId, LiveAccountListener listener);
+  /**
+   * Starts the subscriptions. Returns immediately if the same account is already subscribed;
+   * switching accounts unsubscribes the old one first. When not connected, the intent is remembered
+   * and the subscription is made once connected.
+   */
+  void startLive(String accountId, LiveAccountListener listener);
 
-    /** 退订全部并忘掉意图。未在订阅时什么也不做。 */
-    void stopLive();
+  /** Unsubscribes everything and forgets the intent. Does nothing when not subscribed. */
+  void stopLive();
 
-    /** 当前是否有订阅意图（不代表数据已到）。 */
-    boolean liveActive();
+  /** Whether a subscription intent currently exists (it does not mean data has arrived). */
+  boolean liveActive();
 }

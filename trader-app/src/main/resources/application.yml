@@ -1,13 +1,14 @@
-# jar 内只放与环境无关的默认值。运行配置一律外置：
-#   本机开发  config/application.yml（入库，无密码）+ config/secrets.yml（gitignore）
-#   生产      deploy/config/application.yml + deploy/config/trader.env（gitignore）
-# 启动参数 --spring.config.additional-location=file:./config/
+# The jar only holds environment-independent defaults. All runtime configuration is external:
+#   local dev   config/application.yml (committed, no passwords) + config/secrets.yml (gitignored)
+#   production  deploy/config/application.yml + deploy/config/trader.env (gitignored)
+# Startup argument: --spring.config.additional-location=file:./config/
 spring:
   application:
     name: trading-signal
-  # 默认排除数据源与 Flyway 自动配置：只要 classpath 上有 Hikari，缺 url 时 DataSourceAutoConfiguration
-  # 会报 "Failed to determine a suitable driver class" 让应用起不来，而不是"没有 DataSource 就跳过"。
-  # 外置配置里 trader.storage.enabled=true 的同时用 exclude: [] 放回来。
+  # DataSource and Flyway auto-configuration are excluded by default: as soon as Hikari is on the classpath,
+  # DataSourceAutoConfiguration fails with "Failed to determine a suitable driver class" when the url is missing,
+  # which stops the application from starting instead of "skip when there is no DataSource".
+  # External configuration puts them back with exclude: [] together with trader.storage.enabled=true.
   autoconfigure:
     exclude:
       - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
@@ -20,20 +21,21 @@ spring:
     time-zone: UTC
 
 server:
-  # 端口与监听地址由外置配置决定；这里给的是生产默认值，本机开发在 config/application.yml 覆盖
+  # Port and bind address are decided by external configuration; these are the production defaults, overridden for
+  # local dev in config/application.yml. The loopback bind address is what LocalRequestGuardFilter relies on.
   port: 8093
   address: 127.0.0.1
   shutdown: graceful
 
 trader:
-  # trader.environment 没有默认值，必须由外置配置声明（DEV | PROD），见 EnvironmentGuard
+  # trader.environment has no default and must be declared by external configuration (DEV | PROD); see EnvironmentGuard
   storage:
     enabled: false
     pgpass:
-      # spring.datasource.password 为空时从 ~/.pgpass 取密码（与 psql 共用同一份）
+      # When spring.datasource.password is empty, take the password from ~/.pgpass (the same file psql uses)
       enabled: true
-  # 两家券商默认不启用；host/port/client-id 属于敏感配置，只在 secrets.yml / trader.env 里出现。
-  # 其余为连接层的机制参数（与环境无关）。
+  # Both brokers are disabled by default; host/port/client-id are sensitive and only appear in secrets.yml / trader.env.
+  # Everything else here is a connection-layer mechanism parameter (environment-independent).
   ibkr:
     enabled: false
     auto-connect: true
@@ -62,47 +64,52 @@ trader:
     limits:
       get-global-state: 60/30s
       get-acc-list: 10/30s
-  # 行情数据底座（第 2 期）。机制参数在这里；schedule-enabled 由外置配置决定（发布包 true / 开发机 false，单实例）
+  # Market-data foundation (phase 2). Mechanism parameters live here; schedule-enabled is decided by external
+  # configuration (release package true / dev machine false; a single scheduling instance)
   marketdata:
     schedule-enabled: false
     increment-cron: "0 30 17 * * MON-FRI"
-    valuation-cron: "0 40 17 * * MON-FRI"     # 估值快照排在每日增量之后：市值随价格走，收盘后取才代表当日
+    valuation-cron: "0 40 17 * * MON-FRI"     # valuation snapshot runs after the daily increment: market cap follows price, so only an after-close fetch represents the day
     financials-cron: "0 0 7 * * SAT"
-    # 当天补偿检查：晚于收盘、早于次日盘前（券商过了盘前就不再给当日口径的快照）
+    # Same-day catch-up check: later than the close, earlier than the next pre-market (after pre-market starts the
+    # broker no longer serves snapshots for the previous day)
     catchup-cron: "0 0 21 * * MON-FRI"
     zone: America/New_York
     universe:
       cross-check-spy: true
       sync-cron: "0 30 6 * * SAT"
       static-batch-size: 200
-      # 单次同步允许的最大退出数：max(绝对值, 现有成员 × 百分比)。超过就整个指数跳过、作业记 PARTIAL，
-      # 要 force 才放行。SP500 阈值 25、NDX100 阈值 5（2026-09-25 实录：真实单次退出 0~1 只）
+      # Maximum removals allowed in one sync: max(absolute value, current members x percent). Above that the whole
+      # index is skipped and the job is recorded PARTIAL; force is needed to let it through. SP500 threshold 25,
+      # NDX100 threshold 5 (observed as of 2026-09-25: real removals per sync are 0~1)
       max-removals-per-sync: 5
       max-removals-percent: 5
-      # 批次级恢复：一批里核实出的「富途不认识」超过这个数就整批不动也不标记，留给人看
-      # （2026-10-07 实录：上线一个多月、500 多只标的，RESOLVED → 不认识真实发生 1 次）
+      # Batch-level recovery: when more than this many symbols in one batch are confirmed "unknown to Futu", the
+      # whole batch is left untouched and unmarked for a human to look at
+      # (observed as of 2026-10-07: over a month in production with 500+ instruments, RESOLVED -> unknown happened once)
       max-unknown-per-batch: 3
     pool:
       max-size: 50
     refresh:
-      batch-size: 90          # 每批订阅只数（≤ 订阅额度 100 − 预留）
-      hold-seconds: 65        # 订阅满 1 分钟才能反订阅
+      batch-size: 90          # symbols subscribed per batch (<= subscription quota 100 - reserve)
+      hold-seconds: 65        # a subscription must be held for 1 minute before it can be cancelled
       universe-increment: true
       full-count: 1000
       overlap: 5
-      rehab-spread-days: 5    # 全量复权因子到期后每次增量最多刷 1/5（最久未刷优先），免得集中到期拖长增量
+      rehab-spread-days: 5    # once the full set of price-adjustment factors expires, each increment refreshes at most 1/5 (least recently refreshed first), so expiries do not pile up and lengthen one increment
     history:
       from: 2006-01-01
       quota-reserve: 10
     fundamentals:
       enabled: true
-      snapshot-batch-size: 400        # 券商上限；实测 400 只往返 228ms
+      snapshot-batch-size: 400        # broker limit; measured: 400 symbols round-trip in 228ms
       financial-periods: 12
       profile-refresh-after: 30d
       financial-stale-after: 180d
     adjust:
-      factor-mode: PER_EVENT   # 实测：富途因子是逐事件比例，需复合（见 FactorMode）
-    # 实时报价（不落库）：auto-subscribe 由外置配置决定（开发机 false / 发布包 true，两个实例同时订会占双份额度）
+      factor-mode: PER_EVENT   # measured: Futu factors are per-event ratios and must be compounded (see FactorMode)
+    # Real-time quotes (not persisted): auto-subscribe is decided by external configuration (dev machine false /
+    # release package true; two instances subscribing at once use double the quota)
     realtime:
       enabled: true
       auto-subscribe: false
@@ -110,53 +117,58 @@ trader:
       pause-during-refresh: true
       stream-interval: 1s
       unsubscribe-min-age: 61s
-  # 账户与持仓（第 3 期）。key-secret（账户号 HMAC 密钥）与 cash-equivalents（现金管理工具代码）属于敏感配置，
-  # 只放 config/secrets.yml / trader.env（TRADER_ACCOUNT_KEY_SECRET、TRADER_ACCOUNT_CASH_EQUIVALENTS）
+  # Account and positions (phase 3). key-secret (HMAC key for account numbers) and cash-equivalents (symbols of the
+  # cash-management instruments) are sensitive and only go into config/secrets.yml / trader.env
+  # (TRADER_ACCOUNT_KEY_SECRET, TRADER_ACCOUNT_CASH_EQUIVALENTS)
   account:
     enabled: true
-    snapshot-cron: "0 0 18 * * MON-FRI"    # 美东 18:00：排在增量 17:30、估值 17:40 之后；21:00 补偿检查兜底
-    value-tolerance: 0.002                  # 市值对账容差（比例），超过 5 倍记 FAIL
-    identity-tolerance: 1                   # 资金恒等式容差（美元）
-  # 持仓风险面板（3.5.0，ARCHITECTURE §29）：只检查用户定的规则、给出数字，不给买卖建议。默认值为用户 2026-10-30 认可的方案取值
+    snapshot-cron: "0 0 18 * * MON-FRI"    # US/Eastern 18:00: after the 17:30 increment and 17:40 valuation; the 21:00 catch-up check is the fallback
+    value-tolerance: 0.002                  # market-value reconciliation tolerance (ratio); more than 5x is FAIL
+    identity-tolerance: 1                   # funds-identity tolerance (USD)
+  # Holding risk panel (3.5.0, ARCHITECTURE §29): only checks the user's rules and reports numbers, no buy/sell
+  # advice. Defaults are the values of the plan the user approved on 2026-10-30
   holding-review:
-    window-days: 10            # 财报预警窗口（交易日）
-    stress-multiple: 1.5       # 压力情景 = 历史最大跌幅 × 这个倍数
-    # loss-budget-pct: 1       # 单只过财报最多亏净值的百分之几——由用户自己定；不配就不判超预算、不给仓位换算
-    sma-short: 50              # 短均线；长均线、斜率回看、ATR、吊灯沿用入场信号 sentinel-v1
-    break-confirm-days: 3      # 连续几天收盘低于 200 日均线算破位确认
-    death-cross: true          # 50 日均线在 200 日均线之下作为复核条件
-    include-pool: true         # 池里没持有的也给（只有分布与仓位换算）
-  # 入场信号（第 4 期）。判据参数跟着判据版本写死在代码里，这里只有开关与时点；定时评估只在 schedule-enabled 的实例装配
+    window-days: 10            # earnings warning window (trading days)
+    stress-multiple: 1.5       # stress scenario = historical maximum drop x this multiple
+    # loss-budget-pct: 1       # at most this percent of net liquidation lost on one name through earnings; set by the user. Unset = no over-budget check and no position sizing
+    sma-short: 50              # short moving average; the long average, slope lookback, ATR and chandelier reuse entry-signal sentinel-v1
+    break-confirm-days: 3      # this many consecutive closes below the 200-day average count as a confirmed break
+    death-cross: true          # 50-day average below the 200-day average is a review condition
+    include-pool: true         # also include pool members not held (distribution and position sizing only)
+  # Entry signals (phase 4). Criteria parameters are hard-coded with the criteria version; only switches and times
+  # here. Scheduled evaluation is only wired on the schedule-enabled instance
   signal:
     enabled: true
-    evaluation-cron: "0 10 18 * * MON-FRI"   # 美东 18:10：排在增量、估值、账户快照（含持仓同步 HOLDING）之后
-    catchup-cron: "0 0 22 * * MON-FRI"       # 与 21:00 行情补偿错开：当天缺评估或有过期跳过但现已补齐的就重跑
-  # 量化选股（第 6 期，ARCHITECTURE §25）：独立功能，与入场信号互不相干。评分参数跟着模型版本写死在代码里，这里只有输入回补范围。
-  # 定时任务只在 schedule-enabled 的实例装配；三个 cron 必须写在这里（ScheduledPlaceholdersTest）
+    evaluation-cron: "0 10 18 * * MON-FRI"   # US/Eastern 18:10: after the increment, valuation and account snapshot (including the HOLDING sync)
+    catchup-cron: "0 0 22 * * MON-FRI"       # offset from the 21:00 market-data catch-up: re-runs when the day has no evaluation, or had stale skips whose data is now complete
+  # Quantitative selection (phase 6, ARCHITECTURE §25): a separate feature, unrelated to entry signals. Scoring
+  # parameters are hard-coded with the model version; only the input backfill range is here.
+  # Scheduled tasks are only wired on the schedule-enabled instance; the cron expressions must be written here
+  # (ScheduledPlaceholdersTest)
   selection:
     enabled: true
-    daily-cron: "0 30 18 * * MON-FRI"     # 美东 18:30：排在估值快照 17:40、信号评估 18:10 之后
-    catchup-cron: "0 30 22 * * MON-FRI"   # 当天没有评分就补跑（与 22:00 信号补偿错开）
-    weekly-cron: "0 0 9 * * SAT"          # 周六 09:00：刷新公告日、补取证券类型（排在 07:00 财报作业之后）
-    sim-weekly-cron: "0 0 10 * * SAT"     # 周六 10:00：模拟交易周报（排在周刷新之后）
-    price-from: 2016-01-01        # 盈透日线从哪天起补（12 个月动能从 2018 回测要 2017 起）
-    seam-months: 4                # 取到富途日 K 起点之后几个月，保证有重叠段可核对
-    financial-periods: 50         # 季报期数（富途单次上限 50，实测约回到 2014）
-    valuation-range: YEAR10       # 估值历史回看（实测 2016-10 起）
+    daily-cron: "0 30 18 * * MON-FRI"     # US/Eastern 18:30: after the 17:40 valuation snapshot and 18:10 signal evaluation
+    catchup-cron: "0 30 22 * * MON-FRI"   # re-run when the day has no scores (offset from the 22:00 signal catch-up)
+    weekly-cron: "0 0 9 * * SAT"          # Saturday 09:00: refresh announcement dates, fetch missing security types (after the 07:00 financials job)
+    sim-weekly-cron: "0 0 10 * * SAT"     # Saturday 10:00: simulated-trading weekly report (after the weekly refresh)
+    price-from: 2016-01-01        # first date of the IBKR daily-bar backfill (12-month momentum from a 2018 backtest needs 2017 onward)
+    seam-months: 4                # how many months past the start of Futu daily bars to fetch, so there is an overlap to check
+    financial-periods: 50         # number of quarterly periods (Futu's per-request limit is 50, measured to reach back to about 2014)
+    valuation-range: YEAR10       # valuation history lookback (measured: from 2016-10)
     seam-min-compared: 60
-    seam-tolerance: 0.001         # 接缝单日收益差容忍 0.1%
+    seam-tolerance: 0.001         # seam daily-return difference tolerance 0.1%
     seam-min-share: 0.95
 
   ai:
     api-key: ${OPENAI_API_KEY:}
     model: gpt-5.6-sol
-    timeout: 120s                 # 单次调用
+    timeout: 120s                 # per call
     max-retries: 2
-    signal-veto-enabled: false    # 信号评估里调模型做否决：只在生产外置配置打开（开发与生产同时开会重复计费）
-    daily-call-limit: 20          # 每天（美东）最多调用次数，含手工
-    job-budget: 15m               # 一次评估作业里 AI 部分的总时长上限，超出的候选按没有结论放行
+    signal-veto-enabled: false    # call the model for vetoes during signal evaluation: only enabled in production external config (dev and prod both enabled would bill twice)
+    daily-call-limit: 20          # maximum calls per (US/Eastern) day, manual calls included
+    job-budget: 15m               # total time budget for the AI part of one evaluation job; candidates beyond it pass without a conclusion
     reasoning-effort: medium
-    max-output-tokens: 16000      # 推理 token 也算在内，给小了会截断
+    max-output-tokens: 16000      # reasoning tokens count too; too small a value truncates
 
 management:
   endpoints:
@@ -167,7 +179,7 @@ management:
     health:
       show-details: always
       status:
-        # 网关暂时不可达 → DEGRADED，HTTP 200；排在 OUT_OF_SERVICE 与 UP 之间
+        # Gateway temporarily unreachable -> DEGRADED, HTTP 200; ordered between OUT_OF_SERVICE and UP
         order: DOWN,OUT_OF_SERVICE,DEGRADED,UP,UNKNOWN
         http-mapping:
           DEGRADED: 200

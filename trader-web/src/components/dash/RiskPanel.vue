@@ -4,11 +4,13 @@ import { accountApi, type AddCheck, type HoldingReview, type HoldingReviewItem }
 import { errMsg, num } from '../../lib/format'
 
 /**
- * 持仓风险（3.5.0，ARCHITECTURE §29）：每只持仓的趋势状态、下次财报、历史财报反应与压力情景、触发的复核条件；
- * 池里没持有的折叠在下面（只有趋势与历史分布）。底部是加仓检查。
+ * Holdings risk (3.5.0, ARCHITECTURE §29): for each holding the trend state, the next earnings date, historical
+ * earnings reactions with a stress scenario, and any review triggers that fired; pool members not held are
+ * collapsed below (trend and historical distribution only). The add-position check is at the bottom.
  *
- * <b>只检查用户定的规则、给出数字，不给买卖建议。</b>均线规则在本项目的回测里没有显示出择时价值（§18.6），
- * 复核条件有没有提示价值看 §29 的历史验证。
+ * <b>It only checks the rules the user defined and reports numbers; it gives no buy/sell advice.</b> The
+ * moving-average rules showed no timing value in this project's backtests (§18.6); whether the review triggers
+ * have any warning value is covered by the historical validation in §29.
  */
 const props = defineProps<{ review: HoldingReview | null; pending: boolean }>()
 
@@ -42,7 +44,7 @@ function nextText(i: HoldingReviewItem): string {
   return `${n.date.slice(5)} ${TIMING[n.timing] ?? ''}${n.estimated ? '（估计）' : ''}`
 }
 
-// ---- 加仓检查 ----
+// ---- add-position check ----
 const symbol = ref('')
 const shares = ref<number | null>(null)
 const checking = ref(false)

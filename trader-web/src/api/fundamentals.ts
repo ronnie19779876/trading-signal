@@ -2,9 +2,9 @@ import { http } from './http'
 import type { AuditReport } from './account'
 
 /**
- * 估值快照。个股与 ETF 共用一张表，两套口径：
- * ETF 没有 pe/pb/marketCap，个股没有 navPerShare/premium，缺的都是 null。
- * 亏损股的 pe/pb 为负是真实数据，不要当成异常过滤掉。
+ * Valuation snapshot. Stocks and ETFs share one table with two sets of fields: ETFs have no pe/pb/marketCap,
+ * stocks have no navPerShare/premium, and the missing ones are null.
+ * A negative pe/pb for a loss-making stock is genuine data; do not filter it out as an anomaly.
  */
 export interface ValuationSnapshot {
   instrument: { market: string; symbol: string }
@@ -36,7 +36,7 @@ export interface FinancialItem {
   qoq: number | null
 }
 
-/** 一期财报。年报与四季报的 periodEnd 可能相同，用 periodText 区分；fiscalYear 可能领先自然年。 */
+/** One reporting period. The annual report and Q4 can share the same periodEnd, so tell them apart by periodText; fiscalYear can run ahead of the calendar year. */
 export interface FinancialReport {
   instrument: { market: string; symbol: string }
   statement: 'INCOME' | 'BALANCE_SHEET' | 'CASH_FLOW' | 'MAIN_INDEX'
@@ -57,7 +57,7 @@ export interface FundamentalsOverview {
   profile: Record<string, string>
 }
 
-/** 某一天全部标的的估值（全市场筛选表）；date 为 null 表示库里还没有估值 */
+/** Valuations of every instrument on one day (the market-wide screen); date null means there are no valuations in the database yet */
 export interface DayValuations {
   date: string | null
   rows: ValuationSnapshot[]
@@ -85,15 +85,15 @@ export const fundamentalsApi = {
     (await http.get<FinancialReport[]>(`/api/fundamentals/${encodeURIComponent(symbol)}/reports`, {
       params: { statement, limit },
     })).data,
-  /** 全市场估值：date 缺省取最新有估值的一天 */
+  /** Market-wide valuations: without date, the latest day that has valuations */
   valuationsOn: async (date?: string) =>
     (await http.get<DayValuations>('/api/fundamentals/valuations', { params: date ? { date } : {} })).data,
   coverage: async () => (await http.get<FundamentalsCoverage>('/api/fundamentals/coverage')).data,
-  /** 基本面审计（收盘巡检第二段） */
+  /** Fundamentals audit (section two of the after-close daily check) */
   audit: async (date?: string) =>
     (await http.get<AuditReport>('/api/fundamentals/audit', { params: date ? { date } : {}, timeout: 60_000 })).data,
   refreshValuation: async () => (await http.post<{ jobId: number }>('/api/fundamentals/valuation/refresh')).data,
-  /** all=true 做全量成分股，约 41 分钟且不取公司简介；默认只做池与持仓。 */
+  /** all=true covers all index constituents, about 41 minutes and without company profiles; by default only the pool and holdings. */
   refreshFinancials: async (all = false) =>
     (await http.post<{ jobId: number }>('/api/fundamentals/financials/refresh', null, { params: { all } })).data,
 }

@@ -7,10 +7,12 @@ import { getBars, type DailyBar } from '../../api/marketdata'
 import { daysAgoEt, errMsg, isoEt, numMax } from '../../lib/format'
 
 /**
- * 市盈率走势：券商日 K 自带的每日市盈率（静态口径，与估值快照的"市盈率"接近，不是 TTM），与前复权股价画在一起。
- * 池与持仓有 20 年日 K，池外约 3 年。
+ * P/E history: the daily P/E that comes with the broker's daily bars (static definition, close to the valuation
+ * snapshot's "P/E", not TTM), drawn together with the forward-adjusted share price.
+ * Pool members and holdings have 20 years of daily bars, others about 3 years.
  *
- * 中位数与分位是本系统算的：只计正值（0 与负值都不进统计，放进去会把分位拉偏），当前无效时不给分位。
+ * Median and percentile are computed by this system: only positive values count (0 and negatives are excluded
+ * because they would skew the percentile), and no percentile is given when the current value is invalid.
  */
 const props = defineProps<{ symbol: string }>()
 
@@ -44,8 +46,10 @@ async function load() {
 watch([() => props.symbol, range], load, { immediate: true })
 
 /**
- * 券商日 K 的市盈率在亏损期与基金上给 0 而不是负数或空值（实测 INTC 当前 0、估值快照是 -49.99；SPY 全是 0），
- * 所以 0 当作"无效"：图上不画、不进统计。当前值只看最新一天，是 0 就不给分位，不拿更早的数冒充。
+ * The broker's daily-bar P/E is 0, not negative or null, for loss periods and for funds (measured: INTC currently 0
+ * while the valuation snapshot says -49.99; SPY is 0 throughout), so 0 means "invalid": not drawn and not counted.
+ * The current value is the latest day only; if it is 0 no percentile is given, rather than passing off an older
+ * value as current.
  */
 const valid = (pe: number | null): pe is number => pe !== null && pe !== 0
 const peRows = computed(() => bars.value.filter((b) => valid(b.pe)))
@@ -62,7 +66,7 @@ const stats = computed(() => {
 })
 const first = computed(() => bars.value[0]?.tradeDate ?? null)
 
-// ---- 图 ----
+// ---- chart ----
 const box = ref<HTMLDivElement | null>(null)
 const chart = shallowRef<IChartApi | null>(null)
 const pe = shallowRef<ISeriesApi<'Line'> | null>(null)
@@ -80,7 +84,7 @@ function render() {
       leftPriceScale: { visible: true, borderVisible: false },
       rightPriceScale: { visible: true, borderVisible: false },
       timeScale: { borderVisible: false },
-      // 滚轮留给页面
+      // leave the mouse wheel to the page
       handleScroll: { mouseWheel: false },
       handleScale: { mouseWheel: false },
     })

@@ -1,12 +1,5 @@
 package org.jdkxx.trader.storage.marketdata;
 
-import org.jdkxx.trader.domain.Instrument;
-import org.jdkxx.trader.domain.Market;
-import org.jdkxx.trader.domain.ValuationSnapshot;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
-
 import java.sql.Date;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -17,42 +10,73 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import org.jdkxx.trader.domain.Instrument;
+import org.jdkxx.trader.domain.Market;
+import org.jdkxx.trader.domain.ValuationSnapshot;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
 
 /**
- * 估值快照。一只一天一行，重跑覆盖。
- * 亏损股的市盈率市净率为负是真实数据，查询与统计都不要按非负过滤。
+ * Valuation snapshots: one row per instrument per day, overwritten on rerun. Negative P/E and P/B
+ * for loss-making companies are real data; queries and statistics must not filter on non-negative
+ * values.
  */
 @Repository
 @ConditionalOnProperty(name = "trader.storage.enabled", havingValue = "true")
 public class ValuationRepository {
 
-    /** 某一天的覆盖与合理性统计。 */
-    public record DayStats(long rows, long suspended, long missingMarketCap, long negativePe) {
+  /** Coverage and plausibility counts for one day. */
+  public record DayStats(long rows, long suspended, long missingMarketCap, long negativePe) {}
+
+  private final JdbcTemplate jdbc;
+
+  public ValuationRepository(JdbcTemplate jdbc) {
+    this.jdbc = jdbc;
+  }
+
+  /**
+   * Idempotent write, returns the number of rows written. {@code instrumentIds} maps each
+   * snapshot's instrument to its row id; snapshots without an id are skipped silently. All rows are
+   * stored under {@code tradeDate}; the broker's own quote time goes into {@code as_of}.
+   */
+  public int upsertAll(
+      Map<Instrument, Long> instrumentIds, List<ValuationSnapshot> snapshots, LocalDate tradeDate) {
+    List<Object[]> args = new ArrayList<>(snapshots.size());
+    for (ValuationSnapshot v : snapshots) {
+      Long id = instrumentIds.get(v.instrument());
+      if (id == null) {
+        continue;
+      }
+      args.add(
+          new Object[] {
+            id,
+            Date.valueOf(tradeDate),
+            Timestamp.from(v.asOf()),
+            v.suspended(),
+            v.marketCap(),
+            v.floatMarketCap(),
+            v.issuedShares(),
+            v.outstandingShares(),
+            v.pe(),
+            v.peTtm(),
+            v.pb(),
+            v.eps(),
+            v.netAssetPerShare(),
+            v.netAsset(),
+            v.netProfit(),
+            v.dividendTtm(),
+            v.dividendYieldTtm(),
+            v.turnoverRate(),
+            v.navPerShare(),
+            v.premium()
+          });
     }
-
-    private final JdbcTemplate jdbc;
-
-    public ValuationRepository(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
+    if (args.isEmpty()) {
+      return 0;
     }
-
-    /** 幂等写入，返回条数。instrumentIds 给出每条快照对应的标的行 id。 */
-    public int upsertAll(Map<Instrument, Long> instrumentIds, List<ValuationSnapshot> snapshots, LocalDate tradeDate) {
-        List<Object[]> args = new ArrayList<>(snapshots.size());
-        for (ValuationSnapshot v : snapshots) {
-            Long id = instrumentIds.get(v.instrument());
-            if (id == null) {
-                continue;
-            }
-            args.add(new Object[] {id, Date.valueOf(tradeDate), Timestamp.from(v.asOf()), v.suspended(),
-                    v.marketCap(), v.floatMarketCap(), v.issuedShares(), v.outstandingShares(),
-                    v.pe(), v.peTtm(), v.pb(), v.eps(), v.netAssetPerShare(), v.netAsset(), v.netProfit(),
-                    v.dividendTtm(), v.dividendYieldTtm(), v.turnoverRate(), v.navPerShare(), v.premium()});
-        }
-        if (args.isEmpty()) {
-            return 0;
-        }
-        jdbc.batchUpdate("""
+    jdbc.batchUpdate(
+        """
                 INSERT INTO valuation_snapshot (instrument_id, trade_date, as_of, suspended, market_cap, float_market_cap,
                         issued_shares, outstanding_shares, pe, pe_ttm, pb, eps, net_asset_per_share, net_asset, net_profit,
                         dividend_ttm, dividend_yield_ttm, turnover_rate, nav_per_share, premium)
@@ -64,63 +88,105 @@ public class ValuationRepository {
                     pb = EXCLUDED.pb, eps = EXCLUDED.eps, net_asset_per_share = EXCLUDED.net_asset_per_share,
                     net_asset = EXCLUDED.net_asset, net_profit = EXCLUDED.net_profit, dividend_ttm = EXCLUDED.dividend_ttm,
                     dividend_yield_ttm = EXCLUDED.dividend_yield_ttm, turnover_rate = EXCLUDED.turnover_rate,
-                    nav_per_share = EXCLUDED.nav_per_share, premium = EXCLUDED.premium, fetched_at = now()""", args);
-        return args.size();
-    }
+                    nav_per_share = EXCLUDED.nav_per_share, premium = EXCLUDED.premium, fetched_at = now()""",
+        args);
+    return args.size();
+  }
 
-    private static final String COLS = """
+  private static final String COLS =
+      """
             v.as_of, v.suspended, v.market_cap, v.float_market_cap, v.issued_shares, v.outstanding_shares, v.pe, v.pe_ttm,
             v.pb, v.eps, v.net_asset_per_share, v.net_asset, v.net_profit, v.dividend_ttm, v.dividend_yield_ttm,
             v.turnover_rate, v.nav_per_share, v.premium""";
 
-    public List<ValuationSnapshot> find(Instrument instrument, long instrumentId, LocalDate from, LocalDate to) {
-        return jdbc.query("SELECT " + COLS + " FROM valuation_snapshot v WHERE v.instrument_id = ? AND v.trade_date BETWEEN ? AND ? "
-                        + "ORDER BY v.trade_date",
-                (rs, i) -> map(instrument, rs),
-                instrumentId, Date.valueOf(from), Date.valueOf(to));
-    }
+  public List<ValuationSnapshot> find(
+      Instrument instrument, long instrumentId, LocalDate from, LocalDate to) {
+    return jdbc.query(
+        "SELECT "
+            + COLS
+            + " FROM valuation_snapshot v WHERE v.instrument_id = ? AND v.trade_date BETWEEN ? AND ? "
+            + "ORDER BY v.trade_date",
+        (rs, i) -> map(instrument, rs),
+        instrumentId,
+        Date.valueOf(from),
+        Date.valueOf(to));
+  }
 
-    /** 某一天全部标的的估值（全市场筛选表用），按代码排序。 */
-    public List<ValuationSnapshot> findOn(LocalDate date) {
-        return jdbc.query("SELECT i.market, i.symbol, " + COLS + " FROM valuation_snapshot v JOIN instrument i ON i.id = v.instrument_id "
-                        + "WHERE v.trade_date = ? ORDER BY i.symbol",
-                (rs, i) -> map(new Instrument(Market.valueOf(rs.getString("market")), rs.getString("symbol")), rs),
-                Date.valueOf(date));
-    }
+  /**
+   * Valuations of every instrument on one day (for the market-wide screening table), ordered by
+   * symbol.
+   */
+  public List<ValuationSnapshot> findOn(LocalDate date) {
+    return jdbc.query(
+        "SELECT i.market, i.symbol, "
+            + COLS
+            + " FROM valuation_snapshot v JOIN instrument i ON i.id = v.instrument_id "
+            + "WHERE v.trade_date = ? ORDER BY i.symbol",
+        (rs, i) ->
+            map(new Instrument(Market.valueOf(rs.getString("market")), rs.getString("symbol")), rs),
+        Date.valueOf(date));
+  }
 
-    private static ValuationSnapshot map(Instrument instrument, ResultSet rs) throws SQLException {
-        return new ValuationSnapshot(instrument, rs.getTimestamp("as_of").toInstant(), rs.getBoolean("suspended"),
-                rs.getBigDecimal("market_cap"), rs.getBigDecimal("float_market_cap"),
-                (Long) rs.getObject("issued_shares"), (Long) rs.getObject("outstanding_shares"),
-                rs.getBigDecimal("pe"), rs.getBigDecimal("pe_ttm"), rs.getBigDecimal("pb"), rs.getBigDecimal("eps"),
-                rs.getBigDecimal("net_asset_per_share"), rs.getBigDecimal("net_asset"), rs.getBigDecimal("net_profit"),
-                rs.getBigDecimal("dividend_ttm"), rs.getBigDecimal("dividend_yield_ttm"),
-                rs.getBigDecimal("turnover_rate"), rs.getBigDecimal("nav_per_share"), rs.getBigDecimal("premium"),
-                null);
-    }
+  private static ValuationSnapshot map(Instrument instrument, ResultSet rs) throws SQLException {
+    return new ValuationSnapshot(
+        instrument,
+        rs.getTimestamp("as_of").toInstant(),
+        rs.getBoolean("suspended"),
+        rs.getBigDecimal("market_cap"),
+        rs.getBigDecimal("float_market_cap"),
+        (Long) rs.getObject("issued_shares"),
+        (Long) rs.getObject("outstanding_shares"),
+        rs.getBigDecimal("pe"),
+        rs.getBigDecimal("pe_ttm"),
+        rs.getBigDecimal("pb"),
+        rs.getBigDecimal("eps"),
+        rs.getBigDecimal("net_asset_per_share"),
+        rs.getBigDecimal("net_asset"),
+        rs.getBigDecimal("net_profit"),
+        rs.getBigDecimal("dividend_ttm"),
+        rs.getBigDecimal("dividend_yield_ttm"),
+        rs.getBigDecimal("turnover_rate"),
+        rs.getBigDecimal("nav_per_share"),
+        rs.getBigDecimal("premium"),
+        null);
+  }
 
-    public Optional<LocalDate> maxTradeDate() {
-        Date d = jdbc.query("SELECT max(trade_date) FROM valuation_snapshot", rs -> rs.next() ? rs.getDate(1) : null);
-        return Optional.ofNullable(d).map(Date::toLocalDate);
-    }
+  public Optional<LocalDate> maxTradeDate() {
+    Date d =
+        jdbc.query(
+            "SELECT max(trade_date) FROM valuation_snapshot",
+            rs -> rs.next() ? rs.getDate(1) : null);
+    return Optional.ofNullable(d).map(Date::toLocalDate);
+  }
 
-    public Set<Long> instrumentIdsOn(LocalDate date) {
-        return Set.copyOf(jdbc.queryForList("SELECT instrument_id FROM valuation_snapshot WHERE trade_date = ?",
-                Long.class, Date.valueOf(date)));
-    }
+  public Set<Long> instrumentIdsOn(LocalDate date) {
+    return Set.copyOf(
+        jdbc.queryForList(
+            "SELECT instrument_id FROM valuation_snapshot WHERE trade_date = ?",
+            Long.class,
+            Date.valueOf(date)));
+  }
 
-    /** 当天的合理性统计。市值为空只在非个股上正常，交由审计判断。 */
-    public DayStats statsOn(LocalDate date) {
-        return jdbc.query("""
+  /**
+   * Plausibility counts for the day. A missing market cap is only normal for non-stocks; the audit
+   * decides.
+   */
+  public DayStats statsOn(LocalDate date) {
+    return jdbc.query(
+        """
                 SELECT count(*) AS rows,
                        count(*) FILTER (WHERE suspended)              AS suspended,
                        count(*) FILTER (WHERE market_cap IS NULL)     AS missing_cap,
                        count(*) FILTER (WHERE pe < 0)                 AS negative_pe
                 FROM valuation_snapshot WHERE trade_date = ?""",
-                rs -> rs.next()
-                        ? new DayStats(rs.getLong("rows"), rs.getLong("suspended"),
-                                rs.getLong("missing_cap"), rs.getLong("negative_pe"))
-                        : new DayStats(0, 0, 0, 0),
-                Date.valueOf(date));
-    }
+        rs ->
+            rs.next()
+                ? new DayStats(
+                    rs.getLong("rows"),
+                    rs.getLong("suspended"),
+                    rs.getLong("missing_cap"),
+                    rs.getLong("negative_pe"))
+                : new DayStats(0, 0, 0, 0),
+        Date.valueOf(date));
+  }
 }

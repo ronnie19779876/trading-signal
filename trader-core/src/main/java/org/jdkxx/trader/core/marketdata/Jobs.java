@@ -1,24 +1,31 @@
 package org.jdkxx.trader.core.marketdata;
 
-/** 作业名。 */
+/**
+ * Job names. Each value is the {@code job_run.job} column, so the strings are a persisted contract:
+ * health metrics, the daily check and the SKIPPED bookkeeping all look rows up by them.
+ */
 public final class Jobs {
 
-    public static final String UNIVERSE_SYNC = "UNIVERSE_SYNC";
-    public static final String UNIVERSE_REFRESH = "UNIVERSE_REFRESH";
-    public static final String DEEP_BACKFILL = "DEEP_BACKFILL";
-    public static final String DAILY_INCREMENT = "DAILY_INCREMENT";
-    public static final String REHAB_REFRESH = "REHAB_REFRESH";
-    public static final String CALENDAR_BACKFILL = "CALENDAR_BACKFILL";
-    public static final String VALUATION_SNAPSHOT = "VALUATION_SNAPSHOT";
-    public static final String FINANCIALS_REFRESH = "FINANCIALS_REFRESH";
-    /** 当天补偿检查本身（不走作业线程，只写一行运行记录；补跑的作业仍记在各自的作业名下）。 */
-    public static final String CATCHUP_CHECK = "CATCHUP_CHECK";
-    /** 账户与持仓的每日快照（第 3 期）。 */
-    public static final String ACCOUNT_SNAPSHOT = "ACCOUNT_SNAPSHOT";
+  public static final String UNIVERSE_SYNC = "UNIVERSE_SYNC";
+  public static final String UNIVERSE_REFRESH = "UNIVERSE_REFRESH";
+  public static final String DEEP_BACKFILL = "DEEP_BACKFILL";
+  public static final String DAILY_INCREMENT = "DAILY_INCREMENT";
+  public static final String REHAB_REFRESH = "REHAB_REFRESH";
+  public static final String CALENDAR_BACKFILL = "CALENDAR_BACKFILL";
+  public static final String VALUATION_SNAPSHOT = "VALUATION_SNAPSHOT";
+  public static final String FINANCIALS_REFRESH = "FINANCIALS_REFRESH";
 
-    /** 第 4 期：入场哨兵每日评估（含信号、过期、纸面账本） */
-    public static final String SIGNAL_EVALUATION = "SIGNAL_EVALUATION";
+  /**
+   * The same-day catch-up check itself (it does not run on the job thread and only writes one run
+   * record; the jobs it re-submits are still recorded under their own job names).
+   */
+  public static final String CATCHUP_CHECK = "CATCHUP_CHECK";
 
-    private Jobs() {
-    }
+  /** Daily snapshot of the account and its positions (phase 3). */
+  public static final String ACCOUNT_SNAPSHOT = "ACCOUNT_SNAPSHOT";
+
+  /** Phase 4: daily evaluation of the entry sentinel (signals, expiry and the paper ledger). */
+  public static final String SIGNAL_EVALUATION = "SIGNAL_EVALUATION";
+
+  private Jobs() {}
 }

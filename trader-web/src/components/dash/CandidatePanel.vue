@@ -7,19 +7,20 @@ import { GATE_LABEL, OUTCOME_LABEL, STATUS_LABEL } from '../signals/format'
 import { num } from '../../lib/format'
 
 /**
- * 候选标的（池里的 POOL）。摘要，不是入场信号页的复刻：只回答"今天有没有值得看一眼的"。
- * 判据原文在点开的判定抽屉里；排序把出信号的放最前，其次按通过的门数。
+ * Candidates (POOL members of the pool). A summary, not a copy of the entry-signals page: it only answers "is there
+ * anything worth a look today". The criterion text is in the evaluation drawer opened on click; sorting puts
+ * signals first, then orders by the number of gates passed.
  */
 export interface CandidateRow {
   symbol: string
   name: string | null
   spark: number[]
   price: number | null
-  /** 百分数（1.23 表示 +1.23%） */
+  /** Percentage number (1.23 means +1.23%) */
   changeRate: number | null
-  /** 价格来自富途实时报价；否则是最近一根日 K */
+  /** The price comes from the Futu live quote; otherwise it is the latest daily bar */
   live: boolean
-  /** 实时报价的时段（RTH / PRE / AFTER / OVERNIGHT / CLOSED）；非常规时段在现价旁标出 */
+  /** Session of the live quote (RTH / PRE / AFTER / OVERNIGHT / CLOSED); outside the regular session it is marked next to the price */
   session: string | null
   priceDate: string | null
   evaluation: EvaluationRow | null
@@ -28,7 +29,10 @@ export interface CandidateRow {
 const props = defineProps<{ rows: CandidateRow[]; evalDate: string | null; loaded: boolean }>()
 const emit = defineEmits<{ open: [symbol: string] }>()
 
-/** 富途报价在非常规时段给的是盘前 / 盘后 / 夜盘价，涨跌相对常规时段收盘——不标出来会被当成当天的涨跌。 */
+/**
+ * Outside the regular session Futu quotes the pre-market / after-hours / overnight price, with the change relative
+ * to the regular-session close -- unmarked it would be read as the day's change.
+ */
 const SESSION_STAMP: Record<string, string> = { PRE: '盘前', AFTER: '盘后', OVERNIGHT: '夜盘' }
 
 const RANK: Record<string, number> = { SIGNAL: 0, BLOCKED_BY_AI: 1, SUPPRESSED_EDGE: 2, SUPPRESSED_COOLDOWN: 2 }

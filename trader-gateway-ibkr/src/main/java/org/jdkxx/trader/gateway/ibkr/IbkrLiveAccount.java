@@ -2,15 +2,6 @@ package org.jdkxx.trader.gateway.ibkr;
 
 import com.ib.client.Contract;
 import com.ib.client.EClientSocket;
-import org.jdkxx.trader.domain.Position;
-import org.jdkxx.trader.domain.PositionPnl;
-import org.jdkxx.trader.gateway.GatewayException;
-import org.jdkxx.trader.gateway.LiveAccountListener;
-import org.jdkxx.trader.gateway.RequestRejectedException;
-import org.jdkxx.trader.gateway.ibkr.mapper.IbkrAccounts;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -18,577 +9,771 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import org.jdkxx.trader.domain.Position;
+import org.jdkxx.trader.domain.PositionPnl;
+import org.jdkxx.trader.gateway.LiveAccountListener;
+import org.jdkxx.trader.gateway.RequestRejectedException;
+import org.jdkxx.trader.gateway.ibkr.mapper.IbkrAccounts;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * 一个账户的实时订阅（3.0.2 起）：常驻账户汇总、账户盈亏、持仓，加上每只持仓一个逐只盈亏与一条行情（取最新价）。
+ * The live subscriptions of one account (since 3.0.2): standing account summary, account P&amp;L
+ * and positions, plus one per-position P&amp;L and one market-data line (for the last price) per
+ * held position.
  *
- * <p><b>所有方法都在 dispatch 线程上执行</b>（{@link IbkrGateway} 负责转过来，订阅回调也由 {@link IbkrSubscriptions}
- * 转到 dispatch），所以状态不加锁。
+ * <p><b>Every method runs on the dispatch thread</b> ({@link IbkrGateway} hands calls over, and
+ * subscription callbacks are moved to dispatch by {@link IbkrSubscriptions}), so the state is not
+ * locked.
  *
- * <p>实测依据（2026-09-19 只读探针）：
+ * <p>Measured basis (read-only probe, 2026-09-19):
+ *
  * <ul>
- *   <li>账户汇总首批约 0.3 秒回齐，之后<b>逐条</b>推送、不再有 End，约 3 分钟一批 → 逐条攒起来、静默 {@value #SUMMARY_DEBOUNCE_MS} ms 后发一次；</li>
- *   <li>reqPnL 的推送<b>对不对不能按第几条判断</b>（09-19 三次实测）：刚连上时首条只含一只持仓、1 秒后第二条才对；
- *       逐只盈亏订上十几秒内退订再订，首条也是错的；逐只盈亏稳定运行后再订，<b>只推一条而且是对的</b>，价格静止时不再有第二条。
- *       对的推送与逐只当日 / 浮盈之和精确相等，错的差得很远 → <b>用逐只之和核对</b>：对得上才采用（只用来判断完整与否，显示的仍是 reqPnL 原值），
- *       采用过一次后后续推送直接放行；逐只还没到齐的先挂起，到齐再核。{@value #PNL_WATCHDOG_SECONDS} 秒还没有通过核对的就重订，
- *       最多 {@value #PNL_MAX_RETRIES} 次；</li>
- *   <li>持仓标的行情（reqMktData）取 lastPrice 与前收（CLOSE）：账户有实时权限；收盘后买卖价为 -1；最新价不等于"市值 ÷ 数量"（GOOG 346.08 对 344.41）；
- *       与盈透 App 截图对照（09-19）：最新价 346.08、前收 343.68 一致；</li>
- *   <li>持仓 End 之后成交会再推变动行，数量为 0 表示清仓 → 维护完整列表，每次变动发一次全量，并同步逐只盈亏的订阅。</li>
+ *   <li>the account summary's first batch completes in about 0.3 seconds, after which values are
+ *       pushed <b>one by one</b> with no further End, roughly one batch every 3 minutes, so the
+ *       rows are collected and sent once after {@value IbkrAccountSummaryFeed#DEBOUNCE_MS} ms of
+ *       silence;
+ *   <li>whether a reqPnL push is right <b>cannot be judged by its position in the sequence</b>
+ *       (three measurements on 09-19): right after connecting the first push covered only one
+ *       position and the second, 1 second later, was right; unsubscribing and re-subscribing within
+ *       a dozen seconds of the per-position P&amp;L subscriptions also gave a wrong first push;
+ *       re-subscribing once per-position P&amp;L had been running steadily produced <b>a single
+ *       push, and a correct one</b>, with no second push while prices stood still. A correct push
+ *       equals the sum of the per-position daily / unrealized values exactly, a wrong one is far
+ *       off, so it is <b>verified against the per-position sum</b>: adopted only when it matches
+ *       (the sum only decides completeness; what is shown is still the raw reqPnL value). Once one
+ *       push has been adopted, later pushes pass straight through; while per-position rows are
+ *       still missing the push is held and verified once they are complete. If nothing has passed
+ *       after {@value #PNL_WATCHDOG_SECONDS} seconds it re-subscribes, at most {@value
+ *       #PNL_MAX_RETRIES} times;
+ *   <li>market data for held instruments (reqMktData) supplies lastPrice and the previous close
+ *       (CLOSE): the account has real-time permissions; after the close bid/ask are -1; the last
+ *       price is not "market value / quantity" (GOOG 346.08 vs 344.41); compared with an IBKR app
+ *       screenshot (09-19): last 346.08 and previous close 343.68 agree;
+ *   <li>after the positions End, fills push changed rows, and quantity 0 means closed, so the full
+ *       list is maintained, a complete list is emitted on every change, and the per-position
+ *       P&amp;L subscriptions follow it.
  * </ul>
- * 1101（连接恢复、订阅数据丢失）时会话不变，旧订阅还挂在网关上：先取消再重订，否则账户汇总会撞上每客户端 2 个的上限（322）。
- * <b>账户汇总不在这里</b>：它改成了连接周期内只订一次的常驻订阅（{@link IbkrAccountSummaryFeed}，3.0.9），
- * 实时账户与每日快照共用那一条。原因见该类的注释——盈透的名额不随取消释放，订了又退迟早撞 322。
  *
- * <p>账户盈亏的核对口径演变：3.0.10 扣已实现（被 10-09 证伪）→ 3.1.5 平仓日只比浮盈 → 3.4.6 没有平仓时只比当日
- * → 3.5.1 比浮盈时按账户更新推送的新均价修正逐只浮盈（平仓与加仓同一天），见 {@link #verifyPnl()}。
- * <p><b>持仓均价与逐只浮盈</b>（3.4.6）：有账户更新推送（{@link IbkrPortfolioFeed}，只在生产实例）且数量一致时取它的值，
- * 与盈透 App 同源；当日、市值仍取 reqPnLSingle，现价仍取行情。
+ * On 1101 (connection restored, subscription data lost) the session is unchanged and the old
+ * subscriptions still hang on the gateway: cancel first, then re-subscribe, otherwise the account
+ * summary would hit the 2-per-client limit (322). <b>The account summary does not live here</b>: it
+ * became a standing subscription made once per connection cycle ({@link IbkrAccountSummaryFeed},
+ * 3.0.9), shared by the live account and the daily snapshot. See that class for why: IBKR does not
+ * release slots on cancel, so subscribing and cancelling repeatedly hits 322 sooner or later.
+ *
+ * <p>How the account P&amp;L check evolved: 3.0.10 subtracted realized (disproved on 10-09), 3.1.5
+ * compared only unrealized on closing days, 3.4.6 compares only daily when nothing was closed, and
+ * 3.5.1 corrects the per-position unrealized with the feed's new average cost when comparing
+ * unrealized (a close and an add on the same day); see {@link #verifyPnl()}.
+ *
+ * <p><b>Position average cost and per-position unrealized</b> (3.4.6): when the account-updates
+ * feed is available ({@link IbkrPortfolioFeed}, production instance only) and the quantity matches,
+ * its values are used, the same source as the IBKR app; daily and market value still come from
+ * reqPnLSingle, the price still from market data.
  */
 final class IbkrLiveAccount {
 
-    private static final Logger log = LoggerFactory.getLogger(IbkrLiveAccount.class);
-    static final long PNL_WATCHDOG_SECONDS = 10;
-    static final int PNL_MAX_RETRIES = 3;
-    /** 核对容差：对的推送实测与逐只之和精确相等，错的差几十到上千；留一点余量给盘中两边不在同一时刻的抖动。 */
-    static final double PNL_TOLERANCE = 1.0;
+  private static final Logger log = LoggerFactory.getLogger(IbkrLiveAccount.class);
+  static final long PNL_WATCHDOG_SECONDS = 10;
+  static final int PNL_MAX_RETRIES = 3;
 
-    /** 与连接之间的接缝：生产用 {@link IbkrConnection}，单测用替身。 */
-    interface Wire {
-        Object sessionToken();
+  /**
+   * Verification tolerance: a correct push measured exactly equal to the per-position sum, wrong
+   * ones were off by tens to thousands; a little slack covers intraday jitter when the two sides
+   * are not sampled at the same instant.
+   */
+  static final double PNL_TOLERANCE = 1.0;
 
-        int nextId();
+  /** Seam to the connection: {@link IbkrConnection} in production, a fake in unit tests. */
+  interface Wire {
+    Object sessionToken();
 
-        boolean subscribe(String what, Consumer<EClientSocket> request);
+    int nextId();
 
-        void unsubscribe(String what, Consumer<EClientSocket> cancel);
+    boolean subscribe(String what, Consumer<EClientSocket> request);
 
-        void open(int id, IbkrSubscriptions.Handler handler);
+    void unsubscribe(String what, Consumer<EClientSocket> cancel);
 
-        void close(int id);
+    void open(int id, IbkrSubscriptions.Handler handler);
 
-        /** 延时任务：到点在 dispatch 线程上执行。 */
-        Runnable later(Duration delay, Runnable task);
+    void close(int id);
 
-        Instant now();
+    /** Delayed task: runs on the dispatch thread when due. Returns a Runnable that cancels it. */
+    Runnable later(Duration delay, Runnable task);
+
+    Instant now();
+  }
+
+  private record Sub(int id, String what, Consumer<EClientSocket> cancel) {}
+
+  final String accountId;
+  private LiveAccountListener listener;
+  private final Wire wire;
+
+  /**
+   * Account-updates feed (3.4.6, production instance only): position average cost and unrealized
+   * prefer it; when null or without a matching row the original source is used.
+   */
+  private IbkrPortfolioFeed portfolio;
+
+  /**
+   * The session in which we subscribed ({@link Wire#sessionToken()}); null = no subscription right
+   * now
+   */
+  private Object bound;
+
+  private Sub positionsSub;
+  private Sub pnlSub;
+  private final Map<String, Sub> singles = new LinkedHashMap<>();
+  private final Map<String, Sub> quotes = new LinkedHashMap<>();
+  private final Map<String, Boolean> delayed = new LinkedHashMap<>();
+
+  /**
+   * Latest last price and previous close per position: they arrive as two separate ticks and are
+   * emitted together.
+   */
+  private final Map<String, java.math.BigDecimal[]> lastAndClose = new LinkedHashMap<>();
+
+  private final Map<String, IbkrAccounts.PositionRow> positions = new LinkedHashMap<>();
+  private boolean positionsReady;
+  private boolean pnlValid;
+
+  /** The most recent account P&amp;L push that has not passed verification yet */
+  private IbkrAccounts.PnlRow pnlPending;
+
+  /** Latest per-position P&amp;L for each position: used to verify the account P&amp;L */
+  private final Map<String, IbkrAccounts.PnlSingleRow> singleRows = new LinkedHashMap<>();
+
+  private int pnlRetries;
+  private Runnable pnlWatchdog;
+
+  /**
+   * The verification-failure log is written once per subscription, so a push every 5 seconds does
+   * not flood the log.
+   */
+  private boolean pnlMismatchLogged;
+
+  private boolean pnlDailySkipLogged;
+
+  IbkrLiveAccount(String accountId, LiveAccountListener listener, Wire wire) {
+    this.accountId = accountId;
+    this.listener = listener;
+    this.wire = wire;
+  }
+
+  void listener(LiveAccountListener listener) {
+    this.listener = listener;
+  }
+
+  void portfolio(IbkrPortfolioFeed portfolio) {
+    this.portfolio = portfolio;
+  }
+
+  /**
+   * A new batch of the account-updates feed took effect: positions (average cost) and per-position
+   * P&amp;L (unrealized) are re-emitted with the new values. The feed sends a batch about every 3
+   * minutes, so after an add the cost on the page updates up to that much later.
+   */
+  void onPortfolioChanged() {
+    if (bound == null || !positionsReady) {
+      return;
     }
-
-    private record Sub(int id, String what, Consumer<EClientSocket> cancel) {
+    emitPositions();
+    for (Map.Entry<String, IbkrAccounts.PnlSingleRow> e : singleRows.entrySet()) {
+      listener.onPositionPnl(positionPnl(e.getKey(), e.getValue()));
     }
+  }
 
-    final String accountId;
-    private LiveAccountListener listener;
-    private final Wire wire;
-    /** 账户更新推送（3.4.6，只在生产实例有）：持仓均价与浮盈优先取它；null 或没有对应行时用原来的来源。 */
-    private IbkrPortfolioFeed portfolio;
+  private Map<String, IbkrAccounts.PortfolioRow> portfolioRows() {
+    return portfolio == null ? Map.of() : portfolio.rows();
+  }
 
-    /** 订上时所在的会话（{@link Wire#sessionToken()}）；null = 当前没有订阅 */
-    private Object bound;
-    private Sub positionsSub;
-    private Sub pnlSub;
-    private final Map<String, Sub> singles = new LinkedHashMap<>();
-    private final Map<String, Sub> quotes = new LinkedHashMap<>();
-    private final Map<String, Boolean> delayed = new LinkedHashMap<>();
-    /** 每只持仓最近收到的最新价与前收：两者分两条 tick 到，合在一起发。 */
-    private final Map<String, java.math.BigDecimal[]> lastAndClose = new LinkedHashMap<>();
-
-    private final Map<String, IbkrAccounts.PositionRow> positions = new LinkedHashMap<>();
-    private boolean positionsReady;
-    private boolean pnlValid;
-    /** 还没通过核对的最近一条账户盈亏推送 */
-    private IbkrAccounts.PnlRow pnlPending;
-    /** 每只持仓最近一次逐只盈亏：核对账户盈亏用 */
-    private final Map<String, IbkrAccounts.PnlSingleRow> singleRows = new LinkedHashMap<>();
-    private int pnlRetries;
-    private Runnable pnlWatchdog;
-    /** 核对不通过的日志每次订阅只记一条，免得 5 秒一推刷屏。 */
-    private boolean pnlMismatchLogged;
-    private boolean pnlDailySkipLogged;
-
-    IbkrLiveAccount(String accountId, LiveAccountListener listener, Wire wire) {
-        this.accountId = accountId;
-        this.listener = listener;
-        this.wire = wire;
+  /**
+   * Replaces the average cost with the feed's value (when the quantity matches), otherwise
+   * unchanged.
+   */
+  private List<Position> withPortfolioCost(List<Position> list) {
+    Map<String, IbkrAccounts.PortfolioRow> rows = portfolioRows();
+    if (rows.isEmpty()) {
+      return list;
     }
-
-    void listener(LiveAccountListener listener) {
-        this.listener = listener;
+    List<Position> out = new ArrayList<>(list.size());
+    for (Position p : list) {
+      java.math.BigDecimal cost =
+          IbkrPortfolioFeed.cost(
+              rows,
+              p.brokerRef(),
+              p.quantity(),
+              p.averageCost(),
+              p.symbol(),
+              portfolio.costDiffLogged());
+      out.add(
+          cost == null
+              ? p
+              : new Position(
+                  p.broker(),
+                  p.accountId(),
+                  p.brokerRef(),
+                  p.symbol(),
+                  p.localSymbol(),
+                  p.securityType(),
+                  p.exchange(),
+                  p.primaryExchange(),
+                  p.currency(),
+                  p.quantity(),
+                  cost));
     }
+    return List.copyOf(out);
+  }
 
-    void portfolio(IbkrPortfolioFeed portfolio) {
-        this.portfolio = portfolio;
+  /**
+   * Per-position P&amp;L: unrealized replaced by the feed's value (when the quantity matches);
+   * daily and market value stay reqPnLSingle's raw values.
+   */
+  private PositionPnl positionPnl(String conId, IbkrAccounts.PnlSingleRow row) {
+    PositionPnl raw = IbkrAccounts.positionPnl(conId, row, wire.now());
+    java.math.BigDecimal unrealized =
+        IbkrPortfolioFeed.unrealized(portfolioRows(), conId, raw.quantity());
+    return unrealized == null
+        ? raw
+        : new PositionPnl(
+            raw.broker(),
+            raw.brokerRef(),
+            raw.receivedAt(),
+            raw.quantity(),
+            raw.daily(),
+            unrealized,
+            raw.realized(),
+            raw.marketValue());
+  }
+
+  boolean subscribed() {
+    return bound != null;
+  }
+
+  /**
+   * Subscribe (or re-subscribe). Does nothing when not connected and returns false; call again once
+   * connected.
+   */
+  boolean subscribe() {
+    Object current = wire.sessionToken();
+    if (bound != null && bound == current) {
+      cancelAll(); // same session (1101): the old subscriptions are still alive, cancel them first
+    } else {
+      forgetAll(); // the old session has ended and its subscriptions with it: just drop the records
     }
+    bound = current;
+    positionsReady = false;
+    pnlValid = false;
+    pnlPending = null;
+    pnlRetries = 0;
 
-    /**
-     * 账户更新推送有新一批生效：持仓（均价）与逐只盈亏（浮盈）按新值重发一次。
-     * 推送约 3 分钟一批，加仓后页面上的成本最多晚这么久更新。
-     */
-    void onPortfolioChanged() {
-        if (bound == null || !positionsReady) {
-            return;
+    positionsSub =
+        open(
+            "实时持仓",
+            positionsHandler(),
+            id -> c -> c.reqPositionsMulti(id, accountId, ""),
+            id -> c -> c.cancelPositionsMulti(id));
+    pnlSub = openPnl();
+    if (positionsSub == null || pnlSub == null) {
+      // dropped halfway through: cancel what was sent and re-subscribe the whole set on the next
+      // connect
+      cancelAll();
+      bound = null;
+      return false;
+    }
+    schedulePnlWatchdog();
+    return true;
+  }
+
+  private Sub openPnl() {
+    pnlPending = null;
+    return open(
+        "实时账户盈亏", pnlHandler(), id -> c -> c.reqPnL(id, accountId, ""), id -> c -> c.cancelPnL(id));
+  }
+
+  private void schedulePnlWatchdog() {
+    pnlWatchdog = wire.later(Duration.ofSeconds(PNL_WATCHDOG_SECONDS), this::checkPnl);
+  }
+
+  /**
+   * The account P&amp;L still has no valid value (first push wrong, no second push coming):
+   * unsubscribe and subscribe again, at most {@value #PNL_MAX_RETRIES} times. reqPnL is not subject
+   * to the account-summary slot limit.
+   */
+  void checkPnl() {
+    pnlWatchdog = null;
+    if (bound == null || pnlValid || pnlRetries >= PNL_MAX_RETRIES) {
+      return;
+    }
+    pnlRetries++;
+    log.info("实时账户盈亏 {} 秒没有有效推送，重订（第 {} 次）", PNL_WATCHDOG_SECONDS, pnlRetries);
+    cancel(pnlSub);
+    pnlSub = openPnl();
+    if (pnlSub != null && pnlRetries < PNL_MAX_RETRIES) {
+      schedulePnlWatchdog();
+    }
+  }
+
+  /** Cancel everything. */
+  void stop() {
+    if (bound != null && bound == wire.sessionToken()) {
+      cancelAll();
+    } else {
+      forgetAll();
+    }
+    bound = null;
+  }
+
+  int singleCount() {
+    return singles.size();
+  }
+
+  int quoteCount() {
+    return quotes.size();
+  }
+
+  private Sub open(
+      String what,
+      IbkrSubscriptions.Handler handler,
+      java.util.function.IntFunction<Consumer<EClientSocket>> request,
+      java.util.function.IntFunction<Consumer<EClientSocket>> cancel) {
+    int id = wire.nextId();
+    wire.open(id, handler);
+    if (!wire.subscribe(what, request.apply(id))) {
+      wire.close(id);
+      return null;
+    }
+    return new Sub(id, what, cancel.apply(id));
+  }
+
+  private void cancel(Sub sub) {
+    if (sub != null) {
+      wire.close(sub.id());
+      wire.unsubscribe(sub.what(), sub.cancel());
+    }
+  }
+
+  private void cancelAll() {
+    cancel(positionsSub);
+    cancel(pnlSub);
+    singles.values().forEach(this::cancel);
+    quotes.values().forEach(this::cancel);
+    clearState();
+  }
+
+  private void forgetAll() {
+    for (Sub s : allSubs()) {
+      wire.close(s.id());
+    }
+    clearState();
+  }
+
+  private List<Sub> allSubs() {
+    List<Sub> all = new ArrayList<>(singles.values());
+    all.addAll(quotes.values());
+    for (Sub s : new Sub[] {positionsSub, pnlSub}) {
+      if (s != null) {
+        all.add(s);
+      }
+    }
+    return all;
+  }
+
+  private void clearState() {
+    positionsSub = pnlSub = null;
+    singles.clear();
+    quotes.clear();
+    delayed.clear();
+    lastAndClose.clear();
+    singleRows.clear();
+    pnlPending = null;
+    pnlMismatchLogged = false;
+    pnlDailySkipLogged = false;
+    if (pnlWatchdog != null) {
+      pnlWatchdog.run(); // cancels it
+      pnlWatchdog = null;
+    }
+    positions.clear();
+    positionsReady = false;
+  }
+
+  // ------------------------------------------------------------------ positions
+
+  private IbkrSubscriptions.Handler positionsHandler() {
+    return new IbkrSubscriptions.Handler() {
+      @Override
+      public void item(Object item) {
+        IbkrAccounts.PositionRow r = (IbkrAccounts.PositionRow) item;
+        if (r.contract() == null || !accountId.equals(r.account())) {
+          return;
         }
+        String conId = Integer.toString(r.contract().conid());
+        if (r.position() == null || !r.position().isValid()) {
+          log.warn("实时持仓收到无效数量（{}），忽略这一条", r.contract().symbol());
+          return;
+        }
+        if (r.position().value().signum() == 0) {
+          positions.remove(conId); // fully closed
+        } else {
+          positions.put(conId, r);
+        }
+        if (positionsReady) {
+          emitPositions();
+        }
+      }
+
+      @Override
+      public void end() {
+        positionsReady = true;
         emitPositions();
-        for (Map.Entry<String, IbkrAccounts.PnlSingleRow> e : singleRows.entrySet()) {
-            listener.onPositionPnl(positionPnl(e.getKey(), e.getValue()));
+      }
+
+      @Override
+      public void error(RequestRejectedException e) {
+        listener.onLiveError("实时持仓", e);
+      }
+    };
+  }
+
+  private void emitPositions() {
+    try {
+      List<Position> list =
+          withPortfolioCost(IbkrAccounts.positions(accountId, new ArrayList<>(positions.values())));
+      listener.onPositions(list);
+    } catch (RuntimeException e) {
+      log.warn("实时持仓映射失败：{}", e.toString());
+    }
+    syncSingles();
+  }
+
+  /**
+   * Per-position P&amp;L and market-data subscriptions follow the positions: subscribe for new
+   * ones, cancel for closed ones.
+   */
+  private void syncSingles() {
+    for (String conId : new ArrayList<>(singles.keySet())) {
+      if (!positions.containsKey(conId)) {
+        cancel(singles.remove(conId));
+        singleRows.remove(conId);
+      }
+    }
+    for (String conId : new ArrayList<>(quotes.keySet())) {
+      if (!positions.containsKey(conId)) {
+        cancel(quotes.remove(conId));
+        delayed.remove(conId);
+        lastAndClose.remove(conId);
+      }
+    }
+    for (Map.Entry<String, IbkrAccounts.PositionRow> e : positions.entrySet()) {
+      String conId = e.getKey();
+      int con = Integer.parseInt(conId);
+      if (!singles.containsKey(conId)) {
+        Sub s =
+            open(
+                "逐只盈亏 " + conId,
+                singleHandler(conId),
+                id -> c -> c.reqPnLSingle(id, accountId, "", con),
+                id -> c -> c.cancelPnLSingle(id));
+        if (s != null) {
+          singles.put(conId, s);
         }
-    }
-
-    private Map<String, IbkrAccounts.PortfolioRow> portfolioRows() {
-        return portfolio == null ? Map.of() : portfolio.rows();
-    }
-
-    /** 均价换成账户更新推送的值（数量一致时），否则原样。 */
-    private List<Position> withPortfolioCost(List<Position> list) {
-        Map<String, IbkrAccounts.PortfolioRow> rows = portfolioRows();
-        if (rows.isEmpty()) {
-            return list;
+      }
+      if (!quotes.containsKey(conId)) {
+        Contract src = e.getValue().contract();
+        Contract contract = new Contract();
+        contract.conid(con);
+        contract.exchange("SMART");
+        contract.secType(src.getSecType());
+        contract.currency(src.currency());
+        Sub q =
+            open(
+                "持仓行情 " + conId,
+                quoteHandler(conId),
+                id -> c -> c.reqMktData(id, contract, "", false, false, null),
+                id -> c -> c.cancelMktData(id));
+        if (q != null) {
+          quotes.put(conId, q);
         }
-        List<Position> out = new ArrayList<>(list.size());
-        for (Position p : list) {
-            java.math.BigDecimal cost = IbkrPortfolioFeed.cost(rows, p.brokerRef(), p.quantity(), p.averageCost(),
-                    p.symbol(), portfolio.costDiffLogged());
-            out.add(cost == null ? p : new Position(p.broker(), p.accountId(), p.brokerRef(), p.symbol(), p.localSymbol(),
-                    p.securityType(), p.exchange(), p.primaryExchange(), p.currency(), p.quantity(), cost));
-        }
-        return List.copyOf(out);
+      }
     }
+  }
 
-    /** 逐只盈亏：浮盈换成账户更新推送的值（数量一致时）；当日与市值仍是 reqPnLSingle 的原值。 */
-    private PositionPnl positionPnl(String conId, IbkrAccounts.PnlSingleRow row) {
-        PositionPnl raw = IbkrAccounts.positionPnl(conId, row, wire.now());
-        java.math.BigDecimal unrealized = IbkrPortfolioFeed.unrealized(portfolioRows(), conId, raw.quantity());
-        return unrealized == null ? raw : new PositionPnl(raw.broker(), raw.brokerRef(), raw.receivedAt(), raw.quantity(),
-                raw.daily(), unrealized, raw.realized(), raw.marketValue());
-    }
-
-    boolean subscribed() {
-        return bound != null;
-    }
-
-    /** 订阅（或重订）。未连接时什么也不做，返回 false，等连上后再调。 */
-    boolean subscribe() {
-        Object current = wire.sessionToken();
-        if (bound != null && bound == current) {
-            cancelAll();        // 同一会话（1101）：旧订阅还活着，先退
-        } else {
-            forgetAll();        // 旧会话已结束：订阅随之失效，只丢掉记录
-        }
-        bound = current;
-        positionsReady = false;
-        pnlValid = false;
-        pnlPending = null;
-        pnlRetries = 0;
-
-        positionsSub = open("实时持仓", positionsHandler(),
-                id -> c -> c.reqPositionsMulti(id, accountId, ""), id -> c -> c.cancelPositionsMulti(id));
-        pnlSub = openPnl();
-        if (positionsSub == null || pnlSub == null) {
-            cancelAll();        // 发一半就断了：退掉已发的，等下一次连上整组重订
-            bound = null;
-            return false;
-        }
-        schedulePnlWatchdog();
-        return true;
-    }
-
-    private Sub openPnl() {
-        pnlPending = null;
-        return open("实时账户盈亏", pnlHandler(), id -> c -> c.reqPnL(id, accountId, ""), id -> c -> c.cancelPnL(id));
-    }
-
-    private void schedulePnlWatchdog() {
-        pnlWatchdog = wire.later(Duration.ofSeconds(PNL_WATCHDOG_SECONDS), this::checkPnl);
-    }
-
-    /** 账户盈亏迟迟没有有效值（首条已丢、第二条不来）：退订再订，最多 {@value #PNL_MAX_RETRIES} 次。 */
-    void checkPnl() {
-        pnlWatchdog = null;
-        if (bound == null || pnlValid || pnlRetries >= PNL_MAX_RETRIES) {
+  private IbkrSubscriptions.Handler quoteHandler(String conId) {
+    return new IbkrSubscriptions.Handler() {
+      @Override
+      public void item(Object item) {
+        if (item instanceof IbkrAccounts.MarketDataTypeRow t) {
+          delayed.put(conId, t.type() == 3 || t.type() == 4);
+        } else if (item instanceof IbkrAccounts.TickRow t) {
+          boolean last = IbkrAccounts.isLast(t.field());
+          if (!last && !IbkrAccounts.isClose(t.field())) {
+            return; // bid/ask, open/high/low and the like are not needed
+          }
+          java.math.BigDecimal price = IbkrAccounts.price(t.price());
+          if (price == null) {
             return;
+          }
+          java.math.BigDecimal[] lc =
+              lastAndClose.computeIfAbsent(conId, k -> new java.math.BigDecimal[2]);
+          lc[last ? 0 : 1] = price;
+          boolean isDelayed =
+              delayed.getOrDefault(conId, false)
+                  || t.field() == IbkrAccounts.TICK_DELAYED_LAST
+                  || t.field() == IbkrAccounts.TICK_DELAYED_CLOSE;
+          listener.onPositionPrice(
+              new org.jdkxx.trader.domain.PositionPrice(
+                  org.jdkxx.trader.domain.Broker.IBKR, conId, wire.now(), lc[0], lc[1], isDelayed));
         }
-        pnlRetries++;
-        log.info("实时账户盈亏 {} 秒没有有效推送，重订（第 {} 次）", PNL_WATCHDOG_SECONDS, pnlRetries);
-        cancel(pnlSub);
-        pnlSub = openPnl();
-        if (pnlSub != null && pnlRetries < PNL_MAX_RETRIES) {
-            schedulePnlWatchdog();
+      }
+
+      @Override
+      public void error(RequestRejectedException e) {
+        listener.onLiveError("持仓行情", e);
+      }
+    };
+  }
+
+  private IbkrSubscriptions.Handler singleHandler(String conId) {
+    return new IbkrSubscriptions.Handler() {
+      @Override
+      public void item(Object item) {
+        IbkrAccounts.PnlSingleRow row = (IbkrAccounts.PnlSingleRow) item;
+        singleRows.put(conId, row);
+        listener.onPositionPnl(positionPnl(conId, row));
+        if (!pnlValid && pnlPending != null) {
+          // account P&L arrived first and per-position rows later: verify once complete
+          verifyPnl();
         }
-    }
+      }
 
-    /** 退订全部。 */
-    void stop() {
-        if (bound != null && bound == wire.sessionToken()) {
-            cancelAll();
-        } else {
-            forgetAll();
+      @Override
+      public void error(RequestRejectedException e) {
+        listener.onLiveError("逐只盈亏", e);
+      }
+    };
+  }
+
+  // ------------------------------------------------------------------ account summary
+
+  // ------------------------------------------------------------------ account P&L
+
+  private IbkrSubscriptions.Handler pnlHandler() {
+    return new IbkrSubscriptions.Handler() {
+      @Override
+      public void item(Object item) {
+        IbkrAccounts.PnlRow row = (IbkrAccounts.PnlRow) item;
+        if (pnlValid) {
+          listener.onPnl(IbkrAccounts.pnl(row, wire.now()));
+          return;
         }
-        bound = null;
+        pnlPending = row;
+        verifyPnl();
+      }
+
+      @Override
+      public void error(RequestRejectedException e) {
+        listener.onLiveError("实时账户盈亏", e);
+      }
+    };
+  }
+
+  /**
+   * Verifies the held account P&amp;L push: the per-position P&amp;L must cover every position;
+   * <b>when nothing was closed today the daily sums are compared, when something was closed the
+   * unrealized sums are</b> (tolerance {@value #PNL_TOLERANCE}, since 3.4.6). The per-position sum
+   * only decides whether this push is complete; what is emitted is still the account P&amp;L's raw
+   * value.
+   *
+   * <h2>Why unrealized is no longer compared when nothing was closed (measured 2026-10-20 to 10-22)
+   * </h2>
+   *
+   * After adding 100 GOOG shares that day, {@code reqPnLSingle}'s unrealized was still computed
+   * from the pre-add average cost 346.806 (the app and the account-updates feed had 339.525), so
+   * the account-level unrealized and the per-position sum differed by a constant 1,179.65 (= 100
+   * &times; 11.80) and the account P&amp;L stayed blank all day; it was still so after the
+   * gateway's next-day daily restart. Daily, meanwhile, matched exactly on both sides (difference
+   * 0.0), and an incomplete first push still fails on daily (measured 10-22: off by 48.74), so the
+   * check loses none of its power. The comparison still uses {@code reqPnLSingle}'s raw values
+   * (both sides are streaming pushes and can be compared exactly); the per-position unrealized
+   * shown on the page comes from the account-updates feed instead.
+   *
+   * <h2>Why daily cannot be compared on a closing day (measured 2026-10-09, overturning 3.0.10)
+   * </h2>
+   *
+   * The real pushes after selling 80 BRK.B shares that day:
+   *
+   * <pre>
+   * account          daily=1093.3018226278286  unrealized=26615.850201798563  realized=477.157432
+   * per-position sum daily=1099.14422262783    unrealized=26615.850201798563
+   * </pre>
+   *
+   * <ul>
+   *   <li><b>unrealized difference = 0.0</b>: both sides only include open positions, so they match
+   *       exactly even on a closing day; that is the clean completeness criterion;
+   *   <li><b>daily difference = &minus;5.8424</b>, while {@code realized = 477.157432}. After
+   *       3.0.10 subtracted realized the difference became <b>&minus;483.00</b>: <b>the wrong sign
+   *       and 82 times larger</b>;
+   *   <li>the account's daily contains the closed instrument's <b>change for the day</b> (sale
+   *       price against the previous close, including commission), <b>not</b> its lifetime realized
+   *       gain against cost. Evidence: BRK.B's previous-close value 80 &times; 511.05 = 40,884.00,
+   *       the cash received from the sale 40,878.16, difference <b>5.84</b>; two log lines 40
+   *       minutes apart showed the identical difference &minus;482.99983200000133 (a fixed amount,
+   *       not drift over time).
+   * </ul>
+   *
+   * <b>The correct adjustment is not available to us</b>: once closed, an instrument disappears
+   * from {@code reqPositionsMulti}, and {@code reqPnLSingle}'s realized is always {@code
+   * Double.MAX_VALUE}. Widening the tolerance does not work either: a closed instrument's change
+   * for the day is unbounded (it was only 5.84 today because the sale was almost at the previous
+   * close). So on closing days daily is <b>not compared</b> and unrealized alone guards
+   * completeness; daily is still shown as IBKR's raw value.
+   *
+   * <p><b>n = 1</b>: one trading day, one closed instrument, two samples. To be re-checked on the
+   * next closing day.
+   */
+  private void verifyPnl() {
+    IbkrAccounts.PnlRow row = pnlPending;
+    if (row == null || !positionsReady || !singleRows.keySet().containsAll(positions.keySet())) {
+      return;
     }
-
-    int singleCount() {
-        return singles.size();
+    double daily = 0;
+    double unreal = 0;
+    double costLag = 0;
+    for (String conId : positions.keySet()) {
+      IbkrAccounts.PnlSingleRow r = singleRows.get(conId);
+      if (IbkrAccounts.amount(r.daily()) == null || IbkrAccounts.amount(r.unrealized()) == null) {
+        return;
+      }
+      daily += r.daily();
+      unreal += r.unrealized();
+      costLag += costLag(conId);
     }
+    // On the day of an add, reqPnLSingle's unrealized uses the pre-add average cost (3.4.6):
+    // subtract that cost difference using the feed's new average cost, keeping reqPnLSingle's own
+    // price basis. On days without an add both averages are equal and the correction is 0 (3.5.1,
+    // 2026-10-30: a close and an add on the same day).
+    // Since reqPnLSingle unrealized = value - qty * staleCost, the true unrealized is that minus
+    // qty * (feedCost - staleCost), with the positions API's average standing in for staleCost.
+    unreal -= costLag;
+    // Was anything closed today: yes if the account-level realized is non-zero (per-position
+    // realized is always Double.MAX_VALUE and unusable). When realized is unavailable this cannot
+    // be decided, so it is treated as "closed": compare unrealized only, better one check fewer
+    // than a daily P&L left blank all day on a closing day.
+    java.math.BigDecimal realizedAmount = IbkrAccounts.amount(row.realized());
+    Double realized = realizedAmount == null ? null : realizedAmount.doubleValue();
+    boolean closedToday = realized == null || realized != 0;
 
-    int quoteCount() {
-        return quotes.size();
+    // Nothing closed: compare daily only (3.4.6). On an add day reqPnLSingle's unrealized uses the
+    // pre-add cost and differs from the account figure by a fixed amount (2026-10-20 GOOG: a
+    // constant 1,179.65, not fixed by the gateway's next-day restart either), whereas daily matches
+    // exactly on both sides (difference 0.0); an incomplete first push still fails on daily
+    // (measured 10-22: off by 48.74), so the check loses nothing.
+    // Closing day: daily is not comparable (see above), only unrealized is; when there was also an
+    // add that day, the per-position unrealized has already been corrected with the new average
+    // cost above (3.5.1).
+    // Account-level values are used raw: a NaN or MAX_VALUE there simply fails the comparison (fail
+    // closed).
+    boolean unrealOk = !closedToday || Math.abs(row.unrealized() - unreal) <= PNL_TOLERANCE;
+    boolean dailyOk = closedToday || Math.abs(row.daily() - daily) <= PNL_TOLERANCE;
+
+    if (unrealOk && dailyOk) {
+      pnlValid = true;
+      pnlPending = null;
+      pnlMismatchLogged = false;
+      if (closedToday) {
+        logDailyNotChecked(row, realized, daily);
+      }
+      listener.onPnl(IbkrAccounts.pnl(row, wire.now()));
+      return;
     }
+    logPnlMismatch(row, realized, daily, unreal, costLag, closedToday);
+  }
 
-    private Sub open(String what, IbkrSubscriptions.Handler handler,
-                     java.util.function.IntFunction<Consumer<EClientSocket>> request,
-                     java.util.function.IntFunction<Consumer<EClientSocket>> cancel) {
-        int id = wire.nextId();
-        wire.open(id, handler);
-        if (!wire.subscribe(what, request.apply(id))) {
-            wire.close(id);
-            return null;
-        }
-        return new Sub(id, what, cancel.apply(id));
+  /**
+   * This position's cost lag = (feed average cost &minus; positions-API average cost) &times;
+   * quantity; 0 when there is no feed or the quantities differ. Production 2026-10-30: NVDA add of
+   * 10 shares, 110 &times; (193.46155755 &minus; 192.2977127272727) = 128.02, exactly that day's
+   * unrealized difference.
+   */
+  private double costLag(String conId) {
+    IbkrAccounts.PositionRow p = positions.get(conId);
+    if (p == null
+        || p.position() == null
+        || !p.position().isValid()
+        || Double.isNaN(p.averageCost())) {
+      return 0;
     }
+    java.math.BigDecimal qty = p.position().value();
+    Double feed = IbkrPortfolioFeed.averageCost(portfolioRows(), conId, qty);
+    return feed == null ? 0 : (feed - p.averageCost()) * qty.doubleValue();
+  }
 
-    private void cancel(Sub sub) {
-        if (sub != null) {
-            wire.close(sub.id());
-            wire.unsubscribe(sub.what(), sub.cancel());
-        }
+  /**
+   * Logs one line when the daily comparison is skipped on a closing day (at most one per
+   * subscription).
+   *
+   * <p>Both daily figures and realized are printed to collect measured samples of "how far the
+   * account daily and the per-position sum differ on closing days": on 2026-10-09 the difference
+   * was &minus;5.84; if some day it reaches hundreds or thousands, the definition has some other
+   * component, and there will be data to go on. It also shows whether realized really is 0 on
+   * ordinary days (if it were "unset" all the time, this check would be skipped every day).
+   */
+  private void logDailyNotChecked(IbkrAccounts.PnlRow row, Double realized, double singlesDaily) {
+    if (pnlDailySkipLogged) {
+      return;
     }
+    pnlDailySkipLogged = true;
+    log.info(
+        "当天有平仓（已实现={}），当日盈亏不与逐只之和比对、只用浮盈把关：账户当日={} 逐只之和当日={} 差={}",
+        realized == null ? "未设" : realized,
+        row.daily(),
+        singlesDaily,
+        row.daily() - singlesDaily);
+  }
 
-    private void cancelAll() {
-        cancel(positionsSub);
-        cancel(pnlSub);
-        singles.values().forEach(this::cancel);
-        quotes.values().forEach(this::cancel);
-        clearState();
+  /**
+   * Records the numbers when verification fails, at most one line per subscription.
+   *
+   * <p>On 2026-09-23 in production the daily P&amp;L stayed blank all day and the log only said "no
+   * valid push, re-subscribing (attempt N)", <b>not a single number</b>; afterwards IBKR's
+   * definition could only be guessed by working backwards from net liquidation. This log exists so
+   * the next failure leaves evidence instead of silence. No account number is logged.
+   */
+  private void logPnlMismatch(
+      IbkrAccounts.PnlRow row,
+      Double realized,
+      double singlesDaily,
+      double singlesUnrealized,
+      double costLag,
+      boolean closedToday) {
+    if (pnlMismatchLogged) {
+      return;
     }
+    pnlMismatchLogged = true;
+    log.warn(
+        "实时账户盈亏核对不通过（{} 只持仓）：账户 当日={} 浮盈={} 已实现={}；逐只之和 当日={} 浮盈={}（已扣成本滞后 {}）；"
+            + "当日差={}（{}）浮盈差={}（容差 {}）",
+        positions.size(),
+        row.daily(),
+        row.unrealized(),
+        realized == null ? "未设" : realized,
+        singlesDaily,
+        singlesUnrealized,
+        costLag,
+        row.daily() - singlesDaily,
+        closedToday ? "当天有平仓，未参与判定" : "参与判定",
+        row.unrealized() - singlesUnrealized,
+        PNL_TOLERANCE);
+  }
 
-    private void forgetAll() {
-        for (Sub s : allSubs()) {
-            wire.close(s.id());
-        }
-        clearState();
-    }
-
-    private List<Sub> allSubs() {
-        List<Sub> all = new ArrayList<>(singles.values());
-        all.addAll(quotes.values());
-        for (Sub s : new Sub[] {positionsSub, pnlSub}) {
-            if (s != null) {
-                all.add(s);
-            }
-        }
-        return all;
-    }
-
-    private void clearState() {
-        positionsSub = pnlSub = null;
-        singles.clear();
-        quotes.clear();
-        delayed.clear();
-        lastAndClose.clear();
-        singleRows.clear();
-        pnlPending = null;
-        pnlMismatchLogged = false;
-        pnlDailySkipLogged = false;
-        if (pnlWatchdog != null) {
-            pnlWatchdog.run();   // 取消
-            pnlWatchdog = null;
-        }
-        positions.clear();
-        positionsReady = false;
-    }
-
-    // ------------------------------------------------------------------ 持仓
-
-    private IbkrSubscriptions.Handler positionsHandler() {
-        return new IbkrSubscriptions.Handler() {
-            @Override
-            public void item(Object item) {
-                IbkrAccounts.PositionRow r = (IbkrAccounts.PositionRow) item;
-                if (r.contract() == null || !accountId.equals(r.account())) {
-                    return;
-                }
-                String conId = Integer.toString(r.contract().conid());
-                if (r.position() == null || !r.position().isValid()) {
-                    log.warn("实时持仓收到无效数量（{}），忽略这一条", r.contract().symbol());
-                    return;
-                }
-                if (r.position().value().signum() == 0) {
-                    positions.remove(conId);   // 清仓
-                } else {
-                    positions.put(conId, r);
-                }
-                if (positionsReady) {
-                    emitPositions();
-                }
-            }
-
-            @Override
-            public void end() {
-                positionsReady = true;
-                emitPositions();
-            }
-
-            @Override
-            public void error(RequestRejectedException e) {
-                listener.onLiveError("实时持仓", e);
-            }
-        };
-    }
-
-    private void emitPositions() {
-        try {
-            List<Position> list = withPortfolioCost(IbkrAccounts.positions(accountId, new ArrayList<>(positions.values())));
-            listener.onPositions(list);
-        } catch (RuntimeException e) {
-            log.warn("实时持仓映射失败：{}", e.toString());
-        }
-        syncSingles();
-    }
-
-    /** 逐只盈亏与行情的订阅跟着持仓走：新出现的订、清仓的退。 */
-    private void syncSingles() {
-        for (String conId : new ArrayList<>(singles.keySet())) {
-            if (!positions.containsKey(conId)) {
-                cancel(singles.remove(conId));
-                singleRows.remove(conId);
-            }
-        }
-        for (String conId : new ArrayList<>(quotes.keySet())) {
-            if (!positions.containsKey(conId)) {
-                cancel(quotes.remove(conId));
-                delayed.remove(conId);
-                lastAndClose.remove(conId);
-            }
-        }
-        for (Map.Entry<String, IbkrAccounts.PositionRow> e : positions.entrySet()) {
-            String conId = e.getKey();
-            int con = Integer.parseInt(conId);
-            if (!singles.containsKey(conId)) {
-                Sub s = open("逐只盈亏 " + conId, singleHandler(conId),
-                        id -> c -> c.reqPnLSingle(id, accountId, "", con), id -> c -> c.cancelPnLSingle(id));
-                if (s != null) {
-                    singles.put(conId, s);
-                }
-            }
-            if (!quotes.containsKey(conId)) {
-                Contract src = e.getValue().contract();
-                Contract contract = new Contract();
-                contract.conid(con);
-                contract.exchange("SMART");
-                contract.secType(src.getSecType());
-                contract.currency(src.currency());
-                Sub q = open("持仓行情 " + conId, quoteHandler(conId),
-                        id -> c -> c.reqMktData(id, contract, "", false, false, null), id -> c -> c.cancelMktData(id));
-                if (q != null) {
-                    quotes.put(conId, q);
-                }
-            }
-        }
-    }
-
-    private IbkrSubscriptions.Handler quoteHandler(String conId) {
-        return new IbkrSubscriptions.Handler() {
-            @Override
-            public void item(Object item) {
-                if (item instanceof IbkrAccounts.MarketDataTypeRow t) {
-                    delayed.put(conId, t.type() == 3 || t.type() == 4);
-                } else if (item instanceof IbkrAccounts.TickRow t) {
-                    boolean last = IbkrAccounts.isLast(t.field());
-                    if (!last && !IbkrAccounts.isClose(t.field())) {
-                        return;   // 买卖价、开高低等不关心
-                    }
-                    java.math.BigDecimal price = IbkrAccounts.price(t.price());
-                    if (price == null) {
-                        return;
-                    }
-                    java.math.BigDecimal[] lc = lastAndClose.computeIfAbsent(conId, k -> new java.math.BigDecimal[2]);
-                    lc[last ? 0 : 1] = price;
-                    boolean isDelayed = delayed.getOrDefault(conId, false)
-                            || t.field() == IbkrAccounts.TICK_DELAYED_LAST || t.field() == IbkrAccounts.TICK_DELAYED_CLOSE;
-                    listener.onPositionPrice(new org.jdkxx.trader.domain.PositionPrice(org.jdkxx.trader.domain.Broker.IBKR,
-                            conId, wire.now(), lc[0], lc[1], isDelayed));
-                }
-            }
-
-            @Override
-            public void error(RequestRejectedException e) {
-                listener.onLiveError("持仓行情", e);
-            }
-        };
-    }
-
-    private IbkrSubscriptions.Handler singleHandler(String conId) {
-        return new IbkrSubscriptions.Handler() {
-            @Override
-            public void item(Object item) {
-                IbkrAccounts.PnlSingleRow row = (IbkrAccounts.PnlSingleRow) item;
-                singleRows.put(conId, row);
-                listener.onPositionPnl(positionPnl(conId, row));
-                if (!pnlValid && pnlPending != null) {
-                    verifyPnl();   // 账户盈亏先到、逐只后到：到齐了再核
-                }
-            }
-
-            @Override
-            public void error(RequestRejectedException e) {
-                listener.onLiveError("逐只盈亏", e);
-            }
-        };
-    }
-
-    // ------------------------------------------------------------------ 账户汇总
-
-    // ------------------------------------------------------------------ 账户盈亏
-
-    private IbkrSubscriptions.Handler pnlHandler() {
-        return new IbkrSubscriptions.Handler() {
-            @Override
-            public void item(Object item) {
-                IbkrAccounts.PnlRow row = (IbkrAccounts.PnlRow) item;
-                if (pnlValid) {
-                    listener.onPnl(IbkrAccounts.pnl(row, wire.now()));
-                    return;
-                }
-                pnlPending = row;
-                verifyPnl();
-            }
-
-            @Override
-            public void error(RequestRejectedException e) {
-                listener.onLiveError("实时账户盈亏", e);
-            }
-        };
-    }
-
-    /**
-     * 核对挂起的账户盈亏：逐只盈亏要覆盖全部持仓；<b>当天没有平仓时比当日之和，有平仓时比浮盈之和</b>
-     * （容差 {@value #PNL_TOLERANCE}，3.4.6 起）。逐只之和只用来判断这条推送完整与否，发出去的仍是账户盈亏的原值。
-     *
-     * <h2>为什么没有平仓时不再比浮盈（2026-10-20 ~ 10-22 实测）</h2>
-     * 当天加仓 GOOG 100 股后，{@code reqPnLSingle} 的浮盈仍按加仓前的均价 346.806 算（App 与账户更新推送是 339.525），
-     * 账户口径与逐只之和的浮盈恒差 1,179.65（= 100 × 11.80），账户盈亏因此整天置空；网关次日每日重启后仍然如此。
-     * 而当日两边精确相等（差 0.0），首条推送不完整时当日照样对不上（10-22 实测差 48.74），把关能力不减。
-     * 这里核对用的仍是 {@code reqPnLSingle} 的原值（两边都是流式推送，能精确比）；页面显示的逐只浮盈另取账户更新推送。
-     *
-     * <h2>为什么当日在平仓日不能比（2026-10-09 实测，推翻了 3.0.10 的做法）</h2>
-     * 当天卖掉 BRK.B 80 股之后的真实推送：
-     * <pre>
-     * 账户   当日=1093.3018226278286  浮盈=26615.850201798563  已实现=477.157432
-     * 逐只之和 当日=1099.14422262783    浮盈=26615.850201798563
-     * </pre>
-     * <ul>
-     *   <li><b>浮盈差 = 0.0</b>：两边口径都只含在持，平仓日照样精确对得上——它才是完整性的干净判据；</li>
-     *   <li><b>当日差 = −5.8424</b>，而 {@code realized = 477.157432}。3.0.10 扣掉 realized 之后差变成
-     *       <b>−483.00</b>，<b>方向反了、量级放大 82 倍</b>；</li>
-     *   <li>账户当日含的是已平仓标的的<b>当日变动</b>（卖出价相对前收，含手续费），<b>不是</b>它相对成本的终身已实现。
-     *       佐证：BRK.B 前收市值 80 × 511.05 = 40,884.00，卖出到账现金 40,878.16，差 <b>5.84</b>；
-     *       相隔 40 分钟的两条日志差值是完全相同的 −482.99983200000133（固定量，不是时间漂移）。</li>
-     * </ul>
-     * <b>正确的调整量我们拿不到</b>：标的一平仓就从 {@code reqPositionsMulti} 消失，
-     * 而 {@code reqPnLSingle} 的 realized 恒为 {@code Double.MAX_VALUE}。扩大容差也不行——
-     * 平仓标的的当日变动无界（今天只有 5.84 是因为几乎平价卖出）。所以平仓日<b>不比当日</b>，
-     * 改由浮盈单独把关；当日仍照常显示盈透原值。
-     *
-     * <p><b>n = 1</b>：一个交易日、一只平仓标的、两次采样。等下一次平仓日复核。
-     */
-    private void verifyPnl() {
-        IbkrAccounts.PnlRow row = pnlPending;
-        if (row == null || !positionsReady || !singleRows.keySet().containsAll(positions.keySet())) {
-            return;
-        }
-        double daily = 0;
-        double unreal = 0;
-        double costLag = 0;
-        for (String conId : positions.keySet()) {
-            IbkrAccounts.PnlSingleRow r = singleRows.get(conId);
-            if (IbkrAccounts.amount(r.daily()) == null || IbkrAccounts.amount(r.unrealized()) == null) {
-                return;
-            }
-            daily += r.daily();
-            unreal += r.unrealized();
-            costLag += costLag(conId);
-        }
-        // 加仓当天 reqPnLSingle 的浮盈按加仓前的均价算（3.4.6）：用账户更新推送的新均价把这部分成本差扣掉，
-        // 价格基准仍是 reqPnLSingle 自己的。不加仓的日子两边均价相同，修正量为 0（3.5.1，2026-10-30 平仓与加仓同一天）。
-        unreal -= costLag;
-        // 当天有没有平仓：账户级 realized 非 0 即有（逐只的 realized 恒为 Double.MAX_VALUE，不可用）。
-        // realized 不可用时判断不了，按「有平仓」处理——只比浮盈，宁可少一道也不要在平仓日把当日盈亏整天挂空。
-        java.math.BigDecimal realizedAmount = IbkrAccounts.amount(row.realized());
-        Double realized = realizedAmount == null ? null : realizedAmount.doubleValue();
-        boolean closedToday = realized == null || realized != 0;
-
-        // 没有平仓：只比当日（3.4.6）。加仓日 reqPnLSingle 的浮盈按加仓前的成本算、和账户口径差一个固定量
-        // （2026-10-20 GOOG 恒差 1,179.65，网关次日重启也没改对），而当日两边精确相等（差 0.0）；
-        // 首条推送不完整时当日照样对不上（10-22 实测差 48.74），把关能力不减。
-        // 平仓日：当日不可比（见上），只能比浮盈；同一天又有加仓时，上面已按新均价修正了逐只浮盈（3.5.1）。
-        boolean unrealOk = !closedToday || Math.abs(row.unrealized() - unreal) <= PNL_TOLERANCE;
-        boolean dailyOk = closedToday || Math.abs(row.daily() - daily) <= PNL_TOLERANCE;
-
-        if (unrealOk && dailyOk) {
-            pnlValid = true;
-            pnlPending = null;
-            pnlMismatchLogged = false;
-            if (closedToday) {
-                logDailyNotChecked(row, realized, daily);
-            }
-            listener.onPnl(IbkrAccounts.pnl(row, wire.now()));
-            return;
-        }
-        logPnlMismatch(row, realized, daily, unreal, costLag, closedToday);
-    }
-
-    /**
-     * 这只持仓的成本滞后量 =（账户更新推送的均价 − 持仓接口的均价）× 数量；没有推送或数量不一致时为 0。
-     * 2026-10-30 生产：NVDA 加仓 10 股，110 ×（193.46155755 − 192.2977127272727）= 128.02，正好是那天浮盈差。
-     */
-    private double costLag(String conId) {
-        IbkrAccounts.PositionRow p = positions.get(conId);
-        if (p == null || p.position() == null || !p.position().isValid() || Double.isNaN(p.averageCost())) {
-            return 0;
-        }
-        java.math.BigDecimal qty = p.position().value();
-        Double feed = IbkrPortfolioFeed.averageCost(portfolioRows(), conId, qty);
-        return feed == null ? 0 : (feed - p.averageCost()) * qty.doubleValue();
-    }
-
-    /**
-     * 平仓日跳过当日比较时记一条（每次订阅最多一条）。
-     *
-     * <p>把两个当日与 realized 都打出来，是为了积累「平仓日账户当日与逐只之和差多少」的实测样本：
-     * 2026-10-09 差 −5.84，若将来某天差到几百上千，就说明这条口径还有别的成分，到时有据可查。
-     * 顺带也能看出 realized 在正常日是不是真的给 0（若常年「未设」，这条检查等于每天都被跳过）。
-     */
-    private void logDailyNotChecked(IbkrAccounts.PnlRow row, Double realized, double singlesDaily) {
-        if (pnlDailySkipLogged) {
-            return;
-        }
-        pnlDailySkipLogged = true;
-        log.info("当天有平仓（已实现={}），当日盈亏不与逐只之和比对、只用浮盈把关：账户当日={} 逐只之和当日={} 差={}",
-                realized == null ? "未设" : realized, row.daily(), singlesDaily, row.daily() - singlesDaily);
-    }
-
-    /**
-     * 核对不通过时把数字记下来，每次订阅最多一条。
-     *
-     * <p>2026-09-23 生产上当日盈亏整天空着，日志里只有"没有有效推送，重订第 N 次"，<b>一个数字都没有</b>，
-     * 事后只能靠净值反推去猜盈透的口径。这条日志就是为了让下一次失败留下证据而不是沉默。
-     */
-    private void logPnlMismatch(IbkrAccounts.PnlRow row, Double realized, double singlesDaily, double singlesUnrealized,
-                                double costLag, boolean closedToday) {
-        if (pnlMismatchLogged) {
-            return;
-        }
-        pnlMismatchLogged = true;
-        log.warn("实时账户盈亏核对不通过（{} 只持仓）：账户 当日={} 浮盈={} 已实现={}；逐只之和 当日={} 浮盈={}（已扣成本滞后 {}）；"
-                        + "当日差={}（{}）浮盈差={}（容差 {}）",
-                positions.size(), row.daily(), row.unrealized(), realized == null ? "未设" : realized,
-                singlesDaily, singlesUnrealized, costLag,
-                row.daily() - singlesDaily, closedToday ? "当天有平仓，未参与判定" : "参与判定",
-                row.unrealized() - singlesUnrealized, PNL_TOLERANCE);
-    }
-
-    @Override
-    public String toString() {
-        return "IbkrLiveAccount[**** subscribed=" + subscribed() + " positions=" + positions.size() + "]";
-    }
+  @Override
+  public String toString() {
+    return "IbkrLiveAccount[**** subscribed="
+        + subscribed()
+        + " positions="
+        + positions.size()
+        + "]";
+  }
 }

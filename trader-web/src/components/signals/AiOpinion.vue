@@ -3,7 +3,10 @@ import { computed } from 'vue'
 import type { AiAnalysis, EvidenceCheck } from '../../api/ai'
 import { AI_STATUS_LABEL, CONFIDENCE_LABEL, STANCE_LABEL, STANCE_TYPE, VERDICT_LABEL } from './format'
 
-/** 模型第二意见：立场、结论、多空证据左右两栏（核对不通过的标黄）、风险与数据缺口、裁决依据、用量。 */
+/**
+ * The model's second opinion: stance, conclusion, bull and bear evidence in two columns (evidence that failed
+ * verification is highlighted yellow), risks and data gaps, the basis of the verdict, token usage.
+ */
 const props = defineProps<{ analysis: AiAnalysis }>()
 
 const a = computed(() => props.analysis)

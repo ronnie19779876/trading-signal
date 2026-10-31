@@ -13,13 +13,15 @@
     <description>基于 AI 大模型的美股量化交易系统：盈透（持仓与执行）+ 富途（行情、基本面与信号）</description>
 
     <!--
-      依赖方向（模块顺序即依赖顺序，不得反向）：
+      Dependency direction (module order is dependency order; never point backwards):
         app → { core, gateway-ibkr, gateway-futu }
         core → { gateway-api, storage, ai }
         gateway-ibkr / gateway-futu → gateway-api → domain → common
-        storage → common ；ai → common
-      供应商 SDK 隔离：com.ib.client.* 只在 trader-gateway-ibkr；com.futu.openapi.* 只在 trader-gateway-futu；
-      com.openai.* 只在 trader-ai。三处都用 <optional>true</optional> 断掉传递，trader-app 另加 runtime 依赖只为打包。
+        storage → common ; ai → common
+      Vendor SDK isolation: com.ib.client.* only in trader-gateway-ibkr; com.futu.openapi.* only in
+      trader-gateway-futu; com.openai.* only in trader-ai. All three use <optional>true</optional> to cut
+      transitivity; trader-app declares them again with runtime scope purely for packaging (remove that and
+      the build still passes, but startup fails with NoClassDefFoundError).
     -->
     <modules>
         <module>trader-common</module>
@@ -34,7 +36,8 @@
     </modules>
 
     <properties>
-        <!-- 版本只改这一处。开发/测试一律 -SNAPSHOT，发布去掉 SNAPSHOT 并打 tag。规则见 README「版本规则」 -->
+        <!-- The version is changed here and only here. Development/testing always uses -SNAPSHOT; a release drops
+             SNAPSHOT and gets a tag. Only release versions may be deployed to production. Rules: README, versioning section -->
         <revision>3.5.2-SNAPSHOT</revision>
 
         <java.version>21</java.version>
@@ -45,15 +48,17 @@
         <spring-boot.version>3.5.13</spring-boot.version>
 
         <!--
-          盈透 TWS API：官方不发 Maven Central，由 scripts/install-sdks.sh 装进本地仓库（jar 不入库，许可证不允许再分发）。
-          10.30.01 内置 protobuf 生成类（gencode 4.29.5），运行时必须 protobuf-java 4.x（≥4.29.5）。
+          IBKR TWS API: not published to Maven Central by IBKR; scripts/install-sdks.sh installs it into the local
+          repository (the jar is not committed; its license forbids redistribution).
+          10.30.01 bundles protobuf generated classes (gencode 4.29.5), so the runtime needs protobuf-java 4.x (≥4.29.5).
         -->
         <tws-api.version>10.30.01</tws-api.version>
         <protobuf-java.version>4.32.0</protobuf-java.version>
         <!--
-          富途 SDK 的 protobuf 生成代码是 3.5.1 产物，与上面的 4.x 运行时互斥（实测 NoSuchMethodError）。
-          所以不直接依赖 com.futunn.openapi:futu-api，而是依赖 sdk/futu-api-shaded 产出的重定位版本
-          （com.google.protobuf → org.jdkxx.trader.shaded.futu.protobuf），同样由 scripts/install-sdks.sh 安装。
+          The Futu SDK's protobuf generated code was produced by 3.5.1 and cannot coexist with the 4.x runtime
+          above (measured: NoSuchMethodError). So nothing depends on com.futunn.openapi:futu-api directly;
+          the relocated build from sdk/futu-api-shaded is used instead
+          (com.google.protobuf → org.jdkxx.trader.shaded.futu.protobuf), also installed by scripts/install-sdks.sh.
         -->
         <futu-api-shaded.version>10.10.7008</futu-api-shaded.version>
         <openai-java.version>4.52.0</openai-java.version>
@@ -94,7 +99,7 @@
                 <version>${openai-java.version}</version>
             </dependency>
 
-            <!-- 本工程模块 -->
+            <!-- this project's modules -->
             <dependency>
                 <groupId>org.jdkxx.trader</groupId>
                 <artifactId>trader-common</artifactId>
@@ -139,7 +144,7 @@
     </dependencyManagement>
 
     <dependencies>
-        <!-- 所有模块共用的测试栈（JUnit 5 / AssertJ / Mockito） -->
+        <!-- test stack shared by all modules (JUnit 5 / AssertJ / Mockito) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -159,7 +164,7 @@
         </pluginManagement>
 
         <plugins>
-            <!-- ${revision} 的落地：安装/部署时把解析后的版本写进 .flattened-pom.xml（已 gitignore） -->
+            <!-- Makes ${revision} concrete: on install/deploy the resolved version is written into .flattened-pom.xml (gitignored) -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>flatten-maven-plugin</artifactId>

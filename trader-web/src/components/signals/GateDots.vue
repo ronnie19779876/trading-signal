@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { GATES, GATE_LABEL } from './format'
 
-/** 四门结论缩写（如 "PFPU"）画成四个色点：通过绿、不过灰、不可判定黄。 */
+/** The four-gate abbreviation (e.g. "PFPU") drawn as four colored dots: pass green, fail gray, undeterminable yellow. */
 const props = defineProps<{ gates: string | null }>()
 const VERDICT: Record<string, string> = { P: '通过', F: '不过', U: '不可判定' }
 </script>

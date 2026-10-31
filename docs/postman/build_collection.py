@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-生成 Postman 集合与环境文件（Collection v2.1）。接口清单只维护在下面的 ENDPOINTS 里，
-新增/改动 REST 接口时改这里再重跑：
+Generates the Postman collection and environment files (Collection v2.1). The endpoint list is maintained
+only in ENDPOINTS below; when adding/changing a REST endpoint, edit it here and re-run:
 
     python3 docs/postman/build_collection.py
 
-产物：
-    trading-signal.postman_collection.json          集合（含每个请求的断言）
-    trading-signal.dev.postman_environment.json     本机开发实例（baseUrl 127.0.0.1:8083）
-    trading-signal.prod.postman_environment.json    生产实例（经 SSH 隧道后的本地端口，默认 8093）
+Output:
+    trading-signal.postman_collection.json          the collection (with test assertions for every request)
+    trading-signal.dev.postman_environment.json     local dev instance (baseUrl 127.0.0.1:8083)
+    trading-signal.prod.postman_environment.json    production instance (local port after the SSH tunnel, default 8093)
 
-⚠️ 环境文件里只有 baseUrl 与示例参数，不放任何密码、主机名、账户号。生成的 JSON 不要手改。
+WARNING: the environment files hold only baseUrl and example parameters -- never any password, host name or
+account number. Do not edit the generated JSON by hand.
 """
 import json
 import os
@@ -18,7 +19,7 @@ import os
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 NAME = "trading-signal"
 
-# 通用断言片段
+# Common test-script snippets
 T_200 = ['pm.test("HTTP 200", () => pm.response.to.have.status(200));']
 T_JSON = ['const body = pm.response.json();']
 
@@ -559,7 +560,8 @@ def request(item):
         url["query"] = item["query"]
     headers = [
         {"key": "Accept", "value": "application/json"},
-        # 服务端对缺这个头的写请求返回 403（LocalRequestGuardFilter，挡本机浏览器的跨站 POST）
+        # Sent on every request, reads included. The server answers 403 to write requests without this header
+        # (LocalRequestGuardFilter, which blocks cross-site POSTs from a browser on the same machine)
         {"key": "X-Trader-Client", "value": "postman"},
     ]
     req = {"method": item["method"], "header": headers, "url": url, "description": item.get("desc", "")}
@@ -578,7 +580,8 @@ WRITE_FOLDER = "⚠ 写操作（改状态或触发跑批，别对生产整组跑
 
 
 def folder(f):
-    """GET 留在组里；其余方法收进组内的写操作子文件夹，免得对生产"整组运行"时误触。"""
+    """GETs stay in the folder; every other method goes into the folder's write-operations subfolder, so that
+    "run the whole folder" against production cannot trigger them by accident."""
     reads = [request(i) for i in f["items"] if i["method"] in ("GET", "HEAD")]
     writes = [request(i) for i in f["items"] if i["method"] not in ("GET", "HEAD")]
     return {"name": f["folder"], "item": reads + ([{"name": WRITE_FOLDER, "item": writes}] if writes else [])}
@@ -605,15 +608,16 @@ def build_environment(name, base_url, symbol):
         "values": [
             {"key": "baseUrl", "value": base_url, "enabled": True},
             {"key": "broker", "value": "ibkr", "enabled": True},
-            # 生产环境不给默认代码：加池 / 移出池 / 回补都拿它当参数，默认值一点就改到真实池
+            # No default symbol in the production environment: add to pool / remove from pool / backfill all take
+            # it as a parameter, and a default value would change the real pool with a single click
             {"key": "symbol", "value": symbol, "enabled": True},
             {"key": "jobId", "value": "1", "enabled": True},
-            # 同理不给默认信号 id：改信号状态拿它当参数
+            # Likewise no default signal id: changing a signal's status takes it as a parameter
             {"key": "signalId", "value": "1" if name == "dev" else "", "enabled": True},
             {"key": "analysisId", "value": "1" if name == "dev" else "", "enabled": True},
-            # 同理不给默认方案 id：删除方案拿它当参数
+            # Likewise no default model id: deleting a SOTP model takes it as a parameter
             {"key": "sotpModelId", "value": "1" if name == "dev" else "", "enabled": True},
-            # 同理不给默认模拟交易 id：平仓拿它当参数
+            # Likewise no default simulated-trade id: closing a position takes it as a parameter
             {"key": "simTradeId", "value": "1" if name == "dev" else "", "enabled": True},
         ],
         "_postman_variable_scope": "environment",

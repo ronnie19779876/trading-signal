@@ -10,8 +10,9 @@ import { getQuoteStatus, pauseQuotes, quoteStreamUrl, reconcileQuotes, resumeQuo
 import KlineChart from '../KlineChart.vue'
 
 /**
- * 行情数据（原"行情数据底座"页，3.0.6 并进系统页）：覆盖统计、实时报价（SSE，只在本标签页打开时连）、标的池、K 线查询。
- * 跑批在"跑批"标签页。
+ * Market data (the former "market-data base" page, merged into the system page in 3.0.6): coverage statistics, live
+ * quotes (SSE, connected only while this tab is open), the instrument pool, and a bar lookup.
+ * Batch jobs are on the "batch jobs" tab.
  */
 const props = defineProps<{ active: boolean }>()
 
@@ -36,13 +37,13 @@ function daysAgo(n: number): string {
   return new Date(Date.now() - n * 86_400_000).toLocaleDateString('en-CA')
 }
 
-// ---- 实时报价（SSE）----
+// ---- live quotes (SSE) ----
 const quotes = ref<Map<string, Quote>>(new Map())
 const quoteStatus = ref<QuoteStatus | null>(null)
 const sseState = ref<'closed' | 'connecting' | 'open'>('closed')
 let es: EventSource | null = null
 
-/** computed 而不是模板里调的函数：后者每次推送都要把整张 Map 展开排序再全表重渲。 */
+/** A computed rather than a function called from the template: the latter would spread and sort the whole Map and re-render the full table on every push. */
 const quoteList = computed(() => [...quotes.value.values()].sort((a, b) => a.instrument.symbol.localeCompare(b.instrument.symbol)))
 
 function openStream() {
@@ -135,8 +136,10 @@ async function loadBars() {
 }
 
 /**
- * 本标签页打开时连推送、离开时断开；页面切到后台断开、回来再连（与原行情页一致）。
- * 挂载与切换标签时不看可见性：有的环境（如内嵌的浏览器面板）一直报 hidden，看了就永远连不上。
+ * Connect the push stream while this tab is open and disconnect when leaving; disconnect when the page goes to the
+ * background and reconnect when it returns (same as the old market-data page).
+ * Mounting and tab switches ignore visibility: some environments (such as an embedded browser pane) always report
+ * hidden, and checking it there would never connect.
  */
 function onVisibility() {
   if (document.visibilityState === 'visible' && props.active) openStream()

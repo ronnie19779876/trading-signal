@@ -1,9 +1,12 @@
 package org.jdkxx.trader.domain.valuation;
 
 /**
- * 分部估值的情景。三个必须同时给：期权型业务（Robotaxi、Semi 这类）用单点估值没有意义，
- * 2026-09-19 对 TSLA 的实测里只动 Robotaxi 一项就能把 2030 股价从 $71 拉到 $385。
+ * Scenarios of a sum-of-the-parts valuation. All three must be given together: a single-point
+ * valuation is meaningless for option-like businesses (Robotaxi, Semi and the like); in the TSLA
+ * test of 2026-09-19, moving Robotaxi alone pulled the 2030 share price from $71 to $385.
  */
 public enum SotpScenario {
-    BEAR, BASE, BULL
+  BEAR,
+  BASE,
+  BULL
 }

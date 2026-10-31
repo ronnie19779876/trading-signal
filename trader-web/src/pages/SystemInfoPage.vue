@@ -9,8 +9,8 @@ import EventsTab from '../components/system/EventsTab.vue'
 import { useAppStore } from '../stores/app'
 
 /**
- * 系统页（运维总控台）：概况、跑批、行情数据（原行情数据底座页，/marketdata 跳到这里）、连接事件。
- * 当前标签放在 ?tab=，刷新与分享都能回到同一个标签。
+ * System page (operations console): overview, batch jobs, market data (the former market-data base page; /marketdata
+ * redirects here), connection events. The current tab lives in ?tab=, so refreshing or sharing returns to it.
  */
 const route = useRoute()
 const router = useRouter()

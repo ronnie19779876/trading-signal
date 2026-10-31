@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# 供其它脚本 source。目的：不把 JDK 路径写死——写死的绝对路径已经在别的项目里坏过，换一个绝对路径只是把失效推迟。
+# Sourced by other scripts. Purpose: never hard-code the JDK path -- a hard-coded absolute path has already
+# broken in another project, and swapping in a different absolute path only postpones the breakage.
+# JDK 21 specifically: the Futu SDK's protobuf 3.5.1 uses sun.misc.Unsafe (JDK 24+ warns, 26 throws).
 #
-#   resolve_jdk21   按序探测并**校验大版本**后输出 JDK 21 的 JAVA_HOME（目录名不足为凭，只有 java -version 是权威）
-#   require_jdk21   找不到就报错退出；找到则 export JAVA_HOME
-#   mvn_cmd         有 mvnw 用 mvnw，否则用 PATH 上的 mvn
+#   resolve_jdk21   probes candidates in order and prints the JAVA_HOME of a JDK 21 after **checking the
+#                   major version** (a directory name proves nothing; only java -version is authoritative)
+#   require_jdk21   exits with an error when none is found; otherwise exports JAVA_HOME
+#   mvn_cmd         mvnw when present, otherwise mvn from PATH
 
 resolve_jdk21() {
     local candidates=() c

@@ -10,45 +10,60 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * 环境守卫：以 {@link FlywayMigrationStrategy} 的身份接管 Flyway 迁移——先校验环境标记，通过了才迁移。
+ * Environment guard: takes over Flyway migration as the {@link FlywayMigrationStrategy}. It
+ * verifies the environment marker first and only migrates if that passes.
  *
- * <p>这样做的好处：Spring Boot 让所有依赖 DataSource/JdbcTemplate 的 bean 都等待 Flyway 初始化完成，
- * 于是守卫必然先于任何业务代码触库；校验失败抛异常，应用启动即中止，而且<b>一条迁移都没执行</b>。
+ * <p>Why this hook: Spring Boot makes every bean that depends on the DataSource/JdbcTemplate wait
+ * for Flyway initialization, so the guard is guaranteed to touch the database before any business
+ * code does. A failed check throws, startup aborts, and <b>not a single migration has run</b>.
  *
- * <p>只有 {@code trader.storage.enabled=true} 时才装配；此时 {@code trader.environment} 必填。
+ * <p>Caveat: the guard only runs because Flyway runs. With Flyway auto-configuration excluded or
+ * {@code spring.flyway.enabled=false}, this strategy is never invoked and nothing checks the marker
+ * or the standby state.
+ *
+ * <p>Only wired when {@code trader.storage.enabled=true}; {@code trader.environment} is then
+ * mandatory.
  */
 @Component
 @ConditionalOnProperty(name = "trader.storage.enabled", havingValue = "true")
 public class EnvironmentGuard implements FlywayMigrationStrategy {
 
-    private final AppEnvironment declared;
+  private final AppEnvironment declared;
 
-    public EnvironmentGuard(@Value("${trader.environment:}") String declared) {
-        try {
-            this.declared = AppEnvironment.parse(declared);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalStateException(e.getMessage(), e);
-        }
+  public EnvironmentGuard(@Value("${trader.environment:}") String declared) {
+    try {
+      this.declared = AppEnvironment.parse(declared);
+    } catch (IllegalArgumentException e) {
+      throw new IllegalStateException(e.getMessage(), e);
     }
+  }
 
-    @Override
-    public void migrate(Flyway flyway) {
-        Configuration c = flyway.getConfiguration();
-        String schema = c.getDefaultSchema();
-        String history = schema == null || schema.isBlank() ? c.getTable() : schema + "." + c.getTable();
-        guard(new JdbcMarkerStore(new JdbcTemplate(c.getDataSource()), history), flyway::migrate);
-    }
+  /**
+   * Builds the marker store from Flyway's own DataSource and history-table name so the check looks
+   * at exactly the database and schema the migrations would touch.
+   */
+  @Override
+  public void migrate(Flyway flyway) {
+    Configuration c = flyway.getConfiguration();
+    String schema = c.getDefaultSchema();
+    String history =
+        schema == null || schema.isBlank() ? c.getTable() : schema + "." + c.getTable();
+    guard(new JdbcMarkerStore(new JdbcTemplate(c.getDataSource()), history), flyway::migrate);
+  }
 
-    /** 校验 → 迁移 → 空库盖章。顺序是这个守卫的全部意义，单独拆出来测。 */
-    void guard(EnvironmentCheck.MarkerStore store, Runnable migration) {
-        EnvironmentCheck.Decision decision = EnvironmentCheck.verify(store, declared);
-        migration.run();
-        if (decision == EnvironmentCheck.Decision.STAMP_AFTER_MIGRATION) {
-            EnvironmentCheck.stampFresh(store, declared);
-        }
+  /**
+   * Verify, then migrate, then stamp an empty database. The order is the whole point of this guard,
+   * so it is split out to be tested.
+   */
+  void guard(EnvironmentCheck.MarkerStore store, Runnable migration) {
+    EnvironmentCheck.Decision decision = EnvironmentCheck.verify(store, declared);
+    migration.run();
+    if (decision == EnvironmentCheck.Decision.STAMP_AFTER_MIGRATION) {
+      EnvironmentCheck.stampFresh(store, declared);
     }
+  }
 
-    public AppEnvironment declared() {
-        return declared;
-    }
+  public AppEnvironment declared() {
+    return declared;
+  }
 }

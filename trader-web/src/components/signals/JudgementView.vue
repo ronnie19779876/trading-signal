@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import type { SentinelEvaluation } from '../../api/signals'
 import { GATE_LABEL, STATUS_LABEL, num } from './format'
 
-/** 一次四门判定的展开：判据原文、支撑区、出场预案、加分项。 */
+/** One four-gate evaluation expanded: criterion text, support zone, exit plan, bonus factors. */
 const props = defineProps<{ evaluation: SentinelEvaluation }>()
 
 const e = computed(() => props.evaluation)

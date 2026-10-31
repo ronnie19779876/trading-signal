@@ -1,4 +1,4 @@
-# ---- 构建产物 ----
+# ---- build output ----
 target/
 .flattened-pom.xml
 *.class
@@ -6,13 +6,13 @@ target/
 logs/
 dist/
 
-# ---- 第三方 SDK 的二进制：许可证不允许再分发，一律由 scripts/install-sdks.sh 本地安装 ----
+# ---- third-party SDK binaries: their licenses forbid redistribution; always installed locally by scripts/install-sdks.sh ----
 *.jar
 !.mvn/wrapper/maven-wrapper.jar
 sdk/tws-api/*.zip
 sdk/tws-api/IBJts/
 
-# ---- IDE 与系统文件 ----
+# ---- IDE and OS files ----
 .idea/
 *.iml
 *.ipr
@@ -22,23 +22,24 @@ sdk/tws-api/IBJts/
 .claude/settings.local.json
 .claude/launch.json
 
-# ---- 敏感配置：密码、网关地址/端口/client-id、交易密码 MD5、API key，永不入库 ----
+# ---- secret configuration: passwords, gateway address/port/client-id, trading-password MD5, API keys; never committed ----
 config/secrets.yml
 config/*.env
 deploy/config/trader.env
 *.env
 !*.env.example
-# 私钥文件（富途 RSA 等）
+# private key files (Futu RSA etc.)
 *.pem
 *.key
 
-# ---- 前端：依赖与构建产物不入库，产物由 scripts/package.sh 生成并打进 jar ----
+# ---- frontend: dependencies and build output are not committed; the output is produced by scripts/package.sh and bundled into the jar ----
 trader-web/node_modules/
 trader-web/dist/
 trader-app/src/main/resources/static/
 
-# Postman 客户端（Git 集成）的工作产物：它会把生成的 JSON 集合拆成目录树并改用 yaml 存环境变量，
-# 与 build_collection.py 的生成物冲突。集合以 JSON 为准，客户端产物不入库。
+# Working files of the Postman client (Git integration): it splits the generated JSON collection into a
+# directory tree and stores environments as yaml, which conflicts with what build_collection.py generates.
+# The JSON collection is authoritative; the client's files are not committed.
 docs/postman/.postman/
 docs/postman/postman/
 docs/postman/trading-signal/

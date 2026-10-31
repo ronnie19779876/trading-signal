@@ -8,10 +8,12 @@ import { sectorCn } from '../../lib/sector'
 import { big, daysAgoEt, errMsg, isoEt, money, negative, num, numMax, signed, timeEt, trend } from '../../lib/format'
 
 /**
- * 单只持仓的详情抽屉：头部数据（跟着列表一起刷新）、一年日 K 加成本线与均线、基本面摘要。
+ * Detail drawer for one position: header figures (refreshed together with the list), one year of daily bars with
+ * a cost line and moving averages, and a fundamentals summary.
  *
- * K 线用前复权：前复权保持最新价不动、只调历史价，与盈透的成本价是同一个价格尺度，成本线才画得对。
- * 现金工具（SGOV）不在标的库里，没有日 K 和基本面。
+ * Bars use forward adjustment: it keeps the latest price unchanged and only adjusts history, which puts it on the
+ * same price scale as the IBKR average cost, so the cost line is drawn correctly.
+ * Cash instruments (SGOV) are not in the instrument database and have no daily bars or fundamentals.
  */
 export interface PositionRow {
   symbol: string
@@ -33,15 +35,17 @@ export interface PositionRow {
 const props = defineProps<{
   row: PositionRow | null
   instrument: InstrumentView | null
-  /** LIVE = 盈透实时；SNAPSHOT = 收盘快照 */
+  /** LIVE = IBKR live; SNAPSHOT = closing snapshot */
   source: 'LIVE' | 'SNAPSHOT'
 }>()
 const visible = defineModel<boolean>({ default: false })
 
 /**
- * 主要指标只摘这几项。按名称匹配而不是字段编号：券商按行业套不同模板，同一个指标编号不同
- * （一般企业归母净利率是 14005，保险业的 BRK.B 是 16003），名称里的空白也不统一（"净资产收益率 （ROE）"）。
- * 某个模板里没有的项自动不显示（保险业没有毛利率，有税前利润率）。
+ * Only these key metrics are shown. They are matched by name rather than field id: the broker uses different
+ * templates per industry and the same metric has different ids (net margin attributable to shareholders is 14005
+ * for a general company but 16003 for the insurer BRK.B), and whitespace in names is inconsistent too (a stray
+ * space before the "(ROE)" part), hence the whitespace squashing. Items missing from a template are simply not
+ * shown (insurers have no gross margin but do have pre-tax margin).
  */
 const KEY_METRICS: { name: string; percent: boolean }[] = [
   { name: '毛利率', percent: true },
@@ -55,7 +59,7 @@ const KEY_METRICS: { name: string; percent: boolean }[] = [
 ]
 const squash = (s: string | null) => (s ?? '').replace(/\s+/g, '')
 
-/** 美股日线常用的三条均线 */
+/** The three moving averages commonly used on US daily charts */
 const MA = [20, 50, 200]
 const visibleFrom = daysAgoEt(365)
 
@@ -68,14 +72,14 @@ const barsError = ref<string | null>(null)
 const fundError = ref<string | null>(null)
 
 const symbol = computed(() => props.row?.symbol ?? null)
-/** 标的库里有才有日 K 与基本面 */
+/** Daily bars and fundamentals exist only for instruments in the database */
 const known = computed(() => props.instrument !== null)
 
 async function loadBars(s: string) {
   loadingBars.value = true
   barsError.value = null
   try {
-    // 多取 300 天给 MA200 预热（约 200 个交易日），图上只显示最近一年
+    // fetch 300 extra calendar days to warm up MA200 (about 200 trading days); the chart only shows the last year
     bars.value = await getBars(s, daysAgoEt(365 + 300), isoEt(), 'forward')
   } catch (e) {
     bars.value = []
@@ -105,7 +109,7 @@ async function loadFundamentals(s: string) {
   }
 }
 
-// 只在打开或换标的时取数；头部数据跟着 row 变，不重取
+// fetch only when the drawer opens or the symbol changes; header figures follow `row` without refetching
 watch([symbol, visible, known], ([s, v, k], old) => {
   if (!v || !s) return
   if (old && old[0] === s && old[1] === v && old[2] === k) return
@@ -122,7 +126,10 @@ const priceLines = computed<ChartPriceLine[]>(() => {
   return cost === null || cost === undefined ? [] : [{ price: cost, title: '成本', color: chartTheme().line, dashed: true }]
 })
 
-/** 季报在前：年报与四季报期末同一天，放在一起读不出趋势，这里只取季报，最近 4 期。 */
+/**
+ * Quarterly reports only: the annual report and Q4 share the same period end and mixed together show no trend, so
+ * only quarters are taken, the latest 4.
+ */
 const quarters = computed(() => {
   const q = reports.value.filter((r) => !r.periodText.endsWith('FY'))
   return (q.length ? q : reports.value).slice(0, 4)

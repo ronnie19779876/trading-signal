@@ -6,59 +6,71 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * 一只标的一个判定日的四门判定结果（未经边沿、冷却、AI 抑制——那是 {@link SignalSuppression} 的事）。
+ * Four-gate result for one instrument on one evaluation day (before edge, cooldown and AI
+ * suppression, which are the job of {@link SignalSuppression}).
  *
- * @param status      EVALUATED，或数据层面不予判定的原因
- * @param gates       四门结论，按门的顺序；不予判定时为空
- * @param indicators  判定日的指标取值（键序固定）
- * @param zones       回看期内的有效支撑区，按区底升序
- * @param hitZone     命中的支撑区（多个命中时取区顶最高者），没有则 null
- * @param exitPlan    出场预案；第四门不可判定时为 null
- * @param bonus       加分项（不影响通过与否）：斐波那契重合、MACD 柱为正
+ * @param status EVALUATED, or the data-level reason for not evaluating
+ * @param gates the four gate conclusions in gate order; empty when not evaluated
+ * @param indicators indicator values on the evaluation day (fixed key order)
+ * @param zones valid support zones within the lookback, ascending by bottom
+ * @param hitZone the support zone that was hit (the one with the highest top when several are hit),
+ *     null if none
+ * @param exitPlan exit plan; null when the fourth gate could not be evaluated
+ * @param bonus bonus items (do not affect pass/fail): Fibonacci confluence, positive MACD histogram
  */
 public record SentinelEvaluation(
-        String version,
-        LocalDate asOf,
-        Status status,
-        String statusDetail,
-        List<GateResult> gates,
-        Map<String, Object> indicators,
-        List<PriceZone> zones,
-        PriceZone hitZone,
-        ExitPlan exitPlan,
-        Map<String, Object> bonus) {
+    String version,
+    LocalDate asOf,
+    Status status,
+    String statusDetail,
+    List<GateResult> gates,
+    Map<String, Object> indicators,
+    List<PriceZone> zones,
+    PriceZone hitZone,
+    ExitPlan exitPlan,
+    Map<String, Object> bonus) {
 
-    public enum Status {
-        EVALUATED,
-        /** 窗口内 K 线少于最低根数 */
-        SKIPPED_INSUFFICIENT_BARS,
-        /** 最新 K 线不是应有的交易日：以陈旧数据判定会产出形式正常的错误信号且不报错 */
-        SKIPPED_STALE_DATA,
-        /** 窗口内缺失的交易日超过容忍度（对照交易日历） */
-        SKIPPED_DATA_GAP,
-        /** 窗口内的股数变动事件缺比例，或遇到未实测的事件类型：价量口径算不出来 */
-        SKIPPED_CORPORATE_ACTION
-    }
+  public enum Status {
+    EVALUATED,
+    /** Fewer bars in the window than the minimum */
+    SKIPPED_INSUFFICIENT_BARS,
+    /**
+     * The latest bar is not the expected trading day: evaluating stale data would produce a
+     * well-formed but wrong signal without any error
+     */
+    SKIPPED_STALE_DATA,
+    /**
+     * More trading days missing in the window than tolerated (checked against the trading calendar)
+     */
+    SKIPPED_DATA_GAP,
+    /**
+     * A share-count event in the window lacks its ratio, or an event type that was never verified
+     * appeared: the price/volume basis cannot be computed
+     */
+    SKIPPED_CORPORATE_ACTION
+  }
 
-    public SentinelEvaluation {
-        gates = List.copyOf(gates);
-        zones = List.copyOf(zones);
-    }
+  public SentinelEvaluation {
+    gates = List.copyOf(gates);
+    zones = List.copyOf(zones);
+  }
 
-    public static SentinelEvaluation skipped(String version, LocalDate asOf, Status status, String detail) {
-        return new SentinelEvaluation(version, asOf, status, detail, List.of(), Map.of(), List.of(), null, null, Map.of());
-    }
+  public static SentinelEvaluation skipped(
+      String version, LocalDate asOf, Status status, String detail) {
+    return new SentinelEvaluation(
+        version, asOf, status, detail, List.of(), Map.of(), List.of(), null, null, Map.of());
+  }
 
-    public boolean allPassed() {
-        return status == Status.EVALUATED && gates.stream().allMatch(GateResult::passed);
-    }
+  public boolean allPassed() {
+    return status == Status.EVALUATED && gates.stream().allMatch(GateResult::passed);
+  }
 
-    public int gatesPassed() {
-        return (int) gates.stream().filter(GateResult::passed).count();
-    }
+  public int gatesPassed() {
+    return (int) gates.stream().filter(GateResult::passed).count();
+  }
 
-    /** 首个未通过（FAIL 或 UNAVAILABLE）的门。 */
-    public Optional<GateResult.Gate> firstBlockingGate() {
-        return gates.stream().filter(g -> !g.passed()).map(GateResult::gate).findFirst();
-    }
+  /** The first gate that did not pass (FAIL or UNAVAILABLE). */
+  public Optional<GateResult.Gate> firstBlockingGate() {
+    return gates.stream().filter(g -> !g.passed()).map(GateResult::gate).findFirst();
+  }
 }

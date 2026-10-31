@@ -33,7 +33,7 @@ export interface HealthComponent {
 
 export interface Health {
   status: 'UP' | 'DEGRADED' | 'DOWN' | 'OUT_OF_SERVICE' | 'UNKNOWN'
-  /** 各组件：db、diskSpace、gateways、jobs（每类作业最近一次：值形如 "OK @ 时间：摘要"）等 */
+  /** Components: db, diskSpace, gateways, jobs (latest run of each job type, values like "OK @ time: summary") and so on */
   components?: Record<string, HealthComponent>
 }
 

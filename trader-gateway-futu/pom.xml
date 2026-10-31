@@ -20,8 +20,9 @@
             <artifactId>spring-boot-starter</artifactId>
         </dependency>
         <!--
-          重定位后的富途 SDK（见 sdk/futu-api-shaded）。optional：编译期只有本模块能 import；
-          trader-app 另有 runtime 声明只为打进 fat jar（bcprov/bcpkix 随之传递）。
+          The relocated Futu SDK (see sdk/futu-api-shaded). optional: only this module can import it at compile time;
+          trader-app has a separate runtime declaration solely to package it into the fat jar (bcprov/bcpkix come
+          along transitively).
         -->
         <dependency>
             <groupId>org.jdkxx.trader</groupId>

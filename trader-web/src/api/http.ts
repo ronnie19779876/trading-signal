@@ -1,19 +1,32 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 
-// 同源：开发期由 vite proxy 转发到 8083，生产随 jar 提供。
-// X-Trader-Client：服务端对缺这个头的写请求返回 403（挡跨站 POST，见 LocalRequestGuardFilter）。
-// GET /api/account/live 也要——它真的会向盈透发起订阅，「GET 不改状态」对它不成立。这里是实例级默认头，所有请求都带。
+// Same origin: in development the Vite proxy forwards to 8083; in production the page ships inside the jar.
+// X-Trader-Client: the server answers 403 to any write request without this header (blocks cross-site POSTs, see
+// LocalRequestGuardFilter). A browser cannot attach a custom header to a cross-site form post or a "simple" CORS
+// request without a preflight, so its presence proves the request came from our own scripts.
+// GET /api/account/live needs it too: it really does start an IBKR subscription, so "GET does not change state"
+// does not hold for it. This is an instance-level default header, so every request made through `http` carries it.
 export const http = axios.create({ timeout: 10_000, headers: { 'X-Trader-Client': 'web' } })
 
 /**
- * 读请求的自动重试（3.4.3）：只对 GET、只在**超时或连不上**（没有收到任何响应）时重试，间隔 1 秒、3 秒，最多 2 次。
- * 服务端明确回了错误（404、500……）不重试——重试也是同样结果；写请求一律不重试，避免重复执行。
- * 起因：本机经 SSH 隧道访问服务器，服务端 15 毫秒的接口走隧道要 0.5~3 秒，链路一抖就超过 10 秒（2026-10-13 仪表盘「取数失败」）。
+ * Automatic retry for read requests (3.4.3): only for GET, and only on a **timeout or connection failure** (no
+ * response received at all); delays of 1 s and 3 s, at most 2 retries.
+ * When the server explicitly answered with an error (404, 500, ...) there is no retry -- retrying would give the
+ * same result. Write requests are never retried, so a POST can never be executed twice.
+ * Background: the local machine reaches the server through an SSH tunnel; an endpoint that takes 15 ms on the
+ * server takes 0.5~3 s through the tunnel, and any hiccup on the link pushes it past 10 s (the 2026-10-13
+ * dashboard "failed to load").
  */
 export const RETRY_DELAYS_MS = [1_000, 3_000]
 
+// The retry count rides on the request config itself: axios hands the config back in error.config, and re-issuing
+// it through http.request carries the counter into the new request's config, so a request retries at most twice.
 type RetryConfig = InternalAxiosRequestConfig & { __retries?: number }
 
+/**
+ * Retry only when no response arrived at all (error.response is unset), the request was not cancelled, it is a GET,
+ * and the retry budget is not used up. Any HTTP status, including 5xx, is a real answer and is passed through.
+ */
 export function shouldRetry(error: AxiosError): boolean {
   const config = error.config as RetryConfig | undefined
   if (!config || axios.isCancel(error) || error.response) return false

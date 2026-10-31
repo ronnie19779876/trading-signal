@@ -7,8 +7,9 @@ import { errMsg, iso } from './format'
 import { chartTheme } from '../chart'
 
 /**
- * 判定日口径的 K 线加信号价位：K 线价格尺度折回判定日（之后遇到拆股也对齐），
- * 标出判定日与纸面账本的入场 / 离场，画止损、+1R、吊灯止损、参考目标与支撑区。
+ * Bars on the evaluation-date basis plus the signal levels: the bar price scale is adjusted back to the evaluation
+ * date (so it still lines up after a later split); marks the evaluation date and the paper ledger's entry / exit,
+ * and draws the stop, +1R, chandelier stop, reference target and support zone.
  */
 const props = defineProps<{
   symbol: string
@@ -29,7 +30,7 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    // 多取 300 天给 MA200 预热，图上仍从判定日前 300 天开始
+    // fetch 300 extra days to warm up MA200; the chart still starts 300 days before the evaluation date
     const from = iso(new Date(new Date(props.asOf).getTime() - 600 * 86_400_000))
     bars.value = await signalsApi.bars(props.symbol, { asOf: props.asOf, from })
   } catch (e) {

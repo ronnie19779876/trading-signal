@@ -1,8 +1,11 @@
-# 开机自启。安装：
+# Start at boot. Installation:
 #   sudo cp systemd/trading-signal.service /etc/systemd/system/
-#   sudo vi /etc/systemd/system/trading-signal.service   # 改 User / Group / WorkingDirectory
+#   sudo vi /etc/systemd/system/trading-signal.service   # set User / Group / WorkingDirectory
 #   sudo systemctl daemon-reload && sudo systemctl enable --now trading-signal
-# 之后只用 systemctl 管理，别再直接调 bin/trader.sh start/stop，否则 systemd 的状态与实际进程对不上。
+# From then on manage it with systemctl only; do not call bin/trader.sh start/stop directly any more, or
+# systemd's view of the state no longer matches the real process.
+# Type=forking: trader.sh start launches the JVM in the background, writes the PID file, and returns once
+# /actuator/health reports UP (within its own 90 s, below TimeoutStartSec).
 [Unit]
 Description=trading-signal
 After=network-online.target postgresql.service
@@ -17,11 +20,13 @@ PIDFile=/opt/trading-signal/logs/trading-signal.pid
 
 ExecStart=/opt/trading-signal/bin/trader.sh start
 ExecStop=/opt/trading-signal/bin/trader.sh stop
-# 不设 ExecReload：reload 里 restart 会先停掉主进程，Type=forking 下 unit 变成 inactive，
-# Restart=on-failure 不会拉起，reload 期间新起的进程也会被连带清理。重启一律 systemctl restart。
+# No ExecReload: a restart inside reload stops the main process first, under Type=forking the unit becomes
+# inactive, Restart=on-failure does not bring it back, and the process started during the reload gets
+# cleaned up along with it. Always restart with systemctl restart.
 
 TimeoutStartSec=120
-# ExecStop 走 /actuator/shutdown 不发信号；超过 TimeoutStopSec 后 systemd 依次 SIGTERM、SIGKILL 兜底
+# ExecStop goes through /actuator/shutdown and sends no signal; after TimeoutStopSec systemd falls back to
+# SIGTERM, then SIGKILL
 TimeoutStopSec=60
 
 Restart=on-failure

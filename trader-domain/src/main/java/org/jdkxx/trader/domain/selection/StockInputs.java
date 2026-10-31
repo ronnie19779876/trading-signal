@@ -5,15 +5,24 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * 一只标的某天的打分输入。exclusion 非空表示不参与（指标照样带上，便于审计）。
+ * Scoring input of one instrument on one day. A non-null {@code exclusion} means it does not take
+ * part (metrics are still carried along for auditing).
  *
- * @param applicable 该标的适用的指标（银行、保险模板没有毛利率与自由现金流利润率）；因子分「至少一半指标有值」按它算
+ * @param applicable metrics applicable to this instrument (the bank and insurance templates have no
+ *     gross margin or FCF margin); the factor rule "at least half of the metrics have values"
+ *     counts against it
  */
-public record StockInputs(long instrumentId, String symbol, String sector, Exclusion exclusion, String exclusionDetail,
-                          Map<Metric, Double> metrics, Set<Metric> applicable) {
+public record StockInputs(
+    long instrumentId,
+    String symbol,
+    String sector,
+    Exclusion exclusion,
+    String exclusionDetail,
+    Map<Metric, Double> metrics,
+    Set<Metric> applicable) {
 
-    public StockInputs {
-        Objects.requireNonNull(metrics, "metrics");
-        Objects.requireNonNull(applicable, "applicable");
-    }
+  public StockInputs {
+    Objects.requireNonNull(metrics, "metrics");
+    Objects.requireNonNull(applicable, "applicable");
+  }
 }

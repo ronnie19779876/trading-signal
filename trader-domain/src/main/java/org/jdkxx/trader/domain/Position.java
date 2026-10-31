@@ -4,41 +4,56 @@ import java.math.BigDecimal;
 import java.util.Objects;
 
 /**
- * 券商账户里的一条持仓，券商原样口径（还没有与本系统的标的建立映射）。
+ * One position in a broker account, exactly as the broker reports it (not yet mapped to an
+ * instrument of this system).
  *
- * <p>brokerRef 是券商内部合约标识（盈透 conId），比代码稳定，映射到本系统标的时优先用它；
- * symbol 保留券商写法（盈透的类别股用空格，如 {@code BRK B}，本系统写 {@code BRK.B}）。
- * 数量可能是小数（碎股），也可能是 0（当天已清仓的条目券商仍可能列出）；averageCost 券商没给时为 null。
+ * <p>{@code brokerRef} is the broker's internal contract id (IBKR conId). It is more stable than
+ * the symbol and is preferred when mapping to an instrument of this system; {@code symbol} keeps
+ * the broker's spelling (IBKR writes share classes with a space, e.g. {@code BRK B}, while this
+ * system writes {@code BRK.B}). The quantity may be fractional (fractional shares) or 0 (the broker
+ * may still list a position closed today); {@code averageCost} is null when the broker did not
+ * supply it.
  *
- * <p>accountId 是券商原始账户号，只在服务端内存里流转，{@link #toString()} 不带它。
+ * <p>{@code accountId} is the broker's raw account number; it only travels in server-side memory
+ * and {@link #toString()} leaves it out.
  */
 public record Position(
-        Broker broker,
-        String accountId,
-        String brokerRef,
-        String symbol,
-        String localSymbol,
-        String securityType,
-        String exchange,
-        String primaryExchange,
-        String currency,
-        BigDecimal quantity,
-        BigDecimal averageCost) {
+    Broker broker,
+    String accountId,
+    String brokerRef,
+    String symbol,
+    String localSymbol,
+    String securityType,
+    String exchange,
+    String primaryExchange,
+    String currency,
+    BigDecimal quantity,
+    BigDecimal averageCost) {
 
-    public Position {
-        Objects.requireNonNull(broker, "broker");
-        Objects.requireNonNull(quantity, "quantity");
-        if (accountId == null || accountId.isBlank()) {
-            throw new IllegalArgumentException("accountId 不能为空");
-        }
-        if (brokerRef == null || brokerRef.isBlank()) {
-            throw new IllegalArgumentException("brokerRef 不能为空");
-        }
+  public Position {
+    Objects.requireNonNull(broker, "broker");
+    Objects.requireNonNull(quantity, "quantity");
+    if (accountId == null || accountId.isBlank()) {
+      throw new IllegalArgumentException("accountId 不能为空");
     }
+    if (brokerRef == null || brokerRef.isBlank()) {
+      throw new IllegalArgumentException("brokerRef 不能为空");
+    }
+  }
 
-    /** 防止账户号被无意打进日志。 */
-    @Override
-    public String toString() {
-        return "Position[" + broker + " **** " + symbol + " ref=" + brokerRef + " " + securityType + " qty=" + quantity + "]";
-    }
+  /** Keeps the account number from being logged by accident. */
+  @Override
+  public String toString() {
+    return "Position["
+        + broker
+        + " **** "
+        + symbol
+        + " ref="
+        + brokerRef
+        + " "
+        + securityType
+        + " qty="
+        + quantity
+        + "]";
+  }
 }

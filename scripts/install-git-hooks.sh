@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 安装 pre-commit hook：提交前跑 scripts/check-secrets.sh --staged。每台开发机克隆后执行一次。
+# Installs the pre-commit hook, which runs scripts/check-secrets.sh --staged before every commit.
+# Run once on every development machine after cloning. Overwrites any existing pre-commit hook.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 hook=.git/hooks/pre-commit

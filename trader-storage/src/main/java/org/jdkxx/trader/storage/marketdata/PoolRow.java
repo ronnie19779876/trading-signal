@@ -1,8 +1,6 @@
 package org.jdkxx.trader.storage.marketdata;
 
+import java.time.Instant;
 import org.jdkxx.trader.domain.PoolRole;
 
-import java.time.Instant;
-
-public record PoolRow(long instrumentId, PoolRole role, String note, Instant addedAt) {
-}
+public record PoolRow(long instrumentId, PoolRole role, String note, Instant addedAt) {}

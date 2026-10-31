@@ -15,7 +15,7 @@ export interface InstrumentView {
   depth: string | null
   earliest: string | null
   latest: string | null
-  /** 日 K 真实条数（3.0.7 起取自 daily_bar；此前取的是同步状态里的最近一次写入条数，所有标的恒为 6） */
+  /** Actual number of daily bars (taken from daily_bar since 3.0.7; before that it was the row count of the last write in the sync state, which was always 6 for every instrument) */
   barCount: number
   lastError: string | null
 }
@@ -30,13 +30,13 @@ export interface QuotaView {
 export interface RunningJob {
   id: number
   job: string
-  /** MANUAL 手工、SCHEDULE 定时、CATCHUP 当天补偿检查补跑 */
+  /** MANUAL = by hand, SCHEDULE = scheduled, CATCHUP = re-run by the same-day catch-up check */
   trigger: string
   startedAt: string
   progress: string
 }
 
-/** 交易日历覆盖。券商只能给到约 2016-09，更早的是从日 K 线反推的。 */
+/** Trading-calendar coverage. The broker only goes back to about 2016-09; earlier days are derived from daily bars. */
 export interface CalendarView {
   earliest: string | null
   latest: string | null
@@ -53,7 +53,7 @@ export interface CoverageView {
   universeSize: number
   poolSize: number
   holdingSize: number
-  /** 基准标的（只采集不选股，如纳指 100 ETF） */
+  /** Benchmark instruments (collected but never selected, e.g. a Nasdaq-100 ETF) */
   benchmarkSize: number
   unresolved: number
   universeCovered: number
@@ -71,7 +71,7 @@ export interface JobRun {
   trigger: string
   startedAt: string
   finishedAt: string | null
-  /** SKIPPED = 调度重试到底仍被占用而放弃 */
+  /** SKIPPED = the scheduler retried until it gave up because another job still held the slot */
   status: 'RUNNING' | 'OK' | 'PARTIAL' | 'FAILED' | 'SKIPPED'
   summary: string | null
 }
@@ -96,12 +96,12 @@ export type Adjust = 'none' | 'forward' | 'backward'
 export interface TradingDay {
   date: string
   kind: number
-  /** FUTU 券商给的（约 2016-09 起）；DERIVED 从日 K 线反推（更早，券商取不到） */
+  /** FUTU = provided by the broker (from about 2016-09); DERIVED = inferred from daily bars (earlier, unavailable from the broker) */
   source: 'FUTU' | 'DERIVED'
 }
 
 export const getCoverage = async () => (await http.get<CoverageView>('/api/bars/coverage')).data
-/** 日线数据审计（收盘巡检第一段），默认最近应有收盘 K 的交易日 */
+/** Daily-bar audit (section one of the after-close daily check); defaults to the latest trading day that should have a settled bar */
 export const getBarAudit = async (date?: string) =>
   (await http.get<AuditReport>('/api/bars/audit', { params: date ? { date } : {}, timeout: 120_000 })).data
 export const getCalendar = async (from?: string, to?: string) =>
@@ -114,15 +114,16 @@ export interface GapView {
   lastMissing: string
 }
 
-/** 对照交易日历深扫缺口；前收连续性检查查不出这类问题。 */
+/** Deep scan for gaps against the trading calendar; the prior-close continuity check cannot detect these. */
 export const getGaps = async (limit = 50) =>
   (await http.get<GapView[]>('/api/bars/gaps', { params: { limit } })).data
 export const backfillCalendar = async () => (await http.post<{ jobId: number }>('/api/bars/calendar/backfill')).data
 
 /**
- * 落在交易日历之外的 K 线（券商在美股假日给过脏数据）。
- * found 是总数，listed（= bars.length）是本次列出、也是本次最多会删的条数，
- * deleted 只可能是 0 或 listed，remaining 是删完还剩多少——found > listed 时要再跑一轮。
+ * Bars that fall outside the trading calendar (the broker has returned junk bars on US market holidays).
+ * found is the total; listed (= bars.length) is how many are listed this time, which is also the most this call
+ * will delete; deleted can only be 0 or listed; remaining is what is left afterwards -- when found > listed another
+ * round is needed.
  */
 export interface PhantomCleanup {
   applied: boolean
@@ -142,20 +143,21 @@ export interface PhantomCleanup {
   }[]
 }
 
-/** apply 默认 false 只试跑列清单；确认无误后传 true 才真删——只删试跑列出来的那些，多的留到下一轮。 */
+/** apply defaults to false and only does a dry run that lists the bars; pass true after checking to really delete -- only the listed ones are deleted, the rest wait for the next round. */
 export const cleanupPhantomBars = async (apply = false) =>
   (await http.post<PhantomCleanup>('/api/bars/cleanup/phantom', null, { params: { apply } })).data
 export const getJobs = async (limit = 15) => (await http.get<{ running: RunningJob | Record<string, never>; recent: JobRun[] }>('/api/jobs', { params: { limit } })).data
 export const getPool = async () => (await http.get<InstrumentView[]>('/api/pool')).data
 export const getUniverse = async (index?: string) => (await http.get<InstrumentView[]>('/api/universe', { params: index ? { index } : {} })).data
-/** HOLDING 由盈透持仓自动维护，手工加入后端返回 409，所以这里不接受。 */
+/** HOLDING is maintained automatically from IBKR positions and a manual add returns 409, so it is not accepted here. */
 export const addToPool = async (symbol: string, role: 'POOL' | 'BENCHMARK') =>
   (await http.post(`/api/pool/${encodeURIComponent(symbol)}`, null, { params: { role } })).data
 export const removeFromPool = async (symbol: string) => (await http.delete(`/api/pool/${encodeURIComponent(symbol)}`)).data
 /**
- * force 越过「单次退出数」守护（见后端 UniverseSyncService.apply）。
- * 故意不做成页面按钮：守护挡下的是"来源突然少给几百只"，需要人先去看一眼来源页面再决定，
- * 一键放行等于把守护变成摆设。要放行请走 curl / Postman 显式带 force=true。
+ * force bypasses the "removals per sync" guard (see the backend UniverseSyncService.apply).
+ * Deliberately not exposed as a page button: what the guard stops is "the source suddenly returns a few hundred
+ * fewer names", and a human has to look at the source page before deciding; a one-click override would make the
+ * guard pointless. To override, use curl / Postman with an explicit force=true.
  */
 export const syncUniverse = async (force = false) =>
   (await http.post<{ jobId: number }>('/api/universe/sync', null, { params: force ? { force: true } : {} })).data

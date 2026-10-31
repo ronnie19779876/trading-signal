@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 #
-# 主库宕机时把备库强制提升为主库（不走计划内切换的握手）。只在主库那台确实不可用时用。
+# Force-promotes the standby to primary when the primary is down (skipping the planned-switchover
+# handshake). Use only when the primary's machine really is unavailable.
 #   ./scripts/replica/promote.sh vps|shanghai
-# 代价：主库宕机前还没传到备库的写入丢失（链路正常时是几秒，链路断着时是断开期间的全部）。
-# 之后：原主库恢复时**不要启动它上面的应用**——它的 PG 会以主库身份起来（数据停在宕机那一刻），
-# status.sh 会报两个主库；用 scripts/replica/reseed.sh <原主库> 把它重建成备库（2026-10-19 演练里 pg_rewind 也行，
-# 但需要额外的超级用户连接；全量重建 3.3 GB 约半小时，简单可靠）。
+# Cost: writes not yet shipped to the standby before the primary went down are lost (a few seconds when
+# the link was healthy; everything since the disconnect when the link was down).
+# Afterwards: when the old primary comes back, **do not start the application on it** -- its PG comes up as
+# a primary (data frozen at the moment it went down) and status.sh reports two primaries; rebuild it as a
+# standby with scripts/replica/reseed.sh <old primary> (pg_rewind also worked in the 2026-10-19 drill but
+# needs an extra superuser connection; a full rebuild of 3.3 GB takes about half an hour and is simple and
+# reliable).
+# The old side's state is judged from SSH + one SQL query; an empty SQL result only means the query failed,
+# which is reported as "database not running" and then left to the operator's confirmation.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 source scripts/replica/lib.sh

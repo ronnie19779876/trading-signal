@@ -1,6 +1,6 @@
 import { http } from './http'
 
-/** 与 docs/API.md「模型第二意见（第 4 期·步骤 4）」一一对应。模型只有否决权。 */
+/** Mirrors the "model second opinion (phase 4, step 4)" section of docs/API.md. The model only has a veto. */
 
 export type AiStatus = 'OK' | 'REFUSED' | 'TRUNCATED' | 'INVALID' | 'FAILED' | 'SKIPPED_BUDGET' | 'FAILED_DATA'
 export type AiVerdict = 'VETO' | 'ALLOW' | 'ABSENT'
@@ -8,7 +8,7 @@ export type Stance = 'BULLISH' | 'NEUTRAL' | 'BEARISH' | 'AVOID'
 export type Confidence = 'HIGH' | 'MEDIUM' | 'LOW'
 
 export interface Evidence {
-  /** 输入 JSON 里的字段路径 */
+  /** Field path within the input JSON */
   field: string
   value: string
   point: string
@@ -98,7 +98,7 @@ export const aiApi = {
   list: async (p: { from?: string; to?: string; status?: string; symbol?: string; limit?: number }) =>
     (await http.get<AiAnalysis[]>('/api/ai/analyses', { params: opt(p) })).data,
   find: async (id: number) => (await http.get<AiAnalysis>(`/api/ai/analyses/${id}`)).data,
-  /** 同步调用模型（约 15~30 秒，会计费；计入每日上限；同一输入已有结论直接复用）。 */
+  /** Calls the model synchronously (about 15~30 s, billed; counts toward the daily limit; an existing conclusion for the same input is reused). A POST, so http.ts never retries it. */
   analyze: async (symbol: string, date: string) =>
     (await http.post<AiAnalysis>('/api/ai/analyses', null, { params: { symbol, date }, timeout: 120_000 })).data,
 }

@@ -1,26 +1,35 @@
 package org.jdkxx.trader.gateway;
 
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import org.jdkxx.trader.domain.AccountSummary;
 import org.jdkxx.trader.domain.Broker;
 import org.jdkxx.trader.domain.Position;
 
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
-
 /**
- * 账户端口（第 3 期）：持仓与资金汇总，全部只读。本期只有盈透实现。
+ * Account port (phase 3): positions and the funds summary, all read-only. Only IBKR implements it
+ * in this phase.
  *
- * <p>accountId 是券商原始账户号，由调用方从 {@link BrokerGateway#accounts()} 取得；
- * 实现与调用方都不得把它写进日志、异常消息或接口返回。
- * 两个请求都是"请求 → 收齐 → 立刻取消"的一次性查询，不保留订阅。
+ * <p>{@code accountId} is the broker's raw account number, obtained by the caller from {@link
+ * BrokerGateway#accounts()}; neither implementations nor callers may put it into logs, exception
+ * messages or API responses. Positions are a one-shot query. For IBKR the funds summary is
+ * <em>not</em> a one-shot query since 3.0.9: it reads the latest batch of the standing
+ * account-summary subscription (see {@link LiveAccountGateway} for why), so its values can be up to
+ * one push interval (about 3 minutes) old.
  */
 public interface AccountGateway {
 
-    Broker broker();
+  Broker broker();
 
-    /** 当前全部持仓，券商原样（可能含数量为 0 的当天清仓条目，由调用方决定是否保留）。 */
-    CompletableFuture<List<Position>> positions(String accountId);
+  /**
+   * All current positions exactly as the broker reports them (may include zero-quantity entries for
+   * positions closed today; the caller decides whether to keep them).
+   */
+  CompletableFuture<List<Position>> positions(String accountId);
 
-    /** 资金汇总。同一账户并发调用会合并成一次券商请求。 */
-    CompletableFuture<AccountSummary> accountSummary(String accountId);
+  /**
+   * Funds summary. Concurrent calls for the same account are coalesced into a single broker
+   * request.
+   */
+  CompletableFuture<AccountSummary> accountSummary(String accountId);
 }

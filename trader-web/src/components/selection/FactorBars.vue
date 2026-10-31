@@ -2,7 +2,7 @@
 import { FACTORS, score } from '../../lib/selection'
 import type { ScoreView } from '../../api/selection'
 
-/** 四个因子分（0~100，板块内百分位的平均）画成四根小横条；缺的因子显示空槽。 */
+/** The four factor scores (0~100, mean of within-sector percentiles) as four small horizontal bars; a missing factor shows an empty slot. */
 defineProps<{ row: Pick<ScoreView, 'valueScore' | 'growthScore' | 'profitScore' | 'momentumScore'> }>()
 </script>
 

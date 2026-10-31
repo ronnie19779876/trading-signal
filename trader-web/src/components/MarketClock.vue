@@ -2,8 +2,9 @@
 import { SESSION_LABEL, useMarketClock } from '../composables/useMarketClock'
 
 /**
- * 页头的美东时段灯：盘中绿色呼吸、盘前盘后蓝色、休市灰色。
- * 做成独立组件是为了把每秒一次的走时关在这里，不让整个页面每秒重渲染。
+ * The header's US/Eastern session indicator: pulsing green during the regular session, blue pre-/after-market,
+ * gray when closed. It is a separate component so the once-per-second clock tick re-renders only this component,
+ * not the whole page.
  */
 const { et, session, nextOpen, halfDay } = useMarketClock()
 </script>

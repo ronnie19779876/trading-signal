@@ -1,5 +1,8 @@
 package org.jdkxx.trader.storage.marketdata;
 
+import java.sql.Date;
+import java.util.ArrayList;
+import java.util.List;
 import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.domain.RehabFactor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -7,34 +10,58 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.sql.Date;
-import java.util.ArrayList;
-import java.util.List;
-
+/**
+ * Price-adjustment factors per ex-date ({@code rehab_factor}, Futu convention: forward-adjusted
+ * price = unadjusted price × fwd_a + fwd_b). Futu's factors are per-event ratios, not cumulative;
+ * compounding happens in the reader.
+ */
 @Repository
 @ConditionalOnProperty(name = "trader.storage.enabled", havingValue = "true")
 public class RehabFactorRepository {
 
-    private final JdbcTemplate jdbc;
+  private final JdbcTemplate jdbc;
 
-    public RehabFactorRepository(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
+  public RehabFactorRepository(JdbcTemplate jdbc) {
+    this.jdbc = jdbc;
+  }
+
+  /**
+   * Replaces all factors of the instrument (the broker recomputes historical factors, so appending
+   * is not enough). Delete-then-insert, hence the transaction: a failure must not leave the
+   * instrument with no factors, which would silently read as "no corporate actions". An empty list
+   * clears the instrument's factors.
+   */
+  @Transactional
+  public void replaceAll(long instrumentId, List<RehabFactor> factors) {
+    jdbc.update("DELETE FROM rehab_factor WHERE instrument_id = ?", instrumentId);
+    if (factors.isEmpty()) {
+      return;
     }
-
-    /** 整体替换该标的的因子（券商会重算历史因子，不能只追加）。 */
-    @Transactional
-    public void replaceAll(long instrumentId, List<RehabFactor> factors) {
-        jdbc.update("DELETE FROM rehab_factor WHERE instrument_id = ?", instrumentId);
-        if (factors.isEmpty()) {
-            return;
-        }
-        List<Object[]> args = new ArrayList<>(factors.size());
-        for (RehabFactor f : factors) {
-            args.add(new Object[] {instrumentId, Date.valueOf(f.exDate()), f.fwdA(), f.fwdB(), f.bwdA(), f.bwdB(),
-                    f.companyActFlag(), f.dividend(), f.spDividend(), f.splitBase(), f.splitErt(), f.joinBase(), f.joinErt(),
-                    f.bonusBase(), f.bonusErt(), f.transferBase(), f.transferErt()});
-        }
-        jdbc.batchUpdate("""
+    List<Object[]> args = new ArrayList<>(factors.size());
+    for (RehabFactor f : factors) {
+      args.add(
+          new Object[] {
+            instrumentId,
+            Date.valueOf(f.exDate()),
+            f.fwdA(),
+            f.fwdB(),
+            f.bwdA(),
+            f.bwdB(),
+            f.companyActFlag(),
+            f.dividend(),
+            f.spDividend(),
+            f.splitBase(),
+            f.splitErt(),
+            f.joinBase(),
+            f.joinErt(),
+            f.bonusBase(),
+            f.bonusErt(),
+            f.transferBase(),
+            f.transferErt()
+          });
+    }
+    jdbc.batchUpdate(
+        """
                 INSERT INTO rehab_factor (instrument_id, ex_date, fwd_a, fwd_b, bwd_a, bwd_b, company_act_flag, dividend,
                                           sp_dividend, split_base, split_ert, join_base, join_ert, bonus_base, bonus_ert,
                                           transfer_base, transfer_ert)
@@ -44,32 +71,53 @@ public class RehabFactorRepository {
                     dividend = EXCLUDED.dividend, sp_dividend = EXCLUDED.sp_dividend, split_base = EXCLUDED.split_base,
                     split_ert = EXCLUDED.split_ert, join_base = EXCLUDED.join_base, join_ert = EXCLUDED.join_ert,
                     bonus_base = EXCLUDED.bonus_base, bonus_ert = EXCLUDED.bonus_ert, transfer_base = EXCLUDED.transfer_base,
-                    transfer_ert = EXCLUDED.transfer_ert, fetched_at = now()""", args);
-    }
+                    transfer_ert = EXCLUDED.transfer_ert, fetched_at = now()""",
+        args);
+  }
 
-    /** 多只标的一次取出（按标的分组、除权日升序）。 */
-    public java.util.Map<Long, List<RehabFactor>> findMany(java.util.Map<Long, Instrument> instruments) {
-        java.util.Map<Long, List<RehabFactor>> out = new java.util.HashMap<>();
-        if (instruments.isEmpty()) {
-            return out;
-        }
-        jdbc.query("SELECT * FROM rehab_factor WHERE instrument_id = ANY (?) ORDER BY instrument_id, ex_date", rs -> {
-            long id = rs.getLong("instrument_id");
-            out.computeIfAbsent(id, k -> new ArrayList<>()).add(map(instruments.get(id), rs));
-        }, (Object) instruments.keySet().toArray(Long[]::new));
-        return out;
+  /** Loads several instruments at once (grouped by instrument, ex-dates ascending). */
+  public java.util.Map<Long, List<RehabFactor>> findMany(
+      java.util.Map<Long, Instrument> instruments) {
+    java.util.Map<Long, List<RehabFactor>> out = new java.util.HashMap<>();
+    if (instruments.isEmpty()) {
+      return out;
     }
+    jdbc.query(
+        "SELECT * FROM rehab_factor WHERE instrument_id = ANY (?) ORDER BY instrument_id, ex_date",
+        rs -> {
+          long id = rs.getLong("instrument_id");
+          out.computeIfAbsent(id, k -> new ArrayList<>()).add(map(instruments.get(id), rs));
+        },
+        (Object) instruments.keySet().toArray(Long[]::new));
+    return out;
+  }
 
-    private static RehabFactor map(Instrument instrument, java.sql.ResultSet rs) throws java.sql.SQLException {
-        return new RehabFactor(instrument, rs.getDate("ex_date").toLocalDate(), rs.getBigDecimal("fwd_a"),
-                rs.getBigDecimal("fwd_b"), rs.getBigDecimal("bwd_a"), rs.getBigDecimal("bwd_b"),
-                rs.getLong("company_act_flag"), rs.getBigDecimal("dividend"), rs.getBigDecimal("sp_dividend"),
-                rs.getInt("split_base"), rs.getInt("split_ert"), rs.getInt("join_base"), rs.getInt("join_ert"),
-                rs.getInt("bonus_base"), rs.getInt("bonus_ert"), rs.getInt("transfer_base"), rs.getInt("transfer_ert"));
-    }
+  private static RehabFactor map(Instrument instrument, java.sql.ResultSet rs)
+      throws java.sql.SQLException {
+    return new RehabFactor(
+        instrument,
+        rs.getDate("ex_date").toLocalDate(),
+        rs.getBigDecimal("fwd_a"),
+        rs.getBigDecimal("fwd_b"),
+        rs.getBigDecimal("bwd_a"),
+        rs.getBigDecimal("bwd_b"),
+        rs.getLong("company_act_flag"),
+        rs.getBigDecimal("dividend"),
+        rs.getBigDecimal("sp_dividend"),
+        rs.getInt("split_base"),
+        rs.getInt("split_ert"),
+        rs.getInt("join_base"),
+        rs.getInt("join_ert"),
+        rs.getInt("bonus_base"),
+        rs.getInt("bonus_ert"),
+        rs.getInt("transfer_base"),
+        rs.getInt("transfer_ert"));
+  }
 
-    public List<RehabFactor> find(Instrument instrument, long instrumentId) {
-        return jdbc.query("SELECT * FROM rehab_factor WHERE instrument_id = ? ORDER BY ex_date",
-                (rs, i) -> map(instrument, rs), instrumentId);
-    }
+  public List<RehabFactor> find(Instrument instrument, long instrumentId) {
+    return jdbc.query(
+        "SELECT * FROM rehab_factor WHERE instrument_id = ? ORDER BY ex_date",
+        (rs, i) -> map(instrument, rs),
+        instrumentId);
+  }
 }

@@ -5,7 +5,7 @@ import JudgementView from './JudgementView.vue'
 import SignalChart from './SignalChart.vue'
 import { errMsg } from './format'
 
-/** 某只某天的四门判定（现场计算）加 K 线。 */
+/** The four-gate evaluation of one instrument on one day (computed on the fly) plus its chart. */
 const props = defineProps<{ symbol: string | null; date: string | null }>()
 const visible = defineModel<boolean>({ default: false })
 

@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 #
-# 生产实例的启停。工作目录是发布包根目录（bin/ config/ lib/ logs/）。
+# Starts and stops the production instance. The working directory is the package root (bin/ config/ lib/ logs/).
 #
 #   bin/trader.sh start | stop | restart | status | tail
 #
-# stop 走 POST /actuator/shutdown：先排空在途请求，再关闭上下文、执行 @PreDestroy（断网关、停线程池、
-# 释放连接池），最后 JVM 正常退出。脚本本身不对进程发信号；systemd 的 TimeoutStopSec 是最后兜底。
+# stop goes through POST /actuator/shutdown: in-flight requests drain first, then the context closes and
+# runs @PreDestroy (disconnect the gateways, stop thread pools, release the connection pool), and finally
+# the JVM exits normally. The script itself never signals the process; systemd's TimeoutStopSec is the
+# last resort.
+# config/trader.env (secrets, not in the repository) is sourced with set -a, so its values reach the JVM as
+# environment variables and Spring's relaxed binding maps them (TRADER_IBKR_HOST -> trader.ibkr.host).
+# "Running" means the PID in the PID file is alive (kill -0); the PID is not checked to be this JVM.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -57,7 +62,7 @@ stop() {
     if ! is_running; then echo "未在运行"; rm -f "$PID_FILE"; return 0; fi
     local pid; pid="$(cat "$PID_FILE")"
     echo "停止 trading-signal（pid $pid）—— 调用 /actuator/shutdown ..."
-    # X-Trader-Client：服务端对缺这个头的写请求返回 403（2.0.2 起）
+    # X-Trader-Client: since 2.0.2 the server answers 403 to write requests without this header
     curl -s -X POST -H 'X-Trader-Client: script' "http://127.0.0.1:$(app_port)/actuator/shutdown" >/dev/null || true
     for ((i = 0; i < STOP_TIMEOUT; i++)); do
         kill -0 "$pid" 2>/dev/null || { rm -f "$PID_FILE"; echo "已停止"; return 0; }
