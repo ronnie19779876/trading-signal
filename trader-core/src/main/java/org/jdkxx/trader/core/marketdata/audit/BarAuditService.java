@@ -282,7 +282,11 @@ public class BarAuditService {
     // 3. Previous-close continuity over the last 30 calendar days (a mismatch = a missed day or bad
     //    data). This query covers every instrument in the table, not only d's targets; non-targets
     //    show up as "#id". It cannot find a gap whose last_close is self-consistent (check 8
-    //    compares with the calendar for that)
+    //    compares with the calendar for that).
+    // The count is the uncapped total from continuityIssueCount; the list (capped at 50) only
+    // provides samples. Using the list length as the count stopped at 50 (found in the 2026-10-31
+    // review, same trap as the phantom bars below)
+    int issueTotal = bars.continuityIssueCount(d.minusDays(30), d);
     List<DailyBarRepository.ContinuityIssue> issues = bars.continuityIssues(d.minusDays(30), d, 50);
     Map<Long, InstrumentRow> byId = targets;
     List<String> samples =
@@ -302,10 +306,10 @@ public class BarAuditService {
     checks.add(
         new Check(
             "continuity",
-            issues.isEmpty(),
+            issueTotal == 0,
             true,
-            issues.isEmpty() ? "最近 30 天前收与上一根收盘全部一致" : issues.size() + " 处前收与上一根收盘不一致（可能漏日）",
-            issues.size(),
+            issueTotal == 0 ? "最近 30 天前收与上一根收盘全部一致" : issueTotal + " 处前收与上一根收盘不一致（可能漏日）",
+            issueTotal,
             head(samples, 20)));
 
     // 4. Price-adjustment factor freshness (refreshed within 8 days). Measured against now, not d:
@@ -415,8 +419,12 @@ public class BarAuditService {
     // The filter is pushed down into SQL: LIMIT 20 first and then filtering by targets in memory
     // amounts to "truncate, then filter"; when the first 20 rows happened to be instruments we do
     // not care about, the result was empty and the daily check reported "no gaps" (fixed in 3.1.2).
-    // The result is still capped at 20 instruments, so the counts below are a lower bound when the
-    // cap is hit
+    // The list is capped at 20 instruments and only provides samples; the instrument count and the
+    // missing-day total come from gapTotals, which has no limit. Before 3.5.2 both were taken from
+    // the capped list, so they stopped at 20 instruments and the days of the rest were dropped
+    // (found in the 2026-10-31 review)
+    DailyBarRepository.GapTotals gapTotals =
+        bars.gapTotals(d.minusDays(GAP_WINDOW_DAYS), d, targets.keySet());
     List<DailyBarRepository.InstrumentGap> gaps =
         bars.gaps(d.minusDays(GAP_WINDOW_DAYS), d, 20, targets.keySet());
     List<String> gapSamples =
@@ -432,16 +440,16 @@ public class BarAuditService {
                         + g.lastMissing()
                         + "）")
             .toList();
-    long missingDays = gaps.stream().mapToLong(DailyBarRepository.InstrumentGap::missing).sum();
+    long missingDays = gapTotals.missingDays();
     summary.put("recentGapDays", missingDays);
     checks.add(
         new Check(
             "historyGaps",
-            gaps.isEmpty(),
+            gapTotals.instruments() == 0,
             false,
-            gaps.isEmpty()
+            gapTotals.instruments() == 0
                 ? "最近 " + GAP_WINDOW_DAYS + " 天对照交易日历没有缺口"
-                : gaps.size()
+                : gapTotals.instruments()
                     + " 只在最近 "
                     + GAP_WINDOW_DAYS
                     + " 天有缺口，共 "
@@ -488,10 +496,12 @@ public class BarAuditService {
     //     intraday price.
     // Since 2.0.2 writes are filtered by the cutoff, so none should appear; older ones are
     // re-fetched and overwritten by the next increment automatically, hence advisory only. The
-    // query is capped at 1000 rows, so the reported count saturates at 1000
+    // count is the uncapped total from unsettledBarCount and the list only provides samples; before
+    // 3.5.2 the count was the length of a list capped at 1000 (found in the 2026-10-31 review)
     ZoneId zone = ZoneId.of(props.zone());
+    int unsettledTotal = bars.unsettledBarCount(zone, SnapshotWindow.OPENS);
     List<DailyBarRepository.UnsettledBar> unsettled =
-        bars.unsettledBars(zone, SnapshotWindow.OPENS, 1000);
+        bars.unsettledBars(zone, SnapshotWindow.OPENS, 20);
     List<String> unsettledSamples =
         unsettled.stream()
             .map(
@@ -503,16 +513,16 @@ public class BarAuditService {
                         + u.fetchedAt().atZone(zone).toLocalDateTime().withNano(0)
                         + "）")
             .toList();
-    summary.put("unsettledBars", unsettled.size());
+    summary.put("unsettledBars", unsettledTotal);
     checks.add(
         new Check(
             "unsettledBars",
-            unsettled.isEmpty(),
+            unsettledTotal == 0,
             false,
-            unsettled.isEmpty()
+            unsettledTotal == 0
                 ? "没有收盘落定前写入的 K 线"
-                : unsettled.size() + " 根 K 线在当天收盘落定（美东 16:15）前写入，可能是盘中价；下一次增量会自动重拉覆盖",
-            unsettled.size(),
+                : unsettledTotal + " 根 K 线在当天收盘落定（美东 16:15）前写入，可能是盘中价；下一次增量会自动重拉覆盖",
+            unsettledTotal,
             head(unsettledSamples, 20)));
 
     // 11. Futu gateway

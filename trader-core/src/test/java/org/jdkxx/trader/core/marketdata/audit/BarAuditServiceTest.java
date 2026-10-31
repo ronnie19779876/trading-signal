@@ -101,6 +101,7 @@ class BarAuditServiceTest {
     TradingDayRepository days = mock(TradingDayRepository.class);
     when(days.covers(eq(Market.US), any())).thenReturn(false);
     DailyBarRepository bars = mock(DailyBarRepository.class);
+    when(bars.gapTotals(any(), any(), any())).thenReturn(new DailyBarRepository.GapTotals(0, 0));
     when(bars.instrumentIdsWithBarOn(any())).thenReturn(Set.of());
     when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(0, 0, 0, 0, 0, 0));
     when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
@@ -231,6 +232,7 @@ class BarAuditServiceTest {
             new TradingDayRepository.Coverage(
                 LocalDate.of(2006, 8, 21), LocalDate.of(2026, 10, 16), 5071, 2539, 2532));
     DailyBarRepository bars = mock(DailyBarRepository.class);
+    when(bars.gapTotals(any(), any(), any())).thenReturn(new DailyBarRepository.GapTotals(0, 0));
     // Every expected target has a bar: this case wants "completeness fully green, yet the downgrade
     // is still named"
     Set<Long> withBar =
@@ -263,6 +265,7 @@ class BarAuditServiceTest {
             new TradingDayRepository.Coverage(
                 LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 18), 5051, 2519, 2532));
     DailyBarRepository bars = mock(DailyBarRepository.class);
+    when(bars.gapTotals(any(), any(), any())).thenReturn(new DailyBarRepository.GapTotals(0, 0));
     when(bars.instrumentIdsWithBarOn(any())).thenReturn(Set.of(1L));
     when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(1, 0, 0, 0, 0, 0));
     when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
@@ -314,6 +317,7 @@ class BarAuditServiceTest {
             new TradingDayRepository.Coverage(
                 LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 18), 5051, 2519, 2532));
     DailyBarRepository bars = mock(DailyBarRepository.class);
+    when(bars.gapTotals(any(), any(), any())).thenReturn(new DailyBarRepository.GapTotals(0, 0));
     when(bars.instrumentIdsWithBarOn(any())).thenReturn(Set.of(1L));
     when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(1, 0, 0, 0, 0, 0));
     when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
@@ -330,6 +334,7 @@ class BarAuditServiceTest {
                     1L,
                     LocalDate.of(2026, 9, 9),
                     java.time.Instant.parse("2026-09-09T15:00:00Z"))));
+    when(bars.unsettledBarCount(any(), any())).thenReturn(1);
     UniverseScope scope = mock(UniverseScope.class);
     breakdown(scope, List.of(row(1, "AAPL")), List.of());
     BarSyncStateRepository states = mock(BarSyncStateRepository.class);
@@ -366,6 +371,7 @@ class BarAuditServiceTest {
             new TradingDayRepository.Coverage(
                 LocalDate.of(2016, 9, 12), LocalDate.of(2026, 9, 18), 2591, 2591, 0));
     DailyBarRepository bars = mock(DailyBarRepository.class);
+    when(bars.gapTotals(any(), any(), any())).thenReturn(new DailyBarRepository.GapTotals(0, 0));
     when(bars.instrumentIdsWithBarOn(any())).thenReturn(Set.of(1L));
     when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(1, 0, 0, 0, 0, 0));
     when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
@@ -441,6 +447,7 @@ class BarAuditServiceTest {
             new TradingDayRepository.Coverage(
                 LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 18), 5051, 2519, 2532));
     DailyBarRepository bars = mock(DailyBarRepository.class);
+    when(bars.gapTotals(any(), any(), any())).thenReturn(new DailyBarRepository.GapTotals(0, 0));
     when(bars.instrumentIdsWithBarOn(any())).thenReturn(Set.of(1L));
     when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(1, 0, 0, 0, 0, 0));
     when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
@@ -477,6 +484,7 @@ class BarAuditServiceTest {
             new TradingDayRepository.Coverage(
                 LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 18), 5051, 2519, 2532));
     DailyBarRepository bars = mock(DailyBarRepository.class);
+    when(bars.gapTotals(any(), any(), any())).thenReturn(new DailyBarRepository.GapTotals(0, 0));
     when(bars.instrumentIdsWithBarOn(any())).thenReturn(Set.of(1L));
     when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(1, 0, 0, 0, 0, 0));
     when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(List.of());
@@ -520,6 +528,89 @@ class BarAuditServiceTest {
   }
 
   /**
+   * Continuity, history gaps and unsettled bars report the totals from the count queries, never the
+   * length of the capped sample lists (found in the 2026-10-31 review; same trap as the phantom
+   * bars above). Each list here sits exactly at its cap while the real total is larger.
+   */
+  @Test
+  void 连续性_缺口_未落定的条数取总数_不被样本上限截断() {
+    TradingDayRepository days = mock(TradingDayRepository.class);
+    when(days.covers(eq(Market.US), any())).thenReturn(false);
+    when(days.coverage(Market.US))
+        .thenReturn(
+            new TradingDayRepository.Coverage(
+                LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 18), 5051, 2519, 2532));
+    DailyBarRepository bars = mock(DailyBarRepository.class);
+    when(bars.instrumentIdsWithBarOn(any())).thenReturn(Set.of(1L));
+    when(bars.sanityOn(any())).thenReturn(new DailyBarRepository.DaySanity(1, 0, 0, 0, 0, 0));
+    when(bars.coverageByInstrument())
+        .thenReturn(
+            List.of(
+                new DailyBarRepository.InstrumentCoverage(
+                    1L, 5000, LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 9))));
+    when(bars.phantomBars(anyInt())).thenReturn(List.of());
+    // continuity: the list sits at its cap of 50, 137 in total
+    List<DailyBarRepository.ContinuityIssue> issues = new java.util.ArrayList<>();
+    for (int i = 0; i < 50; i++) {
+      issues.add(
+          new DailyBarRepository.ContinuityIssue(
+              1L,
+              LocalDate.of(2026, 9, 9).minusDays(i),
+              java.math.BigDecimal.ONE,
+              java.math.BigDecimal.TEN));
+    }
+    when(bars.continuityIssues(any(), any(), anyInt())).thenReturn(issues);
+    when(bars.continuityIssueCount(any(), any())).thenReturn(137);
+    // gaps: the list sits at its cap of 20 instruments x 2 days, 35 instruments / 300 days in total
+    List<DailyBarRepository.InstrumentGap> gaps = new java.util.ArrayList<>();
+    for (int i = 0; i < 20; i++) {
+      gaps.add(
+          new DailyBarRepository.InstrumentGap(
+              100 + i, 2, LocalDate.of(2026, 8, 3), LocalDate.of(2026, 8, 4)));
+    }
+    when(bars.gaps(any(), any(), anyInt(), any())).thenReturn(gaps);
+    when(bars.gapTotals(any(), any(), any())).thenReturn(new DailyBarRepository.GapTotals(35, 300));
+    // unsettled: 20 samples, 1500 in total (more than the old cap of 1000)
+    List<DailyBarRepository.UnsettledBar> unsettled = new java.util.ArrayList<>();
+    for (int i = 0; i < 20; i++) {
+      unsettled.add(
+          new DailyBarRepository.UnsettledBar(
+              1L,
+              LocalDate.of(2026, 9, 9).minusDays(i),
+              java.time.Instant.parse("2026-09-09T15:00:00Z").minus(java.time.Duration.ofDays(i))));
+    }
+    when(bars.unsettledBars(any(), any(), anyInt())).thenReturn(unsettled);
+    when(bars.unsettledBarCount(any(), any())).thenReturn(1500);
+    UniverseScope scope = mock(UniverseScope.class);
+    breakdown(scope, List.of(row(1, "AAPL")), List.of());
+    BarSyncStateRepository states = mock(BarSyncStateRepository.class);
+    when(states.findAll()).thenReturn(List.of());
+    JobRunRepository jobs = mock(JobRunRepository.class);
+    when(jobs.latestOf(any())).thenReturn(Optional.empty());
+
+    BarAuditService.Report r =
+        new BarAuditService(props(), scope, bars, days, states, jobs, null, Clock.systemUTC())
+            .audit(LocalDate.of(2026, 9, 9));
+
+    BarAuditService.Check continuity = check(r, "continuity");
+    assertThat(continuity.count()).isEqualTo(137);
+    assertThat(continuity.detail()).contains("137 处");
+    assertThat(continuity.samples()).as("样本仍然封顶").hasSize(20);
+
+    BarAuditService.Check gapCheck = check(r, "historyGaps");
+    assertThat(gapCheck.count()).isEqualTo(300);
+    assertThat(gapCheck.detail()).contains("35 只").contains("共 300 天");
+    assertThat(gapCheck.samples()).hasSize(20);
+    assertThat(r.summary()).containsEntry("recentGapDays", 300L);
+
+    BarAuditService.Check unsettledCheck = check(r, "unsettledBars");
+    assertThat(unsettledCheck.count()).isEqualTo(1500);
+    assertThat(unsettledCheck.detail()).contains("1500 根");
+    assertThat(unsettledCheck.samples()).hasSize(20);
+    assertThat(r.summary()).containsEntry("unsettledBars", 1500);
+  }
+
+  /**
    * With three critical checks failing at once, the overall verdict must be false.
    *
    * <p>Before 3.1.1 this path had <b>zero coverage</b>: across 5 tests completeness / sanity /
@@ -536,6 +627,7 @@ class BarAuditServiceTest {
             new TradingDayRepository.Coverage(
                 LocalDate.of(2006, 8, 21), LocalDate.of(2026, 9, 18), 5051, 2519, 2532));
     DailyBarRepository bars = mock(DailyBarRepository.class);
+    when(bars.gapTotals(any(), any(), any())).thenReturn(new DailyBarRepository.GapTotals(0, 0));
     when(bars.instrumentIdsWithBarOn(any()))
         .thenReturn(Set.of()); // every target is missing its bar
     when(bars.sanityOn(any()))
@@ -556,6 +648,7 @@ class BarAuditServiceTest {
                     LocalDate.of(2026, 9, 9),
                     new java.math.BigDecimal("100"),
                     new java.math.BigDecimal("101"))));
+    when(bars.continuityIssueCount(any(), any())).thenReturn(1);
     when(bars.coverageByInstrument())
         .thenReturn(
             List.of(
@@ -630,6 +723,7 @@ class BarAuditServiceTest {
             new TradingDayRepository.Coverage(
                 LocalDate.of(2006, 8, 21), LocalDate.of(2026, 10, 16), 5071, 2539, 2532));
     DailyBarRepository bars = mock(DailyBarRepository.class);
+    when(bars.gapTotals(any(), any(), any())).thenReturn(new DailyBarRepository.GapTotals(0, 0));
     when(bars.instrumentIdsWithBarOn(d))
         .thenReturn(
             Set.of(1L)); // AAPL has one, CTVA is missing, SKYD was not a constituent yet that day

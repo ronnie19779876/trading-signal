@@ -214,6 +214,25 @@ public class DailyBarRepository {
         Math.max(1, Math.min(limit, 1000)));
   }
 
+  /**
+   * <b>Total</b> number of {@link #unsettledBars}, uncapped, with the same condition; the list is
+   * only a sample. Before 3.5.2 the audit reported the length of the list capped at 1000 as the
+   * count (found in the 2026-10-31 review, same trap as {@link #phantomBarCount()}).
+   */
+  public int unsettledBarCount(ZoneId zone, LocalTime settledAt) {
+    Integer n =
+        jdbc.queryForObject(
+            """
+                SELECT count(*) FROM daily_bar
+                WHERE trade_date >= (fetched_at AT TIME ZONE CAST(? AS text))::date
+                  AND (fetched_at AT TIME ZONE CAST(? AS text))::time < CAST(? AS time)""",
+            Integer.class,
+            zone.getId(),
+            zone.getId(),
+            settledAt.toString());
+    return n == null ? 0 : n;
+  }
+
   /** Close of the most recent bar (unadjusted). */
   public Optional<java.math.BigDecimal> latestClose(long instrumentId) {
     return jdbc
@@ -334,6 +353,28 @@ public class DailyBarRepository {
         Date.valueOf(to),
         Date.valueOf(from),
         Math.max(1, limit));
+  }
+
+  /**
+   * <b>Total</b> number of {@link #continuityIssues}, uncapped, with the same condition word for
+   * word; the list is only a sample. Before 3.5.2 the audit reported the length of the list capped
+   * at 50 as the count (found in the 2026-10-31 review, same trap as {@link #phantomBarCount()}).
+   */
+  public int continuityIssueCount(LocalDate from, LocalDate to) {
+    Integer n =
+        jdbc.queryForObject(
+            """
+                SELECT count(*) FROM (
+                    SELECT trade_date, last_close,
+                           lag(close) OVER (PARTITION BY instrument_id ORDER BY trade_date) AS prev
+                    FROM daily_bar WHERE trade_date BETWEEN ? AND ?
+                ) x WHERE prev IS NOT NULL AND last_close IS NOT NULL AND abs(last_close - prev) > 0.0005
+                  AND trade_date >= ?""",
+            Integer.class,
+            Date.valueOf(from.minusDays(7)),
+            Date.valueOf(to),
+            Date.valueOf(from));
+    return n == null ? 0 : n;
   }
 
   public record DaySanity(
@@ -483,6 +524,50 @@ public class DailyBarRepository {
   /** Trading days one instrument is missing compared with the calendar. */
   public record InstrumentGap(
       long instrumentId, long missing, LocalDate firstMissing, LocalDate lastMissing) {}
+
+  /** Totals over all gaps, not just the listed ones: instruments with a gap, and missing days. */
+  public record GapTotals(long instruments, long missingDays) {}
+
+  /**
+   * Totals of {@link #gaps(LocalDate, LocalDate, int, java.util.Collection)} without the limit:
+   * same span, join and filter; the list stays a sample. Before 3.5.2 the audit reported the length
+   * of the list capped at 20 instruments as the instrument count and summed missing days over those
+   * 20 only (found in the 2026-10-31 review, same trap as {@link #phantomBarCount()}).
+   *
+   * @param onlyInstruments only these instruments; null means no restriction (pushed down into SQL
+   *     for the same reason as in {@code gaps})
+   */
+  public GapTotals gapTotals(
+      LocalDate from, LocalDate to, java.util.Collection<Long> onlyInstruments) {
+    if (onlyInstruments != null && onlyInstruments.isEmpty()) {
+      return new GapTotals(0, 0);
+    }
+    List<Object> args = new ArrayList<>();
+    String filter = "";
+    if (onlyInstruments != null) {
+      filter = " WHERE instrument_id = ANY (?)";
+      args.add(onlyInstruments.toArray(Long[]::new));
+    }
+    args.add(Date.valueOf(from));
+    args.add(Date.valueOf(to));
+    // Summing the per-instrument counts of gaps() equals count(*) over the ungrouped join, and the
+    // number of groups equals count(DISTINCT instrument_id); checked on db_trader_dev 2026-10-31.
+    return jdbc.queryForObject(
+        """
+                WITH span AS (
+                    SELECT instrument_id, min(trade_date) AS first_bar, max(trade_date) AS last_bar
+                    FROM daily_bar%s GROUP BY instrument_id)
+                SELECT count(DISTINCT s.instrument_id) AS instruments, count(*) AS missing
+                FROM span s
+                JOIN trading_day t ON t.market = 'US'
+                     AND t.trade_date BETWEEN greatest(s.first_bar, ?) AND least(s.last_bar, ?)
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM daily_bar b
+                    WHERE b.instrument_id = s.instrument_id AND b.trade_date = t.trade_date)"""
+            .formatted(filter),
+        (rs, i) -> new GapTotals(rs.getLong("instruments"), rs.getLong("missing")),
+        args.toArray());
+  }
 
   /**
    * Phantom bars: rows that fall inside the calendar's covered span but are not in the trading
