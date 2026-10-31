@@ -617,27 +617,48 @@ class IbkrLiveAccountTest {
    *
    * NVDA positions-API average cost 192.2977127272727, account-updates feed 193.46155755: 110
    * &times; 1.16384482 = 128.0229305, exactly the unrealized difference. Since 3.5.1 the
-   * per-position unrealized is corrected with the new average cost and matches, so it is adopted;
-   * the account-level raw value is still what is shown. The per-position rows are split into NVDA +
-   * SPY here; only totals matter.
+   * per-position unrealized is corrected with the feed's average cost and matches, so it is
+   * adopted; the account-level raw value is still what is shown. The per-position rows are split
+   * into NVDA + SPY here; only totals matter.
+   *
+   * <p>Each per-position value obeys reqPnLSingle's own identity value = unrealized + quantity
+   * &times; the (stale) cost it uses (09-19 probe, GOOG: 21,353.42 &minus; (&minus;148.58) =
+   * 21,502.00 = 62 &times; 346.806455). Fixtures rebuilt in the 2026-10-31 review: the earlier
+   * synthetic values broke that identity, and since 3.5.2 the check derives unrealized from value.
    */
   private void sameDayCloseAndAdd() {
+    sameDayCloseAndAdd(NVDA_STALE_AVG, NVDA_VALUE);
+  }
+
+  private static final double NVDA_STALE_AVG = 192.2977127272727;
+  private static final double NVDA_FEED_AVG = 193.46155755;
+  // 1329.08037181204 + 110 * 192.2977127272727
+  private static final double NVDA_VALUE = 22481.828771812037;
+  private static final double SPY_AVG = 668.4270476;
+  // 20000.0 + 210 * 668.4270476
+  private static final double SPY_VALUE = 160369.67999600002;
+
+  /**
+   * @param nvdaPositionsAvg NVDA average cost from the positions API: stale on the day of the add,
+   *     corrected after the next-day gateway restart
+   */
+  private void sameDayCloseAndAdd(double nvdaPositionsAvg, double nvdaValue) {
     live.subscribe();
-    wire.handlers.get(POS).item(pos(4815747, "NVDA", 110, 192.2977127272727));
-    wire.handlers.get(POS).item(pos(756733, "SPY", 210, 668.4270476));
+    wire.handlers.get(POS).item(pos(4815747, "NVDA", 110, nvdaPositionsAvg));
+    wire.handlers.get(POS).item(pos(756733, "SPY", 210, SPY_AVG));
     wire.handlers.get(POS).end();
     // the first position takes 102, the second 104 (same numbering as positionsAndSingles); total
-    // unrealized 21329.08037181204
+    // unrealized 21329.08037181204 (NVDA on the stale cost)
     wire.handlers
         .get(SINGLE_IBKR)
         .item(
             new IbkrAccounts.PnlSingleRow(
-                Decimal.get(110), -840.6, 1329.08037181204, Double.MAX_VALUE, 22574.2));
+                Decimal.get(110), -840.6, 1329.08037181204, Double.MAX_VALUE, nvdaValue));
     wire.handlers
         .get(SINGLE_SPY)
         .item(
             new IbkrAccounts.PnlSingleRow(
-                Decimal.get(210), -1374.999096058722, 20000.0, Double.MAX_VALUE, 158944.8));
+                Decimal.get(210), -1374.999096058722, 20000.0, Double.MAX_VALUE, SPY_VALUE));
   }
 
   @Test
@@ -703,6 +724,61 @@ class IbkrLiveAccountTest {
         .item(new IbkrAccounts.PnlRow(-2173.1959660586967, 21201.05744131204 - 50, 137.0360184));
 
     assertThat(rec.pnls).isEmpty();
+  }
+
+  /**
+   * Regression found in the 2026-10-31 review: after the next-day gateway restart, production's
+   * reqPositionsMulti reports the corrected cost while reqPnLSingle's unrealized still uses the
+   * pre-add cost (ARCHITECTURE &sect;20.8 table). 3.5.1's lag = (feed average &minus; positions
+   * average) &times; quantity is then 0 and a closing day's unrealized check is off by 128.02
+   * again. The correction now comes from reqPnLSingle's own value: value &minus; feed average
+   * &times; quantity.
+   */
+  @Test
+  void 持仓接口已改对但逐只浮盈仍滞后_平仓日照样采用() {
+    sameDayCloseAndAdd(NVDA_FEED_AVG, NVDA_VALUE);
+    portfolio(
+        feedRow(4815747, 110, NVDA_FEED_AVG, 1293.43), feedRow(756733, 210, SPY_AVG, 18547.82));
+
+    wire.handlers
+        .get(PNL)
+        .item(new IbkrAccounts.PnlRow(-2173.1959660586967, 21201.05744131204, 137.0360184));
+
+    assertThat(rec.pnls).as("持仓接口改对之后的平仓日，账户盈亏也不该整天空着").hasSize(1);
+  }
+
+  /**
+   * Guard: an unset value (Double.MAX_VALUE) must not yield a "corrected" unrealized; that position
+   * falls back to the raw unrealized and the check fails closed.
+   */
+  @Test
+  void 逐只市值未设时不修正() {
+    sameDayCloseAndAdd(NVDA_STALE_AVG, Double.MAX_VALUE);
+    portfolio(
+        feedRow(4815747, 110, NVDA_FEED_AVG, 1293.43), feedRow(756733, 210, SPY_AVG, 18547.82));
+
+    wire.handlers
+        .get(PNL)
+        .item(new IbkrAccounts.PnlRow(-2173.1959660586967, 21201.05744131204, 137.0360184));
+
+    assertThat(rec.pnls).isEmpty();
+  }
+
+  /**
+   * Guard: an unset value means "no correction", not a huge one. No add here (positions, feed and
+   * reqPnLSingle all on the same cost), so the raw unrealized is right and must still be adopted.
+   */
+  @Test
+  void 逐只市值未设且没有加仓时用原浮盈采用() {
+    sameDayCloseAndAdd(NVDA_STALE_AVG, Double.MAX_VALUE);
+    portfolio(
+        feedRow(4815747, 110, NVDA_STALE_AVG, 1293.43), feedRow(756733, 210, SPY_AVG, 18547.82));
+
+    wire.handlers
+        .get(PNL)
+        .item(new IbkrAccounts.PnlRow(-2173.1959660586967, 21329.08037181204, 137.0360184));
+
+    assertThat(rec.pnls).hasSize(1);
   }
 
   /**
@@ -792,8 +868,8 @@ class IbkrLiveAccountTest {
    * Verification still uses the raw per-position P&amp;L: the feed's <b>unrealized</b> (a batch
    * every 3 minutes, at IBKR's own mark) is not involved, so differing sample times cannot make it
    * fail. Since 3.5.1 the feed's <b>average cost</b> is involved (correcting the cost lag on add
-   * days), so here the positions average matches the feed; on days without an add they match anyway
-   * and the correction is 0.
+   * days; since 3.5.2 as value &minus; feed average &times; quantity), so here each value is built
+   * on the feed's average; on days without an add they agree anyway and the correction is 0.
    */
   @Test
   void 核对不受账户更新推送影响() {
@@ -810,7 +886,8 @@ class IbkrLiveAccountTest {
         .get(SINGLE_SPY)
         .item(
             new IbkrAccounts.PnlSingleRow(
-                Decimal.get(210), 890.32, 22145.11, Double.MAX_VALUE, 160225.80));
+                Decimal.get(210), 890.32, 22145.11, Double.MAX_VALUE, 162514.789996));
+    // SPY value = 22145.11 + 210 * 668.4270476 (the old 160225.80 broke the identity)
     portfolio(
         feedRow(43645865, 11.1142, 74.16640875, 9999.0), feedRow(756733, 210, 668.4270476, 9999.0));
 

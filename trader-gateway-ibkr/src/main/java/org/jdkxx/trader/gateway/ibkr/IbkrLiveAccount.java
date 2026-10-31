@@ -65,7 +65,8 @@ import org.slf4j.LoggerFactory;
  * <p>How the account P&amp;L check evolved: 3.0.10 subtracted realized (disproved on 10-09), 3.1.5
  * compared only unrealized on closing days, 3.4.6 compares only daily when nothing was closed, and
  * 3.5.1 corrects the per-position unrealized with the feed's new average cost when comparing
- * unrealized (a close and an add on the same day); see {@link #verifyPnl()}.
+ * unrealized (a close and an add on the same day), and 3.5.2 derives that correction from
+ * reqPnLSingle's value instead of the positions API's cost; see {@link #verifyPnl()}.
  *
  * <p><b>Position average cost and per-position unrealized</b> (3.4.6): when the account-updates
  * feed is available ({@link IbkrPortfolioFeed}, production instance only) and the quantity matches,
@@ -640,23 +641,20 @@ final class IbkrLiveAccount {
     }
     double daily = 0;
     double unreal = 0;
-    double costLag = 0;
+    double correction = 0;
     for (String conId : positions.keySet()) {
       IbkrAccounts.PnlSingleRow r = singleRows.get(conId);
       if (IbkrAccounts.amount(r.daily()) == null || IbkrAccounts.amount(r.unrealized()) == null) {
         return;
       }
       daily += r.daily();
-      unreal += r.unrealized();
-      costLag += costLag(conId);
+      // On the day of an add, reqPnLSingle's unrealized uses the pre-add average cost (3.4.6);
+      // replace that cost with the feed's, keeping reqPnLSingle's own price basis (see
+      // correctedUnrealized). On days without an add the correction is 0.
+      double corrected = correctedUnrealized(conId, r);
+      unreal += corrected;
+      correction += r.unrealized() - corrected;
     }
-    // On the day of an add, reqPnLSingle's unrealized uses the pre-add average cost (3.4.6):
-    // subtract that cost difference using the feed's new average cost, keeping reqPnLSingle's own
-    // price basis. On days without an add both averages are equal and the correction is 0 (3.5.1,
-    // 2026-10-30: a close and an add on the same day).
-    // Since reqPnLSingle unrealized = value - qty * staleCost, the true unrealized is that minus
-    // qty * (feedCost - staleCost), with the positions API's average standing in for staleCost.
-    unreal -= costLag;
     // Was anything closed today: yes if the account-level realized is non-zero (per-position
     // realized is always Double.MAX_VALUE and unusable). When realized is unavailable this cannot
     // be decided, so it is treated as "closed": compare unrealized only, better one check fewer
@@ -671,8 +669,8 @@ final class IbkrLiveAccount {
     // exactly on both sides (difference 0.0); an incomplete first push still fails on daily
     // (measured 10-22: off by 48.74), so the check loses nothing.
     // Closing day: daily is not comparable (see above), only unrealized is; when there was also an
-    // add that day, the per-position unrealized has already been corrected with the new average
-    // cost above (3.5.1).
+    // add that day, the per-position unrealized has already been corrected with the feed's average
+    // cost above (3.5.1; derived from reqPnLSingle's value since 3.5.2).
     // Account-level values are used raw: a NaN or MAX_VALUE there simply fails the comparison (fail
     // closed).
     boolean unrealOk = !closedToday || Math.abs(row.unrealized() - unreal) <= PNL_TOLERANCE;
@@ -688,26 +686,47 @@ final class IbkrLiveAccount {
       listener.onPnl(IbkrAccounts.pnl(row, wire.now()));
       return;
     }
-    logPnlMismatch(row, realized, daily, unreal, costLag, closedToday);
+    logPnlMismatch(row, realized, daily, unreal, correction, closedToday);
   }
 
   /**
-   * This position's cost lag = (feed average cost &minus; positions-API average cost) &times;
-   * quantity; 0 when there is no feed or the quantities differ. Production 2026-10-30: NVDA add of
-   * 10 shares, 110 &times; (193.46155755 &minus; 192.2977127272727) = 128.02, exactly that day's
-   * unrealized difference.
+   * The per-position unrealized used for verification: value &minus; feed average cost &times;
+   * quantity when the account-updates feed has this position with the same quantity and
+   * reqPnLSingle's value is set; otherwise reqPnLSingle's raw unrealized.
+   *
+   * <p>Why value rather than the positions API's cost (found in the 2026-10-31 review): on an add
+   * day reqPnLSingle computes unrealized from the pre-add cost, so value &minus; unrealized =
+   * quantity &times; stale cost (09-19 probe, GOOG: 21,353.42 &minus; (&minus;148.58) = 21,502.00 =
+   * 62 &times; 346.806455). 3.5.1 subtracted (feed average &minus; positions-API average) &times;
+   * quantity, which only works while reqPositionsMulti is stale as well; after the next-day gateway
+   * restart production's reqPositionsMulti is corrected but reqPnLSingle is not (ARCHITECTURE
+   * &sect;20.8), so that lag became 0 and a closing day failed again. The price basis stays
+   * reqPnLSingle's own (its value), only the cost is replaced; on days without an add the feed
+   * average equals the cost reqPnLSingle uses and the correction is 0. Production 2026-10-30: NVDA
+   * 22,481.83 &minus; 110 &times; 193.46155755 = 1,201.06 against the raw 1,329.08, a difference of
+   * 128.02, exactly that day's mismatch.
    */
-  private double costLag(String conId) {
+  private double correctedUnrealized(String conId, IbkrAccounts.PnlSingleRow r) {
     IbkrAccounts.PositionRow p = positions.get(conId);
     if (p == null
         || p.position() == null
         || !p.position().isValid()
-        || Double.isNaN(p.averageCost())) {
-      return 0;
+        || IbkrAccounts.amount(r.value()) == null) {
+      return r.unrealized();
     }
     java.math.BigDecimal qty = p.position().value();
+    // reqPnLSingle's own quantity must agree too, otherwise its value is for another lot size.
+    if (r.position() != null
+        && r.position().isValid()
+        && r.position().value().compareTo(qty) != 0) {
+      return r.unrealized();
+    }
     Double feed = IbkrPortfolioFeed.averageCost(portfolioRows(), conId, qty);
-    return feed == null ? 0 : (feed - p.averageCost()) * qty.doubleValue();
+    if (feed == null) {
+      return r.unrealized();
+    }
+    double corrected = r.value() - feed * qty.doubleValue();
+    return Double.isFinite(corrected) ? corrected : r.unrealized();
   }
 
   /**
@@ -746,14 +765,14 @@ final class IbkrLiveAccount {
       Double realized,
       double singlesDaily,
       double singlesUnrealized,
-      double costLag,
+      double correction,
       boolean closedToday) {
     if (pnlMismatchLogged) {
       return;
     }
     pnlMismatchLogged = true;
     log.warn(
-        "实时账户盈亏核对不通过（{} 只持仓）：账户 当日={} 浮盈={} 已实现={}；逐只之和 当日={} 浮盈={}（已扣成本滞后 {}）；"
+        "实时账户盈亏核对不通过（{} 只持仓）：账户 当日={} 浮盈={} 已实现={}；逐只之和 当日={} 浮盈={}（已按推送均价修正 {}）；"
             + "当日差={}（{}）浮盈差={}（容差 {}）",
         positions.size(),
         row.daily(),
@@ -761,7 +780,7 @@ final class IbkrLiveAccount {
         realized == null ? "未设" : realized,
         singlesDaily,
         singlesUnrealized,
-        costLag,
+        correction,
         row.daily() - singlesDaily,
         closedToday ? "当天有平仓，未参与判定" : "参与判定",
         row.unrealized() - singlesUnrealized,
