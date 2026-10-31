@@ -65,7 +65,8 @@ async function quick(row: SignalView, to: 'ACKNOWLEDGED' | 'DISMISSED') {
 }
 
 const names = computed(() => new Map(props.universe.map((u) => [u.symbol, u.nameCn ?? u.name ?? null])))
-const { page, pageSize, paged, total } = usePager(rows)
+// Back to page 1 when the filters change, or a new result set opens on a stale page (found in the 2026-10-31 review).
+const { page, pageSize, paged, total } = usePager(rows, 20, [range, statuses, origin, scope])
 
 defineExpose({ load })
 </script>

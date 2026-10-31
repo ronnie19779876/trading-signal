@@ -86,7 +86,8 @@ const markers = computed<ChartMarker[]>(() =>
     .map((d) => ({ time: d.date, position: 'belowBar', shape: 'arrowUp', color: '#409eff', text: '信号' })),
 )
 const sortedTrades = computed(() => [...trades.value].reverse())
-const { page, pageSize, paged, total } = usePager(sortedTrades)
+// A new replay (another symbol or range) starts on page 1 (found in the 2026-10-31 review).
+const { page, pageSize, paged, total } = usePager(sortedTrades, 20, [replay])
 </script>
 
 <template>

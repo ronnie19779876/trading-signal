@@ -53,7 +53,8 @@ const totals = computed(() => {
 })
 
 const entries = computed(() => ledger.value?.entries ?? [])
-const { page, pageSize, paged, total } = usePager(entries)
+// Back to page 1 when the filters change, or a new result set opens on a stale page (found in the 2026-10-31 review).
+const { page, pageSize, paged, total } = usePager(entries, 20, [variant, status])
 const names = computed(() => new Map(props.universe.map((u) => [u.symbol, u.nameCn ?? u.name ?? null])))
 
 function open(row: { signal: { id: number }; track: SignalTrack }) {

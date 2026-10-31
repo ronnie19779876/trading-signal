@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, toRef, watch } from 'vue'
 import { signalsApi, type EvaluationRow, type Gate, type SignalStatus, type SignalView } from '../../api/signals'
 import type { InstrumentView } from '../../api/marketdata'
 import GateDots from './GateDots.vue'
@@ -107,7 +107,8 @@ const filtered = computed(() =>
     .filter((r) => !gate.value || r.firstBlockingGate === (gate.value as Gate))
     .sort((a, b) => b.gatesPassed - a.gatesPassed || a.symbol.localeCompare(b.symbol)),
 )
-const { page, pageSize, paged, total } = usePager(filtered, 20, [outcome, gate])
+// Another evaluation date or scope starts on page 1 too, not only the outcome / gate filters (found in the 2026-10-31 review).
+const { page, pageSize, paged, total } = usePager(filtered, 20, [outcome, gate, scope, toRef(props, 'date')])
 
 function openEval(row: EvaluationRow) {
   picked.value = row
