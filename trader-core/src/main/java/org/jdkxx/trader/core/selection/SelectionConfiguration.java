@@ -18,7 +18,6 @@ import org.jdkxx.trader.storage.marketdata.JobRunRepository;
 import org.jdkxx.trader.storage.marketdata.RehabFactorRepository;
 import org.jdkxx.trader.storage.marketdata.TradingDayRepository;
 import org.jdkxx.trader.storage.selection.SelectionBackfillStateRepository;
-import org.jdkxx.trader.storage.selection.SelectionBacktestRunRepository;
 import org.jdkxx.trader.storage.selection.SelectionCoverageRepository;
 import org.jdkxx.trader.storage.selection.SelectionEarningsRepository;
 import org.jdkxx.trader.storage.selection.SelectionInputRepository;
@@ -112,19 +111,6 @@ public class SelectionConfiguration {
       SettledCutoff cutoff,
       ObjectMapper json) {
     return new SelectionScoringService(loader, scores, days, cutoff::current, json);
-  }
-
-  @Bean
-  public SelectionBacktestService selectionBacktestService(
-      SelectionDataLoader loader,
-      SelectionScoreRepository scores,
-      SelectionBacktestRunRepository runs,
-      IndexConstituentRepository constituents,
-      TradingDayRepository days,
-      SettledCutoff cutoff,
-      ObjectMapper json) {
-    return new SelectionBacktestService(
-        loader, scores, runs, constituents, days, cutoff::current, json);
   }
 
   @Bean
@@ -229,9 +215,8 @@ public class SelectionConfiguration {
       SelectionDailyService daily,
       SelectionAuditService audit,
       SelectionScoreRepository scores,
-      SelectionSimService sim,
-      SelectionBacktestService backtest) {
+      SelectionSimService sim) {
     return new SelectionFacade(
-        jobs, targets, backfill, inputs, seams, scoring, daily, audit, scores, sim, backtest);
+        jobs, targets, backfill, inputs, seams, scoring, daily, audit, scores, sim);
   }
 }
