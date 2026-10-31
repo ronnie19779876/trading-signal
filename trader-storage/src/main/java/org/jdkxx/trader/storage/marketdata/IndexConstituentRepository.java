@@ -53,16 +53,22 @@ public class IndexConstituentRepository {
    * (consistent with how evaluation on the sync day treats it).
    *
    * <p><b>Membership before the first sync was never recorded</b>: the batch stored by the first
-   * sync (since = the earliest since in the table) is treated as having always been a member;
-   * otherwise auditing earlier dates would give an empty set. The earliest since is taken across
-   * the whole table, not per index, so this assumes both indexes had their first sync on the same
-   * day. An instrument in both indexes appears once per index.
+   * sync of each index (since = the earliest since <b>of that index</b>) is treated as having
+   * always been a member; otherwise auditing earlier dates would give an empty set. An instrument
+   * in both indexes appears once per index.
+   *
+   * <p>The earliest since is taken per index, not across the whole table (found in the 2026-10-31
+   * review): with the table-wide minimum, an index first synced later than the other has a first
+   * batch whose since is not that minimum, so every date between the two first syncs gets an empty
+   * set for that index.
    */
   public List<ConstituentRow> validOn(LocalDate d) {
     return jdbc.query(
         """
-                SELECT * FROM index_constituent
-                WHERE (since <= ? OR since = (SELECT min(since) FROM index_constituent)) AND (until IS NULL OR until > ?)""",
+                SELECT * FROM index_constituent c
+                WHERE (since <= ?
+                       OR since = (SELECT min(m.since) FROM index_constituent m WHERE m.index_code = c.index_code))
+                  AND (until IS NULL OR until > ?)""",
         MAPPER,
         Date.valueOf(d),
         Date.valueOf(d));
