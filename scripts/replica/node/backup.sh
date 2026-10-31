@@ -8,11 +8,17 @@
 #   can list it (and it has table data); the latest 7 of each are kept.
 #   Directory and log: ~/db-backup/daily/, ~/db-backup/daily/backup.log
 # Dumps are written as <name>.part and renamed only after verification, so retention (which globs *.dump)
-# never counts or keeps a broken dump. Files get the default umask permissions.
+# never counts or keeps a broken dump.
+# Dumps hold every table, account snapshots included: umask 077 and a 700 directory keep them readable by
+# this user only (until 3.5.2 they got the default umask, i.e. readable by every local user; found in the
+# 2026-10-31 review). The chmod also tightens a directory created by an older version; dumps already in it
+# keep their old mode until retention removes them.
 set -uo pipefail
+umask 077
 DIR="${HOME}/db-backup/daily"
 KEEP=7
 mkdir -p "${DIR}"
+chmod 700 "${DIR}"
 LOG="${DIR}/backup.log"
 log() { echo "$(date '+%F %T') $*" >> "${LOG}"; }
 
