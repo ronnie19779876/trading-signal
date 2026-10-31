@@ -1,12 +1,15 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 
+/** Default timeout. GETs that raise their own timeout above this are not retried on timeout, see {@link shouldRetry}. */
+export const DEFAULT_TIMEOUT_MS = 10_000
+
 // Same origin: in development the Vite proxy forwards to 8083; in production the page ships inside the jar.
 // X-Trader-Client: the server answers 403 to any write request without this header (blocks cross-site POSTs, see
 // LocalRequestGuardFilter). A browser cannot attach a custom header to a cross-site form post or a "simple" CORS
 // request without a preflight, so its presence proves the request came from our own scripts.
 // GET /api/account/live needs it too: it really does start an IBKR subscription, so "GET does not change state"
 // does not hold for it. This is an instance-level default header, so every request made through `http` carries it.
-export const http = axios.create({ timeout: 10_000, headers: { 'X-Trader-Client': 'web' } })
+export const http = axios.create({ timeout: DEFAULT_TIMEOUT_MS, headers: { 'X-Trader-Client': 'web' } })
 
 /**
  * Automatic retry for read requests (3.4.3): only for GET, and only on a **timeout or connection failure** (no
@@ -16,6 +19,11 @@ export const http = axios.create({ timeout: 10_000, headers: { 'X-Trader-Client'
  * Background: the local machine reaches the server through an SSH tunnel; an endpoint that takes 15 ms on the
  * server takes 0.5~3 s through the tunnel, and any hiccup on the link pushes it past 10 s (the 2026-10-13
  * dashboard "failed to load").
+ *
+ * A GET with a raised timeout (> {@link DEFAULT_TIMEOUT_MS}) is retried only when the connection fails, not on
+ * timeout: those endpoints are slow because the server is computing (bar audit 120 s, holdings review 60 s), so a
+ * timeout means the server itself is slow, and two more attempts would make the user wait up to three times as long
+ * while the server repeats the same heavy work (found in the 2026-10-31 review).
  */
 export const RETRY_DELAYS_MS = [1_000, 3_000]
 
@@ -31,6 +39,8 @@ export function shouldRetry(error: AxiosError): boolean {
   const config = error.config as RetryConfig | undefined
   if (!config || axios.isCancel(error) || error.response) return false
   if ((config.method ?? 'get').toLowerCase() !== 'get') return false
+  const timedOut = error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT'
+  if (timedOut && (config.timeout ?? DEFAULT_TIMEOUT_MS) > DEFAULT_TIMEOUT_MS) return false
   return (config.__retries ?? 0) < RETRY_DELAYS_MS.length
 }
 
