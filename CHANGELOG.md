@@ -2,6 +2,22 @@
 
 ## 3.5.2（未发布）
 
+- 全项目审查（2026-10-31）：代码注释全部改为英文、Java 按 Google Java Style（google-java-format 1.28.0）格式化，
+  去注释后与改动前零代码差异（仅 `TransactionalWriteGuardTest` 的正则改为 2 空格缩进）；审查发现的前五项按用户 10-31 认可的方案修复：
+- 安全：**有副作用的 GET 可绕过请求头检查**。`LocalRequestGuardFilter` 按原始 `getRequestURI()` 比对，`/api/account/live;x=1`、
+  `/api/account/l%69ve` 能进处理方法却不要求 `X-Trader-Client`，跨站 `<img>` 即可开启盈透常驻订阅。改按与路由一致的规范化路径比对，
+  `AccountController.live()` 另声明 `@RequestHeader` 兜底（缺头 400）。
+- 修正：**开发实例富途重连后订阅实时报价**，与生产抢同一账户额度。`onConnected` 遇重连无条件对账；改为认断线不清的订阅意图
+  （`subscriptionsWanted`：真订上置位、对账干净且无订阅时清除），`auto-subscribe=false` 且从没订过的实例重连后不订。
+- 修正：**运维脚本在 macOS bash 3.2 + UTF-8 下崩溃**：`check-daily.sh` 遇第一个非 200 就整个退出，`run-local.sh` 的 start / stop 在 echo 那行退出。
+  7 个脚本 12 处变量加花括号；新增守护测试 `ShellScriptsTest`。
+- 修正：**AI 否决的证据门槛被同一字段凑数**：「≥2 条核对通过」改为 ≥2 个不同字段（去空白、小写、下标去前导零后去重）；
+  证据路径下标超出 int 范围不再抛异常让整次付费调用作废。只影响今后的判定，已落库的不重算；提示词未改，不升版。
+- 修正：**SOTP 的 TTM 把同一季算两遍、缺季也照加**：改用选股同一套去重与四季连续规则，不满足时 TTM 为空并在适用性里加 CAUTION 理由；
+  季报读取上限 8 → 12。开发库实测 19 只：16 只与旧口径逐只相同，FERG、HONA、SPCX 原先跨 8~14 个月的和改为空。
+- 验证：`clean verify` 660 个测试全过（新增 12 个；直接复现缺陷的几个在修复前都失败，接口兜底另做了去掉注解的反证）；bash 3.2 下对本地 404 端口跑 `check-daily.sh` 前后对照。
+  没有新增或改动接口，Postman 集合不用重新导入。
+
 ## 3.5.1（2026-10-31 发布）
 
 - 修正：**同一天既有平仓又有加仓时，页面账户盈亏整天为空**（2026-10-30 生产：清仓 SGOV、NVDA 加 10 股，ARCHITECTURE §20.9，用户 10-31 认可方案）。

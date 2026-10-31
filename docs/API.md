@@ -10,7 +10,8 @@
 - 非 GET / HEAD / OPTIONS 的请求必须带请求头 `X-Trader-Client`（值任意：前端 `web`、脚本 `script`、Postman 集合 `postman`），否则 403。
   手工调写接口：`curl -X POST -H 'X-Trader-Client: cli' http://127.0.0.1:8083/api/...`。
 - **有副作用的 GET 同样要带**（3.1.2 起）：目前只有 `GET /api/account/live`——它会真的向盈透发起常驻订阅并刷新闲置计时，
-  「GET 不改状态」对它不成立，属于可被跨站 GET 触发的副作用。前端 axios 与 Postman 集合是实例/集合级默认头，所有请求都带，不受影响。
+  「GET 不改状态」对它不成立，属于可被跨站 GET 触发的副作用。3.5.2 起按解码、去分号参数后的路径判定（与路由一致），
+  处理方法上也要求这个头：绕过过滤器的请求不带头得 400。前端 axios 与 Postman 集合是实例/集合级默认头，所有请求都带，不受影响。
 
 ## GET /api/system/info
 
@@ -204,7 +205,7 @@ K 线字段：`tradeDate, open, high, low, close, lastClose, volume, turnover, t
 | --- | --- |
 | `POST /api/ai/analyses?symbol&date=` | 手工分析（**同步约 15 秒，会计费**；计入每日上限；同一标的、判定日、提示词、模型、输入哈希已有 OK 的直接复用）。当天不予判定 409。返回落库的一行 |
 | `GET /api/ai/analyses?from&to&status&symbol&limit=100` | 按创建日（美东）过滤，默认最近 7 天，倒序 |
-| `GET /api/ai/analyses/{id}` | 一次分析：`purpose`（SIGNAL_VETO / MANUAL）、`signalId`、`promptVersion`、`model`、`reasoningEffort`、`inputHash`、`input`（发给模型的 JSON）、`status`（OK / REFUSED / TRUNCATED / INVALID / FAILED / SKIPPED_BUDGET / FAILED_DATA）、`judgment`（`stance`、`confidence`、`summary`、`bullEvidence[]` / `bearEvidence[]` 每条 `{field, value, point}`、`risks`、`dataGaps`、`vetoReason`）、`outputText`、`verdict`（VETO / ALLOW / ABSENT）与 `verdictReason`、`checks`（逐条证据核对）、`verifiedBear` / `unverified`、`error`、token 用量（输入含缓存命中、输出含推理）与耗时；不存在 404 |
+| `GET /api/ai/analyses/{id}` | 一次分析：`purpose`（SIGNAL_VETO / MANUAL）、`signalId`、`promptVersion`、`model`、`reasoningEffort`、`inputHash`、`input`（发给模型的 JSON）、`status`（OK / REFUSED / TRUNCATED / INVALID / FAILED / SKIPPED_BUDGET / FAILED_DATA）、`judgment`（`stance`、`confidence`、`summary`、`bullEvidence[]` / `bearEvidence[]` 每条 `{field, value, point}`、`risks`、`dataGaps`、`vetoReason`）、`outputText`、`verdict`（VETO / ALLOW / ABSENT）与 `verdictReason`、`checks`（逐条证据核对）、`verifiedBear`（3.5.2 起是核对通过的看空证据里**不同字段**的个数，不是条数）/ `unverified`、`error`、token 用量（输入含缓存命中、输出含推理）与耗时；不存在 404 |
 | `GET /api/ai/usage?from&to` | `settings`（是否配置密钥、模型、开关、每日上限、作业时长预算、推理强度、提示词版本；不含密钥）+ `days[]` 按美东自然日汇总：行数、实际调用次数、OK、失败、预算跳过、否决、各类 token |
 
 ## 分部估值 SOTP（第 5 期）
