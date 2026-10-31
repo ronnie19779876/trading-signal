@@ -186,6 +186,37 @@ class IbkrPortfolioFeedTest {
   }
 
   /**
+   * Regression found in the 2026-10-31 review: on 1101 the re-subscribe cancels first and opens the
+   * new handler right away. IbkrWrapper routes every 2100 (no reqId) to the PORTFOLIO channel, so
+   * the 2100 caused by our own cancel used to land on the new handler, which took it as being
+   * kicked off and dropped the fresh subscription.
+   */
+  @Test
+  void 连接恢复重订时自己退订引起的2100不当成被挤掉() {
+    feed.subscribe(false);
+    channel().item(row(GOOG, "GOOG", 162, 339.52469445, -1607.80));
+    channel().end();
+
+    feed.subscribe(true);
+    channel()
+        .error(
+            new RequestRejectedException(
+                Broker.IBKR, 2100, "API client has been unsubscribed from account data."));
+    channel().item(row(GOOG, "GOOG", 162, 339.52469445, -1607.80));
+    channel().end();
+
+    assertThat(feed.subscribed()).isTrue();
+    assertThat(feed.rows()).containsOnlyKeys(Integer.toString(GOOG));
+
+    channel()
+        .error(
+            new RequestRejectedException(
+                Broker.IBKR, 2100, "API client has been unsubscribed from account data."));
+    assertThat(feed.subscribed()).as("只吞一次：之后的 2100 仍是被挤掉").isFalse();
+    assertThat(feed.rows()).isEmpty();
+  }
+
+  /**
    * Average cost and unrealized are offered only when the quantity matches the positions API: while
    * a fill is half-propagated, prefer the original source.
    */

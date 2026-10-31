@@ -82,6 +82,16 @@ final class IbkrPortfolioFeed {
   private Object bound;
 
   private boolean ready;
+
+  /**
+   * A re-subscribe on 1101 cancelled on the broker and opened the new handler right away. The 2100
+   * our own cancel triggers carries no reqId and IbkrWrapper routes every 2100 to the PORTFOLIO
+   * channel, so it reaches the <b>new</b> handler; without this flag it was taken as being kicked
+   * off and the fresh subscription was dropped (found in the 2026-10-31 review). One 2100 is
+   * swallowed while set; the new subscription's accountDownloadEnd clears it.
+   */
+  private boolean awaitingSelfCancel;
+
   private Runnable flush;
   private Runnable onChange = () -> {};
   private final Map<String, IbkrAccounts.PortfolioRow> pending = new LinkedHashMap<>();
@@ -172,12 +182,15 @@ final class IbkrPortfolioFeed {
     if (subscribed() && !afterRecovery) {
       return true;
     }
+    boolean selfCancel = false;
     if (subscribed()) {
       log.info("连接恢复（会话未变，多半是 1101 数据丢失）：重订账户更新推送");
       cancelOnBroker();
+      selfCancel = true;
     }
     clear();
     bound = current;
+    awaitingSelfCancel = selfCancel;
     accountId = acct.trim();
     noAccountLogged = false;
     String subscribeAccount = accountId;
@@ -203,6 +216,7 @@ final class IbkrPortfolioFeed {
       wire.close(IbkrSubscriptions.PORTFOLIO);
     }
     bound = null;
+    awaitingSelfCancel = false;
     clear();
     publish();
   }
@@ -273,11 +287,9 @@ final class IbkrPortfolioFeed {
   }
 
   private void cancelOnBroker() {
-    wire.close(
-        IbkrSubscriptions
-            // detach the handler first: a 2100 caused by our own unsubscribe must not count as
-            // being kicked off
-            .PORTFOLIO);
+    // detach the handler first: a 2100 caused by our own unsubscribe must not count as being
+    // kicked off (on 1101 the new handler is opened right after, see awaitingSelfCancel)
+    wire.close(IbkrSubscriptions.PORTFOLIO);
     String acct = accountId;
     wire.unsubscribe("账户更新推送", c -> c.reqAccountUpdates(false, acct));
   }
@@ -314,6 +326,7 @@ final class IbkrPortfolioFeed {
       public void end() {
         ready = true;
         lastError = null;
+        awaitingSelfCancel = false;
         if (flush != null) {
           flush.run();
           flush = null;
@@ -323,6 +336,11 @@ final class IbkrPortfolioFeed {
 
       @Override
       public void error(RequestRejectedException e) {
+        if (awaitingSelfCancel && e.code() == 2100) {
+          awaitingSelfCancel = false;
+          log.info("重订账户更新推送：收到本实例退订旧订阅引起的 2100（{}），忽略", e.getMessage());
+          return;
+        }
         lastError = e.getMessage();
         log.warn(
             "账户更新推送失效（{}）：持仓均价与浮盈退回持仓接口 / 逐只盈亏的原值，下次连上再订。" + "若不是本实例自己退订，多半是有别的 API 客户端订了同一账户",
