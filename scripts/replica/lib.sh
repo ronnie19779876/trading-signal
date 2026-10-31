@@ -93,10 +93,18 @@ sql() {
 # on 8093 -- either one counts as running.
 # Do not use pgrep -f to find the process: the remote command line contains the pattern and matches itself
 # (that caused one false positive during the migration).
-# If SSH fails there is no output and this returns false ("not running").
+# Returns 0 = running, 1 = not running, 2 = cannot tell (SSH failed or the output is not two counts).
+# Until 3.5.2 a failed SSH call produced no output and read as "not running"; promote.sh then went on
+# towards promoting while the old primary's application might still be writing (found in the
+# 2026-10-31 review). Callers written as `app_running X && die` treat 2 like 1; callers that must not
+# proceed on an unknown answer check for 2 explicitly.
 app_running() {
-  on "$1" "ps -eo comm,args | awk '\$1==\"java\" && /trader-app\\.jar/' | grep -c . ; ss -ltn | grep -c ':8093 '" 2>/dev/null \
-    | awk 'NR==1{p=$1} NR==2{l=$1} END{exit !((p+0)>0 || (l+0)>0)}'
+  local out p l
+  out="$(on "$1" "ps -eo comm,args | awk '\$1==\"java\" && /trader-app\\.jar/' | grep -c . ; ss -ltn | grep -c ':8093 '" 2>/dev/null)"
+  p="$(printf '%s\n' "${out}" | sed -n 1p)"
+  l="$(printf '%s\n' "${out}" | sed -n 2p)"
+  [[ "${p}" =~ ^[0-9]+$ && "${l}" =~ ^[0-9]+$ ]] || return 2
+  (( p > 0 || l > 0 ))
 }
 
 # Name of the application directory the node's symlink points to (trading-signal-<version>-<timestamp>).

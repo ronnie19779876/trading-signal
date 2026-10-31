@@ -10,8 +10,10 @@
 # standby with scripts/replica/reseed.sh <old primary> (pg_rewind also worked in the 2026-10-19 drill but
 # needs an extra superuser connection; a full rebuild of 3.3 GB takes about half an hour and is simple and
 # reliable).
-# The old side's state is judged from SSH + one SQL query; an empty SQL result only means the query failed,
-# which is reported as "database not running" and then left to the operator's confirmation.
+# The old side's state is judged from SSH, one SQL query and systemd: when SSH works, the script only
+# continues if systemd reports the PostgreSQL unit stopped (inactive / failed) and the application is
+# known to be stopped. A failed query or an unanswered check stops the script instead of being read as
+# "down". When SSH does not work at all, the operator's confirmation is the only fence.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 source scripts/replica/lib.sh
@@ -24,8 +26,22 @@ OLD="$(other "${TARGET}")"
 if on "${OLD}" true 2>/dev/null; then
   r="$(sql "${OLD}" "select pg_is_in_recovery()" 2>/dev/null)"
   [[ "${r}" == f ]] && die "${OLD} 连得上、数据库也在当主库——这不是宕机，用 switchover.sh"
-  say "⚠️ ${OLD} 连得上但数据库不在运行（${r:-连不上}）"
-  app_running "${OLD}" && die "${OLD} 上应用还在跑，先停掉"
+  [[ "${r}" == t ]] && die "${OLD} 的数据库在当备库——两边都是备库，不是宕机；先用 status.sh 查清"
+  # A failed query is not proof that the database is down (flaky link, too many connections, auth):
+  # until 3.5.2 an empty answer was read as "not running" and the script went on to promote, which
+  # can leave two primaries both taking writes (found in the 2026-10-31 review). Only systemd saying
+  # the unit is stopped counts; any other state, or no answer at all, stops here.
+  pg="$(on "${OLD}" "systemctl is-active ${PG_UNIT}" 2>/dev/null)"
+  case "${pg}" in
+    inactive|failed) say "⚠️ ${OLD} 连得上，数据库没在运行（systemctl：${pg}）" ;;
+    "") die "无法判断 ${OLD} 上数据库是否在运行（查询失败，SSH 查 systemctl 也没有回答），不能按宕机处理" ;;
+    *) die "${OLD} 数据库在运行但查询失败（systemctl：${pg}，查询结果：${r:-空}），不能按宕机处理；查清原因或先在 ${OLD} 上 sudo systemctl stop ${PG_UNIT}" ;;
+  esac
+  app_running "${OLD}"
+  case $? in
+    0) die "${OLD} 上应用还在跑，先停掉" ;;
+    2) die "无法判断 ${OLD} 上应用是否在跑（SSH 没有回答），不能按已停处理" ;;
+  esac
 else
   say "${OLD} SSH 连不上"
 fi
