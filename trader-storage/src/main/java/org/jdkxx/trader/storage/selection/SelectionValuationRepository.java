@@ -120,13 +120,23 @@ public class SelectionValuationRepository {
         (Object) instrumentIds.toArray(Long[]::new));
   }
 
-  /** Number of instruments with a valuation on a day (for the audit). */
-  public long countOn(LocalDate date) {
+  /**
+   * Number of instruments scored on a day (by that model version) that also have a valuation on
+   * that day (for the audit). Counting only the scored set keeps numerator and denominator the same
+   * set: valuations of names outside it (ETFs, names that left the universe) do not count.
+   */
+  public long countScoredOn(String modelVersion, LocalDate date) {
     Long n =
         jdbc.queryForObject(
-            "SELECT count(*) FROM selection_valuation WHERE trade_date = ?",
+            """
+            SELECT count(*) FROM selection_valuation v
+            WHERE v.trade_date = ?
+              AND EXISTS (SELECT 1 FROM selection_score s
+                          WHERE s.model_version = ? AND s.trade_date = v.trade_date
+                            AND s.instrument_id = v.instrument_id)""",
             Long.class,
-            Date.valueOf(date));
+            Date.valueOf(date),
+            modelVersion);
     return n == null ? 0 : n;
   }
 

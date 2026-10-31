@@ -24,12 +24,12 @@ import org.jdkxx.trader.storage.selection.SelectionValuationRepository;
 public class SelectionAuditService {
 
   /**
-   * Minimum share of the universe that is rateable: below it the inputs are most likely broken
-   * (critical)
+   * Minimum share of the names scored on the day that is rateable: below it the inputs are most
+   * likely broken (critical)
    */
   static final double MIN_RATED_SHARE = 0.80;
 
-  /** Minimum share of the universe with a valuation on the day (critical) */
+  /** Minimum share of the names scored on the day with a valuation that day (critical) */
   static final double MIN_VALUATION_SHARE = 0.90;
 
   static final List<String> BIASES =
@@ -118,10 +118,12 @@ public class SelectionAuditService {
 
   public BarAuditService.Report audit(LocalDate date) {
     LocalDate d = date == null ? settledCutoff.get() : date;
-    // Note: the denominator is today's universe even when auditing a past date
+    // Shares are taken over the set actually scored on d, not today's universe: auditing a past
+    // date after a universe change compared that day's counts with a different set (found in the
+    // 2026-10-31 review). Today's target count stays in the text for reference.
     int n = targets.all().size();
     SelectionScoreRepository.DayStats st = scores.dayStats(SelectionModel.VERSION, d);
-    long valued = valuations.countOn(d);
+    long valued = valuations.countScoredOn(SelectionModel.VERSION, d);
     SelectionPriceSeamRepository.Summary seam = seams.summary();
     List<BarAuditService.Check> checks = new ArrayList<>();
 
@@ -130,29 +132,39 @@ public class SelectionAuditService {
             "scored",
             st.rows() > 0,
             true,
-            st.rows() > 0 ? "已评分 " + st.rows() + " 只（范围 " + n + "）" : d + " 没有评分结果",
+            st.rows() > 0 ? "已评分 " + st.rows() + " 只（今天的范围 " + n + "）" : d + " 没有评分结果",
             st.rows(),
             List.of()));
-    boolean ratedOk = n > 0 && st.rated() >= MIN_RATED_SHARE * n;
+    boolean ratedOk = st.rows() > 0 && st.rated() >= MIN_RATED_SHARE * st.rows();
     checks.add(
         new BarAuditService.Check(
             "ratedShare",
             ratedOk,
             true,
-            "可评级 " + st.rated() + "/" + n + "（下限 " + Math.round(MIN_RATED_SHARE * 100) + "%）",
+            "可评级 "
+                + st.rated()
+                + "/"
+                + st.rows()
+                + "（分母为当天评分的只数，今天的范围 "
+                + n
+                + "；下限 "
+                + Math.round(MIN_RATED_SHARE * 100)
+                + "%）",
             st.rated(),
             List.of()));
-    boolean valuedOk = n > 0 && valued >= MIN_VALUATION_SHARE * n;
+    boolean valuedOk = st.rows() > 0 && valued >= MIN_VALUATION_SHARE * st.rows();
     checks.add(
         new BarAuditService.Check(
             "valuationFresh",
             valuedOk,
             true,
-            "当天有估值 "
+            "当天评分的标的有估值 "
                 + valued
                 + "/"
+                + st.rows()
+                + "（今天的范围 "
                 + n
-                + "（下限 "
+                + "；下限 "
                 + Math.round(MIN_VALUATION_SHARE * 100)
                 + "%；没有就是估值快照或续接没跑）",
             valued,
