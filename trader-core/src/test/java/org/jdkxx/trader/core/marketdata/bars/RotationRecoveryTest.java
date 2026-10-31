@@ -30,6 +30,7 @@ import org.jdkxx.trader.domain.InstrumentStatic;
 import org.jdkxx.trader.domain.Market;
 import org.jdkxx.trader.domain.SecurityType;
 import org.jdkxx.trader.gateway.MarketDataGateway;
+import org.jdkxx.trader.gateway.RequestTimeoutException;
 import org.jdkxx.trader.gateway.UnknownSymbolException;
 import org.jdkxx.trader.storage.marketdata.BarSyncStateRepository;
 import org.jdkxx.trader.storage.marketdata.DailyBarRepository;
@@ -57,6 +58,9 @@ class RotationRecoveryTest {
   private final List<List<String>> subscribed = new ArrayList<>();
   private final List<List<String>> unsubscribed = new ArrayList<>();
   private final List<String> fetched = new ArrayList<>();
+
+  /** Sleeps and unsubscriptions in the order they happened. */
+  private final List<String> events = new ArrayList<>();
 
   @Test
   void 一只不认识的代码只丢自己_其余照常采集() throws Exception {
@@ -143,6 +147,73 @@ class RotationRecoveryTest {
     verify(instruments, never()).markUnresolved(anyLong());
   }
 
+  /**
+   * Found in the 2026-10-31 review: a subscription that timed out may still have taken effect at
+   * the broker, and that batch was never unsubscribed, so its quota stayed taken until the
+   * connection closed and every following batch of the rotation could be rejected for quota. Now
+   * the batch is not fetched, holdSeconds is waited out and the batch is unsubscribed (best effort)
+   * before the next batch.
+   */
+  @Test
+  void 订阅超时的批次_等满持有时间后反订阅_下一批照常() throws Exception {
+    givenGateway();
+    when(gateway.subscribeDailyBars(anyList()))
+        .thenAnswer(
+            inv -> {
+              List<Instrument> asked = inv.getArgument(0);
+              subscribed.add(symbols(asked));
+              if (asked.contains(Instrument.us("AAPL"))) {
+                return CompletableFuture.failedFuture(
+                    new RequestTimeoutException(Broker.FUTU, "sub KL_Day"));
+              }
+              return CompletableFuture.completedFuture(null);
+            });
+
+    RotationRefresher.Result r =
+        refresherWithBatchesOfTwo()
+            .refresh(
+                List.of(row(1, "AAPL"), row(2, "MSFT"), row(3, "NVDA"), row(4, "TSLA")),
+                x -> 5,
+                "增量",
+                new Ctx());
+
+    assertThat(subscribed).containsExactly(List.of("AAPL", "MSFT"), List.of("NVDA", "TSLA"));
+    assertThat(fetched).as("超时的批次不取 K 线").containsExactly("NVDA", "TSLA");
+    assertThat(events).containsExactly("sleep", "unsub AAPL,MSFT", "sleep", "unsub NVDA,TSLA");
+    assertThat(r.ok()).isEqualTo(2);
+    assertThat(r.failed()).isEqualTo(2);
+    verify(gateway, never()).staticInfo(anyList());
+  }
+
+  @Test
+  void 剔除未知代码后重订超时_同样等满持有时间后反订阅剩下的() throws Exception {
+    givenGateway();
+    when(gateway.subscribeDailyBars(anyList()))
+        .thenAnswer(
+            inv -> {
+              List<Instrument> asked = inv.getArgument(0);
+              subscribed.add(symbols(asked));
+              if (asked.contains(Instrument.us("PSKY"))) {
+                return CompletableFuture.failedFuture(
+                    new UnknownSymbolException(
+                        Broker.FUTU, -1, "sub KL_Day ×3 失败：未知股票 PSKY（retType=-1）", Set.of("PSKY")));
+              }
+              return CompletableFuture.failedFuture(
+                  new RequestTimeoutException(Broker.FUTU, "sub KL_Day"));
+            });
+
+    RotationRefresher.Result r =
+        refresher()
+            .refresh(
+                List.of(row(1, "AAPL"), row(2, "PSKY"), row(3, "MSFT")), x -> 5, "增量", new Ctx());
+
+    assertThat(subscribed)
+        .containsExactly(List.of("AAPL", "PSKY", "MSFT"), List.of("AAPL", "MSFT"));
+    assertThat(fetched).isEmpty();
+    assertThat(events).containsExactly("sleep", "unsub AAPL,MSFT");
+    assertThat(r.failed()).isEqualTo(3);
+  }
+
   // ------------------------------------------------------------------ test doubles
 
   private RotationRefresher refresher() {
@@ -157,7 +228,26 @@ class RotationRecoveryTest {
                 ZoneId.of("America/New_York")));
     UnknownSymbolGuard guard = new UnknownSymbolGuard(gateway, instruments, 200, 3);
     return new RotationRefresher(
-        TestProperties.defaults().refresh(), gateway, bars, states, cutoff, guard, d -> {});
+        TestProperties.defaults().refresh(),
+        gateway,
+        bars,
+        states,
+        cutoff,
+        guard,
+        d -> events.add("sleep"));
+  }
+
+  /** Batches of two, via the quota coordinator's batch cap. */
+  private RotationRefresher refresherWithBatchesOfTwo() {
+    RotationRefresher r = refresher();
+    r.coordinator(
+        new RotationRefresher.QuotaCoordinator() {
+          @Override
+          public int beforeRefresh() {
+            return 2;
+          }
+        });
+    return r;
   }
 
   private void givenGateway() {
@@ -189,6 +279,7 @@ class RotationRecoveryTest {
         .thenAnswer(
             inv -> {
               unsubscribed.add(symbols(inv.getArgument(0)));
+              events.add("unsub " + String.join(",", symbols(inv.getArgument(0))));
               return CompletableFuture.completedFuture(null);
             });
     when(gateway.recentDailyBars(any(), anyInt()))

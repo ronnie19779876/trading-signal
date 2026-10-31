@@ -14,6 +14,7 @@ import org.jdkxx.trader.core.marketdata.universe.UnknownSymbolGuard;
 import org.jdkxx.trader.domain.DailyBar;
 import org.jdkxx.trader.domain.Instrument;
 import org.jdkxx.trader.gateway.MarketDataGateway;
+import org.jdkxx.trader.gateway.RequestTimeoutException;
 import org.jdkxx.trader.storage.marketdata.BarSyncState;
 import org.jdkxx.trader.storage.marketdata.BarSyncStateRepository;
 import org.jdkxx.trader.storage.marketdata.DailyBarRepository;
@@ -144,16 +145,40 @@ public class RotationRefresher {
       try {
         gateway.subscribeDailyBars(instruments).get(30, TimeUnit.SECONDS);
       } catch (Exception e) {
+        // A subscribe that timed out may still have taken effect at the broker. Until the
+        // 2026-10-31 review such a batch was never unsubscribed, so its quota stayed taken until
+        // the connection closed and later batches could be rejected for quota. Do not fetch (it
+        // is not known to be subscribed), but wait out holdSeconds and unsubscribe it (best
+        // effort) before the next batch. A timeout is not an explicit rejection, so it does not
+        // go through the unknown-symbol recovery either
+        if (timedOut(e)) {
+          failed += batch.size();
+          done += batch.size();
+          log.warn("订阅 {} 只超时，本批不取 K 线，持满后反订阅：{}", instruments.size(), e.toString());
+          ctx.partial("订阅超时：" + instruments.size() + " 只");
+          if (!holdThenUnsubscribe(instruments, subscribedAt, ctx)) {
+            break;
+          }
+          continue;
+        }
         // Batch-level recovery: one renamed symbol must not poison the whole batch (on 2026-10-06
         // PSKY cost 90 instruments here in one go). After a successful re-subscribe the hold timer
         // restarts, because the broker's 1-minute minimum counts from the subscription that
-        // actually took effect Note: a subscribe that timed out may still have taken effect at the
-        // broker; that batch is not unsubscribed here and its quota is only released when the
-        // connection closes
+        // actually took effect
         Recovered r = recover(batch, instruments, e, ctx);
         if (r == null) {
           failed += batch.size();
           done += batch.size();
+          continue;
+        }
+        if (r.timedOut()) {
+          // The re-subscribe timed out: same treatment as above for what it asked for (the timer
+          // starts now, which only waits a little longer than needed)
+          failed += batch.size();
+          done += batch.size();
+          if (!holdThenUnsubscribe(r.instruments(), System.nanoTime(), ctx)) {
+            break;
+          }
           continue;
         }
         failed += batch.size() - r.batch().size();
@@ -204,26 +229,8 @@ public class RotationRefresher {
                 + total
                 + "）");
       }
-      // Futu refuses to unsubscribe anything subscribed for less than 1 minute, so sleep out the
-      // remainder of holdSeconds (measured with the monotonic clock from the subscription) before
-      // unsubscribing.
-      // If the sleep is interrupted the loop breaks before unsubscribing; the batch then holds its
-      // quota until the connection closes
-      long elapsed = Duration.ofNanos(System.nanoTime() - subscribedAt).toMillis();
-      long hold = props.holdSeconds() * 1000L - elapsed;
-      if (hold > 0) {
-        try {
-          sleeper.sleep(Duration.ofMillis(hold));
-        } catch (InterruptedException e) {
-          Thread.currentThread().interrupt();
-          ctx.partial("等待反订阅时被中断");
-          break;
-        }
-      }
-      try {
-        gateway.unsubscribeDailyBars(instruments).get(30, TimeUnit.SECONDS);
-      } catch (Exception e) {
-        log.warn("反订阅 {} 只失败（额度会在连接关闭时释放）：{}", instruments.size(), e.toString());
+      if (!holdThenUnsubscribe(instruments, subscribedAt, ctx)) {
+        break;
       }
     }
     if (failed > 0) {
@@ -235,7 +242,54 @@ public class RotationRefresher {
     return new Result(todo.size(), ok, failed, total, unsettled);
   }
 
-  private record Recovered(List<InstrumentRow> batch, List<Instrument> instruments) {}
+  /**
+   * Futu refuses to unsubscribe anything subscribed for less than 1 minute, so sleep out the
+   * remainder of holdSeconds (measured with the monotonic clock from {@code subscribedAt}) and then
+   * unsubscribe; an unsubscribe failure is only logged. Returns false when the sleep was
+   * interrupted: the caller stops the rotation, and the batch then holds its quota until the
+   * connection closes.
+   */
+  private boolean holdThenUnsubscribe(
+      List<Instrument> instruments, long subscribedAt, JobContext ctx) {
+    long elapsed = Duration.ofNanos(System.nanoTime() - subscribedAt).toMillis();
+    long hold = props.holdSeconds() * 1000L - elapsed;
+    if (hold > 0) {
+      try {
+        sleeper.sleep(Duration.ofMillis(hold));
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        ctx.partial("等待反订阅时被中断");
+        return false;
+      }
+    }
+    try {
+      gateway.unsubscribeDailyBars(instruments).get(30, TimeUnit.SECONDS);
+    } catch (Exception e) {
+      log.warn("反订阅 {} 只失败（额度会在连接关闭时释放）：{}", instruments.size(), e.toString());
+    }
+    return true;
+  }
+
+  /**
+   * The request got no answer in time (our own {@code get} timeout or the gateway's reply timeout),
+   * as opposed to an explicit rejection.
+   */
+  static boolean timedOut(Throwable e) {
+    for (Throwable c = e; c != null; c = c.getCause()) {
+      if (c instanceof java.util.concurrent.TimeoutException
+          || c instanceof RequestTimeoutException) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * @param timedOut the re-subscribe of {@code instruments} timed out: nothing is fetched, but they
+   *     may be subscribed and must be released
+   */
+  private record Recovered(
+      List<InstrumentRow> batch, List<Instrument> instruments, boolean timedOut) {}
 
   /**
    * After a rejected subscription, try batch-level recovery once: identify the symbols Futu does
@@ -259,9 +313,13 @@ public class RotationRefresher {
           gateway.subscribeDailyBars(keptInstruments).get(30, TimeUnit.SECONDS);
           ctx.partial(out.detail());
           log.warn("剔除 {} 只未知代码后重订成功，本批继续 {} 只", batch.size() - kept.size(), kept.size());
-          return new Recovered(kept, keptInstruments);
+          return new Recovered(kept, keptInstruments, false);
         } catch (Exception retry) {
           log.warn("剔除 {} 只未知代码后重订仍失败：{}", batch.size() - kept.size(), retry.toString());
+          if (timedOut(retry)) {
+            ctx.partial(out.detail() + "；剔除后重订超时：" + kept.size() + " 只");
+            return new Recovered(kept, keptInstruments, true);
+          }
         }
       }
     }
