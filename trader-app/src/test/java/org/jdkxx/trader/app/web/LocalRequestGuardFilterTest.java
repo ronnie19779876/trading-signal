@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.net.URI;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
@@ -99,6 +100,25 @@ class LocalRequestGuardFilterTest {
                 .header("Host", "127.0.0.1:8093")
                 .header(LocalRequestGuardFilter.CLIENT_HEADER, "web"))
         .andExpect(status().isOk());
+  }
+
+  /**
+   * The side-effecting-GET check must use the same path Spring MVC routes on. Before 3.5.2 it
+   * compared the raw request URI, so matrix parameters and percent-encoding reached the handler
+   * without the header (found in the 2026-10-31 review).
+   */
+  @Test
+  void 有副作用的读_路径变体也要自定义头() throws Exception {
+    for (String uri :
+        List.of("/api/account/live;x=1", "/api/account/l%69ve", "/api/account/live;jsessionid=1")) {
+      mvc.perform(get(URI.create(uri)).header("Host", "127.0.0.1:8093"))
+          .andExpect(status().isForbidden());
+      mvc.perform(
+              get(URI.create(uri))
+                  .header("Host", "127.0.0.1:8093")
+                  .header(LocalRequestGuardFilter.CLIENT_HEADER, "web"))
+          .andExpect(status().isOk());
+    }
   }
 
   @Test

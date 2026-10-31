@@ -13,6 +13,7 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.UrlPathHelper;
 
 /**
  * Local-request guard. The API has no authentication; that is only acceptable because the server
@@ -55,9 +56,24 @@ public class LocalRequestGuardFilter extends OncePerRequestFilter {
    * "unsubscribe after 5 minutes without readers" timer. Remember to add new endpoints of this kind
    * here, or better, do not put side effects on a GET at all.
    *
-   * <p>Matched against the raw {@code getRequestURI()} (exact string, not normalized).
+   * <p>Matched against the <b>normalized</b> path ({@link #lookupPath}), never the raw {@code
+   * getRequestURI()}: Spring MVC routes on the decoded path with matrix parameters removed, so
+   * before 3.5.2 {@code /api/account/live;x=1} or {@code /api/account/l%69ve} reached the handler
+   * while skipping this check (found in the 2026-10-31 review). The handler additionally declares
+   * the header as required, so a future mismatch here still cannot trigger the side effect.
    */
   private static final Set<String> SIDE_EFFECTING_GETS = Set.of("/api/account/live");
+
+  /**
+   * Same normalization Spring MVC applies before routing: percent-decoding, removal of {@code ;}
+   * path parameters (including {@code ;jsessionid}) and collapsing of duplicate slashes.
+   */
+  private static final UrlPathHelper PATHS = new UrlPathHelper();
+
+  static {
+    PATHS.setUrlDecode(true);
+    PATHS.setRemoveSemicolonContent(true);
+  }
 
   @Override
   protected void doFilterInternal(
@@ -80,7 +96,7 @@ public class LocalRequestGuardFilter extends OncePerRequestFilter {
     String client = request.getHeader(CLIENT_HEADER);
     boolean needsHeader =
         !SAFE_METHODS.contains(request.getMethod())
-            || SIDE_EFFECTING_GETS.contains(request.getRequestURI());
+            || SIDE_EFFECTING_GETS.contains(lookupPath(request));
     if (needsHeader && (client == null || client.isBlank())) {
       reject(
           request,
@@ -93,6 +109,16 @@ public class LocalRequestGuardFilter extends OncePerRequestFilter {
       return;
     }
     chain.doFilter(request, response);
+  }
+
+  /**
+   * The application-relative path as Spring MVC sees it, with a trailing slash dropped so that
+   * {@code /api/account/live/} is treated like {@code /api/account/live} even if trailing-slash
+   * matching is ever turned back on.
+   */
+  static String lookupPath(HttpServletRequest request) {
+    String path = PATHS.getPathWithinApplication(request);
+    return path.length() > 1 && path.endsWith("/") ? path.substring(0, path.length() - 1) : path;
   }
 
   /**

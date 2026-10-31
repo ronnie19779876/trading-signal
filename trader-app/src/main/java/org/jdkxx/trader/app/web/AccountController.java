@@ -16,6 +16,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -54,10 +55,13 @@ public class AccountController {
    * P&amp;L and per-position market value are pushed within seconds of a change.
    *
    * <p>Because the first read has a side effect, {@link LocalRequestGuardFilter} requires the
-   * client header on this GET as well.
+   * client header on this GET as well. Since 3.5.2 the handler requires the header too, so a
+   * cross-site GET cannot reach this method even if the filter's path matching ever diverges from
+   * MVC routing again (a missing header here yields 400).
    */
   @GetMapping("/api/account/live")
-  public LiveAccountService.LiveView live() {
+  public LiveAccountService.LiveView live(
+      @RequestHeader(LocalRequestGuardFilter.CLIENT_HEADER) String client) {
     return live.view();
   }
 
