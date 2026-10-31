@@ -30,17 +30,24 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const { isDark } = useTheme()
 
+// Symbol and range can change while a request is in flight (a 20-year range is slow); only the latest
+// request may write, or an older symbol's chart lands under the new one (found in the 2026-10-31 review).
+let seq = 0
 async function load() {
+  const mine = ++seq
   loading.value = true
   error.value = null
   try {
     const from = range.value === 'all' ? '2000-01-01' : daysAgoEt(365 * Number(range.value))
-    bars.value = (await getBars(props.symbol, from, isoEt(), 'forward')).filter((b) => !b.blank)
+    const rows = (await getBars(props.symbol, from, isoEt(), 'forward')).filter((b) => !b.blank)
+    if (mine !== seq) return
+    bars.value = rows
   } catch (e) {
+    if (mine !== seq) return
     bars.value = []
     error.value = errMsg(e)
   } finally {
-    loading.value = false
+    if (mine === seq) loading.value = false
   }
 }
 watch([() => props.symbol, range], load, { immediate: true })

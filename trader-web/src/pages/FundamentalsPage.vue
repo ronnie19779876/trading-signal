@@ -50,16 +50,23 @@ async function loadAll() {
   }
 }
 
+// Switching symbols quickly can let an older response land after a newer one and show symbol A's
+// valuation under symbol B; only the latest request may write (found in the 2026-10-31 review).
+let overviewSeq = 0
 async function loadOverview(s: string) {
+  const mine = ++overviewSeq
   loadingOverview.value = true
   try {
-    overview.value = await fundamentalsApi.overview(s)
+    const o = await fundamentalsApi.overview(s)
+    if (mine !== overviewSeq) return
+    overview.value = o
   } catch (e) {
+    if (mine !== overviewSeq) return
     overview.value = null
     const status = (e as { response?: { status?: number } }).response?.status
     if (status !== 404) error.value = errMsg(e)
   } finally {
-    loadingOverview.value = false
+    if (mine === overviewSeq) loadingOverview.value = false
   }
 }
 watch(symbol, (s) => void loadOverview(s), { immediate: true })
@@ -170,7 +177,9 @@ void loadAll()
 
       <PeChart :symbol="symbol" />
       <ReportsPanel :symbol="symbol" />
-      <SotpPanel :symbol="symbol" />
+      <!-- keyed by symbol: the panel holds an editable model and its save/delete act on props.symbol, so reusing
+           one instance across symbols could save A's segments under B (found in the 2026-10-31 review) -->
+      <SotpPanel :key="symbol" :symbol="symbol" />
     </div>
 
     <!-- maintenance -->

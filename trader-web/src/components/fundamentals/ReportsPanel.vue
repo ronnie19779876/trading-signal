@@ -34,7 +34,12 @@ const error = ref<string | null>(null)
 /** There is one annual report per year, so getting 8 of them needs a larger fetch (the endpoint caps at 50). */
 const LIMIT = 40
 
+// Symbol and statement can change while a request is in flight; only the latest request may write, or an
+// older symbol's reports land under the new one. A sequence guard rather than :key so the chosen statement and
+// period survive a symbol switch (found in the 2026-10-31 review).
+let seq = 0
 async function load() {
+  const mine = ++seq
   loading.value = true
   error.value = null
   try {
@@ -42,14 +47,16 @@ async function load() {
       fundamentalsApi.reports(props.symbol, statement.value, LIMIT),
       statement.value === 'income' ? Promise.resolve(null) : fundamentalsApi.reports(props.symbol, 'income', LIMIT),
     ])
+    if (mine !== seq) return
     reports.value = r
     income.value = inc ?? r
   } catch (e) {
+    if (mine !== seq) return
     reports.value = []
     income.value = []
     error.value = errMsg(e)
   } finally {
-    loading.value = false
+    if (mine === seq) loading.value = false
   }
 }
 watch([() => props.symbol, statement], load, { immediate: true })
